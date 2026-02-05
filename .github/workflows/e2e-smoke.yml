@@ -1,31 +1,49 @@
-name: E2E Smoke (optional)
+name: E2E Smoke (manual)
 
 on:
   workflow_dispatch:
-  push:
-    branches: [main]
-  pull_request:
 
 jobs:
   smoke:
-    if: ${{ secrets.E2E_API_KEY != '' && secrets.SUPABASE_URL != '' && secrets.SUPABASE_SERVICE_ROLE_KEY != '' && secrets.API_KEY_SALT != '' }}
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+
       - name: Use Node
         uses: actions/setup-node@v4
         with:
           node-version: 20
+
       - name: Enable Corepack
         run: corepack enable
+
       - name: Install deps
         run: corepack pnpm install --frozen-lockfile
-      - name: Lint
-        run: corepack pnpm lint
-      - name: Unit tests
-        run: corepack pnpm test
+
+      - name: Check required secrets
+        id: secrets_check
+        env:
+          E2E_API_KEY: ${{ secrets.E2E_API_KEY }}
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+          API_KEY_SALT: ${{ secrets.API_KEY_SALT }}
+        run: |
+          missing=()
+          [[ -z "$E2E_API_KEY" ]] && missing+=("E2E_API_KEY")
+          [[ -z "$SUPABASE_URL" ]] && missing+=("SUPABASE_URL")
+          [[ -z "$SUPABASE_SERVICE_ROLE_KEY" ]] && missing+=("SUPABASE_SERVICE_ROLE_KEY")
+          [[ -z "$API_KEY_SALT" ]] && missing+=("API_KEY_SALT")
+          if [[ ${#missing[@]} -eq 0 ]]; then
+            echo "has_secrets=true" >> "$GITHUB_OUTPUT"
+            echo "All required secrets are present."
+          else
+            echo "has_secrets=false" >> "$GITHUB_OUTPUT"
+            echo "Missing secrets: ${missing[*]}. E2E smoke will be skipped."
+          fi
+
       - name: E2E smoke
+        if: ${{ steps.secrets_check.outputs.has_secrets == 'true' }}
         env:
           E2E_API_KEY: ${{ secrets.E2E_API_KEY }}
           SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
@@ -35,3 +53,7 @@ jobs:
         run: |
           chmod +x scripts/e2e_smoke.sh
           ./scripts/e2e_smoke.sh
+
+      - name: Skip notice
+        if: ${{ steps.secrets_check.outputs.has_secrets != 'true' }}
+        run: echo "Skipping e2e smoke: secrets missing (manual-only workflow)."
