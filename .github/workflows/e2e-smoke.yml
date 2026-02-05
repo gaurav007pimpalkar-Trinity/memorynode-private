@@ -24,13 +24,13 @@ jobs:
       - name: Check required secrets
         id: secrets_check
         env:
-          MEMORYNODE_API_KEY: ${{ secrets.MEMORYNODE_API_KEY }}
+          E2E_API_KEY: ${{ secrets.MEMORYNODE_API_KEY }}
           SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
           SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
           API_KEY_SALT: ${{ secrets.API_KEY_SALT }}
         run: |
           missing=()
-          [[ -z "$MEMORYNODE_API_KEY" ]] && missing+=("MEMORYNODE_API_KEY")
+          [[ -z "$E2E_API_KEY" ]] && missing+=("MEMORYNODE_API_KEY")
           [[ -z "$SUPABASE_URL" ]] && missing+=("SUPABASE_URL")
           [[ -z "$SUPABASE_SERVICE_ROLE_KEY" ]] && missing+=("SUPABASE_SERVICE_ROLE_KEY")
           [[ -z "$API_KEY_SALT" ]] && missing+=("API_KEY_SALT")
@@ -45,7 +45,7 @@ jobs:
       - name: E2E smoke
         if: ${{ steps.secrets_check.outputs.has_secrets == 'true' }}
         env:
-          MEMORYNODE_API_KEY: ${{ secrets.MEMORYNODE_API_KEY }}
+          E2E_API_KEY: ${{ secrets.MEMORYNODE_API_KEY }}
           SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
           SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
           API_KEY_SALT: ${{ secrets.API_KEY_SALT }}
