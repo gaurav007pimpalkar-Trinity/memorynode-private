@@ -24,16 +24,12 @@ jobs:
       - name: Check required secrets
         id: secrets_check
         env:
-          E2E_API_KEY: ${{ secrets.MEMORYNODE_API_KEY }}
-          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
-          SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
-          API_KEY_SALT: ${{ secrets.API_KEY_SALT }}
+          MEMORYNODE_API_KEY: ${{ secrets.MEMORYNODE_API_KEY }}
+          BASE_URL: ${{ secrets.BASE_URL }}
         run: |
           missing=()
-          [[ -z "$E2E_API_KEY" ]] && missing+=("MEMORYNODE_API_KEY")
-          [[ -z "$SUPABASE_URL" ]] && missing+=("SUPABASE_URL")
-          [[ -z "$SUPABASE_SERVICE_ROLE_KEY" ]] && missing+=("SUPABASE_SERVICE_ROLE_KEY")
-          [[ -z "$API_KEY_SALT" ]] && missing+=("API_KEY_SALT")
+          [[ -z "$MEMORYNODE_API_KEY" ]] && missing+=("MEMORYNODE_API_KEY")
+          [[ -z "$BASE_URL" ]] && missing+=("BASE_URL")
           if [[ ${#missing[@]} -eq 0 ]]; then
             echo "has_secrets=true" >> "$GITHUB_OUTPUT"
             echo "All required secrets are present."
@@ -45,10 +41,8 @@ jobs:
       - name: E2E smoke
         if: ${{ steps.secrets_check.outputs.has_secrets == 'true' }}
         env:
-          E2E_API_KEY: ${{ secrets.MEMORYNODE_API_KEY }}
-          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
-          SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
-          API_KEY_SALT: ${{ secrets.API_KEY_SALT }}
+          MEMORYNODE_API_KEY: ${{ secrets.MEMORYNODE_API_KEY }}
+          BASE_URL: ${{ secrets.BASE_URL }}
           EMBEDDINGS_MODE: stub
         run: |
           chmod +x scripts/e2e_smoke.sh
