@@ -56,4 +56,4 @@ jobs:
 
       - name: Skip notice
         if: ${{ steps.secrets_check.outputs.has_secrets != 'true' }}
-        run: echo "Skipping e2e smoke: secrets missing (manual-only workflow)."
+        run: 'echo "Skipping e2e smoke: secrets missing (manual-only workflow)."'
