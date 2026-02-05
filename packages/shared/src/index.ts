@@ -1,0 +1,147 @@
+export type WorkspaceId = string;
+export type MemoryId = string;
+
+export interface ApiError {
+  code: string;
+  message: string;
+  status?: number;
+}
+
+export interface HealthResponse {
+  status: "ok";
+}
+
+export interface AddMemoryRequest {
+  userId: string;
+  namespace?: string;
+  text: string;
+  metadata?: Record<string, unknown>;
+}
+
+export interface AddMemoryResponse {
+  memory_id: MemoryId;
+  chunks: number;
+}
+
+export interface SearchRequest {
+  user_id: string;
+  namespace?: string;
+  query: string;
+  top_k?: number;
+  page?: number;
+  page_size?: number;
+  filters?: {
+    metadata?: Record<string, string | number | boolean>;
+    start_time?: string;
+    end_time?: string;
+  };
+}
+
+export interface SearchResult {
+  chunk_id: string;
+  memory_id: MemoryId;
+  chunk_index: number;
+  text: string;
+  score: number;
+}
+
+export interface SearchResponse {
+  results: SearchResult[];
+  page?: number;
+  page_size?: number;
+  total?: number;
+  has_more?: boolean;
+}
+
+export interface ContextResponse {
+  context_text: string;
+  citations: Array<{
+    i: number;
+    chunk_id: string;
+    memory_id: MemoryId;
+    chunk_index: number;
+  }>;
+  page?: number;
+  page_size?: number;
+  total?: number;
+  has_more?: boolean;
+}
+
+// Memory listing / CRUD
+export interface MemoryRecord {
+  id: MemoryId;
+  user_id: string;
+  namespace: string;
+  text: string;
+  metadata: Record<string, unknown>;
+  created_at: string;
+}
+
+export interface ListMemoriesResponse {
+  results: MemoryRecord[];
+  page: number;
+  page_size: number;
+  total: number;
+  has_more: boolean;
+}
+
+export interface GetMemoryResponse extends MemoryRecord {}
+
+export interface DeleteMemoryResponse {
+  deleted: boolean;
+  id: MemoryId;
+}
+
+export interface ExportResponse {
+  artifact_base64: string;
+  bytes: number;
+  sha256: string;
+}
+
+export interface ImportRequest {
+  artifact_base64: string;
+  mode?: "upsert" | "skip_existing" | "error_on_conflict" | "replace_ids" | "replace_all";
+}
+
+export interface ImportResponse {
+  imported_memories: number;
+  imported_chunks: number;
+}
+
+export interface UsageTodayResponse {
+  day: string;
+  writes: number;
+  reads: number;
+  embeds: number;
+  limits: {
+    writes: number;
+    reads: number;
+    embeds: number;
+  };
+}
+
+export interface CreateWorkspaceResponse {
+  workspace_id: WorkspaceId;
+  name: string;
+}
+
+export interface CreateApiKeyResponse {
+  api_key: string;
+  api_key_id: string;
+  workspace_id: WorkspaceId;
+  name: string;
+}
+
+export interface ListApiKeysResponse {
+  api_keys: Array<{
+    id: string;
+    workspace_id: WorkspaceId;
+    name: string;
+    created_at: string;
+    revoked_at: string | null;
+  }>;
+}
+
+export interface RevokeApiKeyResponse {
+  revoked: boolean;
+}

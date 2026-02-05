@@ -1,0 +1,46 @@
+name = "memorynode-api"
+main = "src/index.ts"
+compatibility_date = "2025-01-01"
+tsconfig = "tsconfig.json"
+compatibility_flags = ["nodejs_compat"]
+
+[dev]
+port = 8787
+
+[vars]
+SUPABASE_URL = "https://nxwvdpjbplresxkptdft.supabase.co"
+EMBEDDINGS_MODE = "openai"
+SUPABASE_MODE = ""
+ENVIRONMENT = "dev"
+RATE_LIMIT_MODE = "on"
+
+[durable_objects]
+bindings = [
+  { name = "RATE_LIMIT_DO", class_name = "RateLimitDO" }
+]
+
+[[migrations]]
+tag = "v1"
+new_sqlite_classes = ["RateLimitDO"]
+
+[env.staging]
+name = "memorynode-api-staging"
+vars = {
+  SUPABASE_URL = "https://nxwvdpjbplresxkptdft.supabase.co",
+  EMBEDDINGS_MODE = "openai",
+  SUPABASE_MODE = "",
+  ENVIRONMENT = "staging",
+  BUILD_VERSION = "",
+  RATE_LIMIT_MODE = "on",
+}
+
+[env.production]
+name = "memorynode-api"
+vars = {
+  SUPABASE_URL = "https://nxwvdpjbplresxkptdft.supabase.co",
+  EMBEDDINGS_MODE = "openai",
+  SUPABASE_MODE = "",
+  ENVIRONMENT = "production",
+  BUILD_VERSION = "",
+  RATE_LIMIT_MODE = "on",
+}

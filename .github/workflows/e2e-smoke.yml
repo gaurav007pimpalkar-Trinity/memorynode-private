@@ -1,0 +1,37 @@
+name: E2E Smoke (optional)
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  smoke:
+    if: ${{ secrets.E2E_API_KEY != '' && secrets.SUPABASE_URL != '' && secrets.SUPABASE_SERVICE_ROLE_KEY != '' && secrets.API_KEY_SALT != '' }}
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+      - name: Use Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+      - name: Enable Corepack
+        run: corepack enable
+      - name: Install deps
+        run: corepack pnpm install --frozen-lockfile
+      - name: Lint
+        run: corepack pnpm lint
+      - name: Unit tests
+        run: corepack pnpm test
+      - name: E2E smoke
+        env:
+          E2E_API_KEY: ${{ secrets.E2E_API_KEY }}
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+          API_KEY_SALT: ${{ secrets.API_KEY_SALT }}
+          EMBEDDINGS_MODE: stub
+        run: |
+          chmod +x scripts/e2e_smoke.sh
+          ./scripts/e2e_smoke.sh

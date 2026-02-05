@@ -1,0 +1,15 @@
+{
+  "name": "@memorynode/api",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "wrangler dev",
+    "build": "wrangler publish --dry-run"
+  },
+  "dependencies": {
+    "@supabase/supabase-js": "^2.45.2",
+    "jszip": "^3.10.1",
+    "stripe": "^16.6.0"
+  }
+}

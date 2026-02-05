@@ -1,0 +1,65 @@
+##########
+# Node / monorepo deps
+##########
+node_modules/
+.pnpm-store/
+
+##########
+# Build & cache artifacts
+##########
+dist/
+build/
+.turbo/
+.vite/
+.wrangler/
+.cache/
+coverage/
+.nyc_output/
+*.tsbuildinfo
+
+##########
+# Local env / secrets (templates kept)
+##########
+.env
+.env.*
+!.env.example
+!.env.e2e.example
+.dev.vars
+.dev.vars.*
+!.dev.vars.template
+
+##########
+# Logs & OS/editor junk
+##########
+*.log
+npm-debug.log*
+pnpm-debug.log*
+yarn-debug.log*
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/
+
+##########
+# DB / binary dumps
+##########
+*.db
+*.sqlite
+*.zip
+*.tar.gz
+*.tgz
+*.pem
+*.key
+*.p12
+
+##########
+# Tool state / temp
+##########
+apps/api/.wrangler/state/
+_founder_notes/
+.tmp/
+.venv/
+__pycache__/
+
+# Keep lockfile versioned (do not ignore):
+# pnpm-lock.yaml
