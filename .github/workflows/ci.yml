@@ -57,7 +57,7 @@ jobs:
         run: |
           output="$(E2E_MASK_SELF_TEST=1 pwsh -NoProfile -ExecutionPolicy Bypass -File scripts/verify_e2e.ps1 2>&1)"
           printf '%s\n' "$output"
-          if printf '%s\n' "$output" | grep -E 'mn_live_[0-9a-fA-F]{21,}' >/dev/null; then
+          if printf '%s\n' "$output" | grep -E 'mn_live_[A-Za-z0-9_-]{10,}' >/dev/null; then
             echo "Token leak detected in verify_e2e.ps1 output"
             exit 1
           fi
