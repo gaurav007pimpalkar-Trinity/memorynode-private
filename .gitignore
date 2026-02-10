@@ -63,9 +63,9 @@ Thumbs.db
 # Tool state / temp
 ##########
 apps/api/.wrangler/state/
+apps/api/_wrangler_out/
 apps/api/.wrangler*
 apps/api/.wrangler-dryrun/
-apps/api/_wrangler_out/
 .wrangler*
 *.BACKUP.*
 _local_backup/
@@ -73,6 +73,7 @@ key.json
 ws.json
 gate.env
 staging_verify_output.txt
+staged_files.txt
 _founder_notes/
 .tmp/
 .venv/

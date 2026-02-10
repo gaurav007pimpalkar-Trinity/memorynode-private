@@ -15,6 +15,7 @@ The repository ignores local secret/temp files, including:
 - `ws.json`
 - `gate.env`
 - `staging_verify_output.txt`
+- `staged_files.txt`
 - `*.env` and `*.env.*` (except `*.example`)
 - `.wrangler*`
 - `apps/api/.wrangler*`

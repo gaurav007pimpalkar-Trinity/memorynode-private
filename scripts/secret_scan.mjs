@@ -3,7 +3,7 @@ import fs from "node:fs";
 import { execFileSync } from "node:child_process";
 
 const MAX_FILE_BYTES = 2_000_000;
-const EXCLUDED_TRACKED_FILES = new Set(["scripts/secret_scan.mjs"]);
+const EXCLUDED_TRACKED_FILES = new Set(["scripts/secret_scan.mjs", "staged_files.txt"]);
 const EXCLUDED_PREFIXES = [
   "node_modules/",
   ".git/",
