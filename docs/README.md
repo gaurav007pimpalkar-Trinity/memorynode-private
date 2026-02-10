@@ -8,12 +8,22 @@
 - `infra/sql` – SQL migrations and schema (apply in order).
 - `docs` – documentation.
 - `docs/LAUNCH_CHECKLIST.md` – go-live checklist (envs, Stripe, RLS, smoke, rollback).
+- `docs/LAUNCH_RUNBOOK.md` – operator runbook for staging -> prod launch, verification, rollback, and incidents.
+- `docs/ALERTS.md` – lightweight monitoring + alert thresholds and Cloudflare setup notes.
+- `docs/BETA_ONBOARDING.md` – 10–15 minute beta onboarding guide for first successful calls.
+- `docs/TROUBLESHOOTING_BETA.md` – beta symptom->cause->fix playbook and support template.
 - `docs/QUICKSTART.md` – 10-minute developer quickstart (envs, migrations, dev servers, curls).
 - `docs/API_REFERENCE.md` – endpoint reference (Worker API, admin, billing, plans).
 
+## Tracked env templates
+- Root: `.env.example`, `.env.e2e.example`, `.env.gate.example`, `.env.staging.smoke.example`, `.env.prod.smoke.example`
+- API worker: `apps/api/.dev.vars.template`
+- Dashboard: `apps/dashboard/.env.example`
+
 ## Analytics events (minimal)
 - See `docs/LAUNCH_CHECKLIST.md` and product events table (`infra/sql/013_events.sql`).
-- Event names: `workspace_created`, `api_key_created`, `first_ingest_success`, `first_search_success`, `first_context_success`, `cap_exceeded`, `checkout_started`, `upgrade_activated`, optional `billing_portal_opened`, `export_completed`.
+- Product event names (persisted to `product_events`): `workspace_created`, `api_key_created`, `first_ingest_success`, `first_search_success`, `first_context_success`, `cap_exceeded`, `checkout_started`, `upgrade_activated`.
+- Structured log event names (`console.log`/`console.warn`): `request_summary`, `cap_exceeded`, `billing_endpoint_error`, `billing_webhook_signature_invalid`, `billing_webhook_workspace_not_found`.
 - Stored fields: `workspace_id`, `event_name`, `request_id`, `route`, `method`, `status`, `effective_plan`, `plan_status`, `props` (redacted-safe counts/booleans only).
 
 ## Getting Started
@@ -70,7 +80,7 @@ The script waits for `/healthz`, ingests a sample memory, runs `/v1/search` and 
 | --- | --- | --- |
 | `/healthz` ok but script fails before `/v1/api-keys` | PowerShell using curl alias | `pnpm smoke:ps` (uses `curl.exe`) |
 | 401/403 on admin endpoints | `MASTER_ADMIN_TOKEN` wrong/missing | Set correct token in `.dev.vars` |
-| 500 errors | DB migrations not applied | Run `infra/sql/001_init.sql`, `002_rpc.sql`, `003_usage_rpc.sql` |
+| 500 errors | DB migrations not applied / drifted | Run `pnpm db:migrate` then `pnpm db:verify-rls` |
 | Timeouts | Wrong `SUPABASE_URL` or blocked network | Verify Supabase project URL/connectivity |
 
 Notes:
@@ -96,6 +106,13 @@ GitHub Actions job `.github/workflows/e2e-smoke.yml` will run the same script on
 - `SUPABASE_URL`
 - `SUPABASE_SERVICE_ROLE_KEY`
 - `API_KEY_SALT`
+
+### One-command staging verification
+Use this to verify a deployed environment with admin token only:
+```bash
+BASE_URL=https://<api-host> ADMIN_TOKEN=<master-admin-token> pnpm staging:verify
+```
+It checks `/healthz`, creates a workspace, creates an API key, and validates authenticated `/v1/usage/today`. It exits non-zero on failure.
 
 ### Prod secrets (Cloudflare Workers)
 - Do **not** place secrets in `apps/api/wrangler.toml [vars]`; Cloudflare will overwrite dashboard secrets on deploy.
@@ -147,7 +164,8 @@ GitHub Actions job `.github/workflows/e2e-smoke.yml` will run the same script on
 - If no workspace is found for a customer/metadata, the webhook returns 200 `{ received: true }` and logs a redacted warning (no payload data logged).
 
 ### What to watch in logs (structured JSON, single line each)
-Each log includes: `event_name`, `ts`, `route`, `method`, `status`, `request_id`, `workspace_id_redacted` (if known), `effective_plan`, `plan_status` (when applicable). No bodies/headers/Stripe objects are logged.
+`request_summary` logs include: `event_name`, `route`, `method`, `status`, `duration_ms`, `request_id`, `workspace_id` (if known), and `error_code`/`error_message` when status is 4xx/5xx.
+Event-specific logs include `ts` and route-specific fields (for example redacted Stripe/workspace identifiers). No bodies/headers/Stripe objects are logged.
 
 | event_name | What it means | Likely causes | What to do | Example (redacted) |
 | --- | --- | --- | --- | --- |
@@ -169,20 +187,21 @@ Each log includes: `event_name`, `ts`, `route`, `method`, `status`, `request_id`
 
 ## Database Setup (Supabase)
 1) Open Supabase SQL editor.
-2) Run migrations in order:
-   - `infra/sql/001_init.sql`
-   - `infra/sql/002_rpc.sql`
-   - `infra/sql/003_usage_rpc.sql`
-   - `infra/sql/004_workspace_plan.sql`
-   - `infra/sql/005_api_audit_log.sql`
-   - `infra/sql/006_rls.sql`
-   - `infra/sql/007_current_workspace_patch.sql`
-   - `infra/sql/008_membership_rls.sql`
-   - `infra/sql/009_workspace_rpc.sql`
-   - `infra/sql/010_api_keys_mask.sql`
-   - `infra/sql/011_api_key_rpcs.sql`
-   - `infra/sql/012_billing.sql`
-3) Ensure env vars are set in Cloudflare Worker (or `.dev.vars` locally):
+2) Set `SUPABASE_DB_URL` (or `DATABASE_URL`) for your target database.
+3) Run migrations via the scripted migrator:
+   ```bash
+   pnpm db:migrate
+   ```
+4) Verify RLS:
+   ```bash
+   pnpm db:verify-rls
+   ```
+5) If your database was created from an older/broken migration sequence (for example, only one of the legacy usage migrations was applied), just rerun:
+   ```bash
+   pnpm db:migrate
+   ```
+   The migrator now self-heals that legacy drift and applies the canonical usage RPC repair migration automatically.
+6) Ensure env vars are set in Cloudflare Worker (or `.dev.vars` locally):
    - `SUPABASE_URL`
    - `SUPABASE_SERVICE_ROLE_KEY`
    - `OPENAI_API_KEY`

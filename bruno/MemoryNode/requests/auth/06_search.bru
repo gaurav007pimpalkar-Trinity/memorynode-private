@@ -1,0 +1,25 @@
+meta {
+  name: Search
+  type: http
+  seq: 6
+}
+
+post {
+  url: {{base_url}}/v1/search
+  body: json
+  auth: none
+}
+
+headers {
+  content-type: application/json
+  Authorization: Bearer {{api_key}}
+}
+
+body:json {
+  {
+    "user_id": "{{user_id}}",
+    "namespace": "{{namespace}}",
+    "query": "beta ingest sample",
+    "top_k": 5
+  }
+}

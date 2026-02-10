@@ -25,6 +25,7 @@ Use this every time we go live (or reconfigure) to avoid surprises. Keep it shor
    - If `corepack enable` fails on Windows (EPERM), skip it and run `corepack prepare pnpm@latest-10 --activate` then invoke `pnpm` (or `pnpm.cjs` if that’s what is present) or add the Corepack pnpm folder to `PATH`.
 - Gate: copy `.env.gate.example` to `.env.gate`, fill required vars, then run `pnpm prod:gate` (runs lint/typecheck/tests + staging/prod dry-run deploys).
 - Staging deploy + smoke: set envs (`BASE_URL`, `DATABASE_URL`, `MEMORYNODE_API_KEY`, `DEPLOY_ENV=staging`, `CLOUDFLARE_API_TOKEN` or wrangler login) then run `pnpm deploy:staging` for a real deploy; afterwards run `pnpm smoke:staging` (uses `.env.gate` or `.env.staging.smoke` for BASE_URL/API key) against the deployed worker.
+- Staging auth baseline verify: `BASE_URL=<staging-url> ADMIN_TOKEN=<MASTER_ADMIN_TOKEN> pnpm staging:verify` (healthz + admin create workspace/key + authenticated usage call).
 - One-command staging release check: `pnpm staging:release-check` (loads `.env.staging.smoke` then `.env.gate`, performs real staging deploy, then runs live staging smoke).
 - Production readiness: copy `.env.prod.smoke.example` to `.env.prod.smoke`, fill secrets/URLs, run `pnpm prod:gate` (dry-run), then `pnpm prod:release-check` for real prod deploy + live smoke. Safety latch: set `DEPLOY_CONFIRM=memorynode-prod`.
 - Ops runbook: see `docs/OPERATIONS.md` for secrets inventory, rollback steps, and incident checks (DO, Supabase, Stripe).

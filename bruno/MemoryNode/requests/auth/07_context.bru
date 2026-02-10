@@ -1,0 +1,25 @@
+meta {
+  name: Context
+  type: http
+  seq: 7
+}
+
+post {
+  url: {{base_url}}/v1/context
+  body: json
+  auth: none
+}
+
+headers {
+  content-type: application/json
+  Authorization: Bearer {{api_key}}
+}
+
+body:json {
+  {
+    "user_id": "{{user_id}}",
+    "namespace": "{{namespace}}",
+    "query": "Summarize what you remember from the beta sample memory.",
+    "top_k": 5
+  }
+}

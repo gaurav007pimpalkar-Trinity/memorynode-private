@@ -1,0 +1,23 @@
+meta {
+  name: Admin Create API Key
+  type: http
+  seq: 3
+}
+
+post {
+  url: {{base_url}}/v1/api-keys
+  body: json
+  auth: none
+}
+
+headers {
+  content-type: application/json
+  x-admin-token: {{admin_token}}
+}
+
+body:json {
+  {
+    "workspace_id": "{{workspace_id}}",
+    "name": "beta-api-key"
+  }
+}

@@ -1,0 +1,27 @@
+meta {
+  name: Ingest Memory
+  type: http
+  seq: 5
+}
+
+post {
+  url: {{base_url}}/v1/memories
+  body: json
+  auth: none
+}
+
+headers {
+  content-type: application/json
+  Authorization: Bearer {{api_key}}
+}
+
+body:json {
+  {
+    "user_id": "{{user_id}}",
+    "namespace": "{{namespace}}",
+    "text": "MemoryNode beta ingest sample memory.",
+    "metadata": {
+      "source": "bruno"
+    }
+  }
+}

@@ -1,0 +1,22 @@
+meta {
+  name: Admin Create Workspace
+  type: http
+  seq: 2
+}
+
+post {
+  url: {{base_url}}/v1/workspaces
+  body: json
+  auth: none
+}
+
+headers {
+  content-type: application/json
+  x-admin-token: {{admin_token}}
+}
+
+body:json {
+  {
+    "name": "beta-workspace"
+  }
+}

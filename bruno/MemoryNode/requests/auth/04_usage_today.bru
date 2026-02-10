@@ -1,0 +1,16 @@
+meta {
+  name: Usage Today
+  type: http
+  seq: 4
+}
+
+get {
+  url: {{base_url}}/v1/usage/today
+  body: none
+  auth: none
+}
+
+headers {
+  Accept: application/json
+  Authorization: Bearer {{api_key}}
+}
