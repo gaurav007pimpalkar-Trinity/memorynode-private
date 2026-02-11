@@ -12,10 +12,10 @@ Use this table to move from symptom -> likely cause -> fix quickly.
 | `401/403` on runtime routes | Using admin token where API key is expected | Use API key auth on `/v1/memories`, `/v1/search`, `/v1/context`, `/v1/usage/today` |
 | Search returns empty results | `user_id` mismatch | Ingest and query with the same `user_id` |
 | Search/context empty for expected data | `namespace` mismatch | Ensure ingest and retrieval use the same `namespace` |
-| `429 RATE_LIMITED` | Per-key rate limit exceeded | Exponential backoff + jitter; reduce burst traffic |
+| `429 rate_limited` | Per-key rate limit exceeded | Exponential backoff + jitter; reduce burst traffic; honor `Retry-After` |
 | Unexpected cross-workspace behavior | `workspace_id` mismatch in admin provisioning | Confirm key was created for intended `workspace_id` |
 | `500 DB_ERROR` / permission error text | Supabase/RLS/migration issue | Check DB migration status (`pnpm db:migrate`, `pnpm db:verify-rls`) and Supabase credentials |
-| Stripe webhook failures | Invalid signature secret or missing workspace mapping | Validate `STRIPE_WEBHOOK_SECRET`; inspect `billing_webhook_signature_invalid` / `billing_webhook_workspace_not_found` logs |
+| Stripe webhook failures | Invalid signature secret, processing error, or missing workspace mapping | Validate `STRIPE_WEBHOOK_SECRET`; inspect `webhook_failed`, `billing_webhook_signature_invalid`, and `billing_webhook_workspace_not_found` logs |
 
 ## 2) Explicit Checks
 
@@ -69,6 +69,6 @@ Copy/paste this in a GitHub issue or support ticket:
 - Beta end-to-end check:
   - `BASE_URL=... API_KEY=... USER_ID=... NAMESPACE=... pnpm beta:verify`
 - Admin + auth baseline:
-  - `BASE_URL=... ADMIN_TOKEN=... pnpm staging:verify`
+  - `TARGET_ENV=staging STAGING_BASE_URL=... ADMIN_TOKEN=... pnpm release:staging:validate`
 - E2E script checks:
   - `pnpm e2e:verify`

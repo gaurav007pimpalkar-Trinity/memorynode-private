@@ -7,7 +7,13 @@ Auth:
 - Admin control plane: `x-admin-token: <MASTER_ADMIN_TOKEN>` (workspace/api-key management).
 
 Health
-- `GET /healthz` → `{ status: "ok" }`
+- `GET /healthz` → `{ status: "ok", version, build_version, stage?, git_sha? }`
+
+Response headers:
+- Every response includes `x-request-id`.
+
+Error shape:
+- `{ error: { code, message }, request_id }`
 
 Memories
 - `POST /v1/memories` – ingest memory  

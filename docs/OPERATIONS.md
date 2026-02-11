@@ -21,5 +21,39 @@
 
 ## C) Incident Checklist
 - Rate limit DO failure: 500 errors mentioning `RATE_LIMIT_DO` missing; fix by ensuring wrangler binding exists per env and redeploy.
-- Supabase connectivity issues: 500s with DB errors; verify `SUPABASE_URL` and `SUPABASE_SERVICE_ROLE_KEY`; run `post_deploy_check` to confirm `/v1/usage/today` works.
-- Stripe webhook failures: look for `billing_webhook_signature_invalid` / `billing_webhook_workspace_not_found`; check `infra/sql/016_webhook_events.sql` idempotency table and Cloudflare logs; replay webhook from Stripe dashboard after fixing secrets.
+- Supabase connectivity issues: 500s with DB errors; verify `SUPABASE_URL` and `SUPABASE_SERVICE_ROLE_KEY`; run `BASE_URL=... API_KEY=... pnpm release:validate` to confirm core API paths.
+- Stripe webhook failures: look for `webhook_failed`, `billing_webhook_signature_invalid`, and `billing_webhook_workspace_not_found`; check `stripe_webhook_events` lifecycle columns from `infra/sql/019_webhook_hardening.sql` and Cloudflare logs; replay from Stripe dashboard after fixing secrets.
+- For billing-specific incident procedures, use `docs/BILLING_RUNBOOK.md`.
+
+## C.1) 429 / 413 Handling
+- `429` rate-limit response shape:
+  - `{ "error": { "code": "rate_limited", "message": "Rate limit exceeded" }, "request_id": "..." }`
+  - Headers include `Retry-After`, `x-ratelimit-limit`, `x-ratelimit-remaining`, `x-ratelimit-reset`, and `x-request-id`.
+- `413` payload-limit response shape:
+  - `{ "error": { "code": "payload_too_large", "message": "..." }, "request_id": "..." }`
+- Client guidance:
+  - `429`: retry with exponential backoff + jitter and honor `Retry-After`.
+  - `413`: do not blind-retry; shrink or chunk the payload first.
+
+## D) Request Tracing
+- Every API response includes header `x-request-id`. Client-provided `x-request-id` values are respected when valid.
+- Error responses include:
+  - `{ "error": { "code": "...", "message": "..." }, "request_id": "..." }`
+- Use this flow during incidents:
+  1. Get `x-request-id` from client response.
+  2. Open Cloudflare Worker logs and filter `request_id="<value>"`.
+  3. Inspect `request_completed` and `request_failed` events around the same timestamp.
+
+Example success log:
+`{"level":"info","event_name":"request_completed","request_id":"req-123","route":"/v1/search","method":"POST","status":200,"duration_ms":42}`
+
+Example failure log:
+`{"level":"error","event_name":"request_failed","request_id":"req-123","route":"/v1/search","method":"POST","status":500,"error_code":"DB_ERROR","error":{"message":"***REDACTED***","stack":"***REDACTED***"}}`
+
+## E) Bug Report Minimum Data
+- `x-request-id` value
+- UTC timestamp
+- Endpoint + HTTP method
+- Response status code
+- `build_version` from `/healthz` (and `git_sha` if present)
+- For local/manual deploys, set `BUILD_VERSION` before deploy to stamp `/healthz`.

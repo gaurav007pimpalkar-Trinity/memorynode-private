@@ -6,12 +6,12 @@ Minimal, launch-safe monitoring and alert thresholds using existing structured l
 
 | Signal | Source fields | Why it matters |
 | --- | --- | --- |
-| 5xx rate | `event_name="request_summary"`, `status>=500` | direct customer impact |
-| Auth failure rate | `request_summary` with `status=401 or 403` | key/token breakage or abuse |
-| p95 latency | `request_summary.duration_ms` | user experience degradation |
-| Rate-limit denials | `request_summary.error_code="RATE_LIMITED"` + `event_name="cap_exceeded"` | abuse, mis-sized quotas, user friction |
-| Stripe webhook failures | `event_name in ("billing_webhook_signature_invalid","billing_endpoint_error","billing_webhook_workspace_not_found")` | billing reliability risk |
-| Supabase/RPC error rate | `request_summary.error_code="DB_ERROR"` | data-path reliability risk |
+| 5xx rate | `event_name="request_completed"`, `status>=500` | direct customer impact |
+| Auth failure rate | `request_completed` with `status=401 or 403` | key/token breakage or abuse |
+| p95 latency | `request_completed.duration_ms` | user experience degradation |
+| Rate-limit denials | `request_completed.error_code="rate_limited"` + `event_name="cap_exceeded"` | abuse, mis-sized quotas, user friction |
+| Stripe webhook failures | `event_name in ("webhook_failed","billing_webhook_signature_invalid","billing_endpoint_error","billing_webhook_workspace_not_found")` | billing reliability risk |
+| Supabase/RPC error rate | `request_completed.error_code="DB_ERROR"` | data-path reliability risk |
 
 ## 2) Early-Stage Thresholds (Suggested)
 
@@ -30,11 +30,11 @@ Use low-volume-friendly thresholds (count + rate).
 
 1. Open Cloudflare dashboard -> Workers & Pages -> API Worker -> Logs.
 2. Create saved log views for:
-   - `event_name="request_summary"`
-   - `event_name="request_summary" AND status>=500`
-   - `event_name="request_summary" AND (status=401 OR status=403)`
-   - `event_name="billing_webhook_signature_invalid"`
-   - `event_name="request_summary" AND error_code="DB_ERROR"`
+   - `event_name="request_completed"`
+   - `event_name="request_completed" AND status>=500`
+   - `event_name="request_completed" AND (status=401 OR status=403)`
+   - `event_name in ("webhook_failed","billing_webhook_signature_invalid")`
+   - `event_name="request_completed" AND error_code="DB_ERROR"`
 3. Configure notifications (email/Slack/webhook) from your log/alerting destination.
 4. Route alerts to on-call with two severities:
    - warning (triage during business hours)
@@ -46,8 +46,8 @@ If native log alerting is not yet configured, run a lightweight scheduled check 
 
 | Alert | First action |
 | --- | --- |
-| 5xx spike | Check latest deploy, inspect `error_code`, run `pnpm staging:verify` against affected env |
-| Auth failure spike | Validate `MASTER_ADMIN_TOKEN` and API key/salt state; verify with `pnpm staging:verify` |
+| 5xx spike | Check latest deploy, inspect `error_code`, run `TARGET_ENV=staging STAGING_BASE_URL=... API_KEY=... pnpm release:staging:validate` against affected env |
+| Auth failure spike | Validate `MASTER_ADMIN_TOKEN` and API key/salt state; verify with `TARGET_ENV=staging STAGING_BASE_URL=... ADMIN_TOKEN=... pnpm release:staging:validate` |
 | Latency spike | Inspect route-level distribution (`route`, `method`), check Supabase and external dependencies |
 | Rate-limit spike | Investigate abuse patterns, confirm `RATE_LIMIT_DO` health, tune limits if needed |
 | Stripe failures | Verify webhook secret + endpoint, replay events after fix |

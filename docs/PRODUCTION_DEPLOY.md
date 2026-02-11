@@ -1,5 +1,9 @@
 # Production Deploy Notes (Cloudflare Workers)
 
+Canonical deploy/rollback workflow:
+- `docs/RELEASE_RUNBOOK.md`
+- `docs/PROD_READY.md`
+
 ## Vars vs Secrets
 - Safe `[vars]` (checked into `apps/api/wrangler.toml`): `SUPABASE_URL`, `SUPABASE_MODE`, `EMBEDDINGS_MODE`, `ENVIRONMENT`, `RATE_LIMIT_MODE`, `ALLOWED_ORIGINS`, `PUBLIC_APP_URL`, `STRIPE_PRICE_PRO`, `STRIPE_PRICE_TEAM`, optional `STRIPE_PORTAL_CONFIGURATION_ID`, `STRIPE_SUCCESS_PATH`, `STRIPE_CANCEL_PATH`.
 - Secrets (set with `wrangler secret put NAME` in Cloudflare, never in `[vars]`): `SUPABASE_SERVICE_ROLE_KEY`, `OPENAI_API_KEY`, `API_KEY_SALT`, `MASTER_ADMIN_TOKEN`, `STRIPE_SECRET_KEY`, `STRIPE_WEBHOOK_SECRET`.
@@ -13,16 +17,18 @@
 
   [[migrations]]
   tag = "v1"
-  new_classes = ["RateLimitDO"]
+  new_sqlite_classes = ["RateLimitDO"]
   ```
 
 ## Validation & guardrails
 - Runtime: startup checks fail with `CONFIG_ERROR` if secrets are missing in prod/staging (message tells you to run `wrangler secret put ...`).
-- Static: `pnpm check:wrangler` blocks commits if forbidden secrets appear under `[vars]` in `apps/api/wrangler.toml`.
+- Static: `pnpm check:wrangler` blocks commits if secret-like values appear in `wrangler.toml` vars blocks (`[vars]` and `[env.<name>.vars]`).
 
 ## Deploy steps (prod/staging)
 1) Run `pnpm check:wrangler && pnpm typecheck && pnpm test`.
 2) Set/update secrets: `wrangler secret put SUPABASE_SERVICE_ROLE_KEY` (repeat for others).
-3) Verify `[vars]` only contains safe values; ensure `ENVIRONMENT=prod` (or `staging`), `SUPABASE_MODE` not `stub`, `EMBEDDINGS_MODE=openai`.
-4) Deploy: `cd apps/api && wrangler deploy`.
+3) Verify `[vars]` only contains safe values; ensure `ENVIRONMENT=production` (or `staging`), `SUPABASE_MODE` not `stub`, `EMBEDDINGS_MODE=openai`.
+4) Deploy with repo scripts (no global wrangler dependency):
+   - Staging: `pnpm --filter @memorynode/api deploy:staging`
+   - Production: `pnpm --filter @memorynode/api deploy:production`
 5) Post-deploy: verify `/healthz`, `/v1/memories`, `/v1/search`, `/v1/billing/status`.
