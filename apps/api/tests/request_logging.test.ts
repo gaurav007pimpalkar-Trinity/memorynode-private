@@ -20,7 +20,7 @@ function findRequestSummary(logSpy: ReturnType<typeof vi.spyOn>) {
     if (typeof first !== "string") continue;
     try {
       const parsed = JSON.parse(first) as Record<string, unknown>;
-      if (parsed.event_name === "request_summary") return parsed;
+      if (parsed.event_name === "request_completed") return parsed;
     } catch {
       // ignore non-JSON logs
     }
@@ -33,15 +33,16 @@ afterEach(() => {
 });
 
 describe("request summary logging", () => {
-  it("emits one structured summary for successful requests", async () => {
+  it("emits one structured completion log for successful requests", async () => {
     const logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
     const res = await api.fetch(new Request("http://localhost/healthz"), env as unknown as FetchEnv);
     expect(res.status).toBe(200);
+    expect(res.headers.get("x-request-id")).toEqual(expect.any(String));
 
     const summary = findRequestSummary(logSpy);
     expect(summary).toBeTruthy();
     expect(summary).toMatchObject({
-      event_name: "request_summary",
+      event_name: "request_completed",
       route: "/healthz",
       method: "GET",
       status: 200,
@@ -55,16 +56,35 @@ describe("request summary logging", () => {
     const logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
     const res = await api.fetch(new Request("http://localhost/not-found"), env as unknown as FetchEnv);
     expect(res.status).toBe(404);
+    expect(res.headers.get("x-request-id")).toEqual(expect.any(String));
+    const json = (await res.json()) as { request_id?: string; error: { code: string; message: string } };
+    expect(json.request_id).toBe(res.headers.get("x-request-id"));
+    expect(json.error.code).toBe("NOT_FOUND");
 
     const summary = findRequestSummary(logSpy);
     expect(summary).toBeTruthy();
     expect(summary).toMatchObject({
-      event_name: "request_summary",
+      event_name: "request_completed",
       route: "/not-found",
       method: "GET",
       status: 404,
       error_code: "NOT_FOUND",
       error_message: "Not found",
     });
+  });
+
+  it("respects inbound x-request-id and propagates it to headers and logs", async () => {
+    const logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
+    const requestId = "req-from-client-123";
+    const req = new Request("http://localhost/healthz", {
+      headers: { "x-request-id": requestId },
+    });
+    const res = await api.fetch(req, env as unknown as FetchEnv);
+    expect(res.status).toBe(200);
+    expect(res.headers.get("x-request-id")).toBe(requestId);
+
+    const summary = findRequestSummary(logSpy);
+    expect(summary).toBeTruthy();
+    expect(summary?.request_id).toBe(requestId);
   });
 });

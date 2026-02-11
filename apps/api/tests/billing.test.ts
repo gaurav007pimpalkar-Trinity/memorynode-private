@@ -21,6 +21,9 @@ const stripeMocks = {
   checkout: { sessions: { create: vi.fn() } },
   billingPortal: { sessions: { create: vi.fn() } },
   webhooks: { constructEvent: vi.fn() },
+  subscriptions: { retrieve: vi.fn() },
+  invoices: { retrieve: vi.fn() },
+  events: { retrieve: vi.fn() },
 };
 
 vi.mock("stripe", () => {
@@ -32,6 +35,9 @@ vi.mock("stripe", () => {
       checkout = stripeMocks.checkout;
       billingPortal = stripeMocks.billingPortal;
       webhooks = stripeMocks.webhooks;
+      subscriptions = stripeMocks.subscriptions;
+      invoices = stripeMocks.invoices;
+      events = stripeMocks.events;
       constructor() {}
     },
   };
@@ -42,6 +48,9 @@ beforeEach(() => {
   stripeMocks.checkout.sessions.create.mockReset();
   stripeMocks.billingPortal.sessions.create.mockReset();
   stripeMocks.webhooks.constructEvent.mockReset();
+  stripeMocks.subscriptions.retrieve.mockReset();
+  stripeMocks.invoices.retrieve.mockReset();
+  stripeMocks.events.retrieve.mockReset();
 });
 
 type WorkspaceRow = {
@@ -53,6 +62,23 @@ type WorkspaceRow = {
   stripe_price_id: string | null;
   current_period_end: string | null;
   cancel_at_period_end: boolean;
+  stripe_last_event_id: string | null;
+  stripe_last_event_type: string | null;
+  stripe_last_event_created: number | null;
+};
+
+type StripeWebhookRow = {
+  event_id: string;
+  status?: string | null;
+  event_type?: string | null;
+  event_created?: number | null;
+  processed_at?: string | null;
+  request_id?: string | null;
+  workspace_id?: string | null;
+  customer_id?: string | null;
+  subscription_id?: string | null;
+  defer_reason?: string | null;
+  last_error?: string | null;
 };
 
 function makeSupabase(options?: {
@@ -60,6 +86,7 @@ function makeSupabase(options?: {
   plan_status?: WorkspaceRow["plan_status"];
   workspace?: Partial<WorkspaceRow>;
   usage?: { writes: number; reads: number; embeds: number };
+  failWorkspaceUpdates?: number;
 }) {
   const workspace: WorkspaceRow = {
     id: options?.workspace?.id ?? "ws1",
@@ -70,13 +97,20 @@ function makeSupabase(options?: {
     stripe_price_id: options?.workspace?.stripe_price_id ?? null,
     current_period_end: options?.workspace?.current_period_end ?? null,
     cancel_at_period_end: options?.workspace?.cancel_at_period_end ?? false,
+    stripe_last_event_id: options?.workspace?.stripe_last_event_id ?? null,
+    stripe_last_event_type: options?.workspace?.stripe_last_event_type ?? null,
+    stripe_last_event_created: options?.workspace?.stripe_last_event_created ?? null,
   };
 
   const usage = options?.usage ?? { writes: 0, reads: 0, embeds: 0 };
-  const stripeEvents: string[] = [];
+  const stripeEvents = new Map<string, StripeWebhookRow>();
+  let billingUpdateCount = 0;
+  let remainingWorkspaceUpdateFailures = options?.failWorkspaceUpdates ?? 0;
 
   return {
     workspace,
+    getBillingUpdateCount: () => billingUpdateCount,
+    getWebhookRow: (eventId: string) => stripeEvents.get(eventId),
     from(table: string) {
       if (table === "app_settings") {
         return {
@@ -115,6 +149,11 @@ function makeSupabase(options?: {
           single: async () => ({ data: workspace, error: null }),
           update: (fields: Partial<WorkspaceRow>) => ({
             eq: () => {
+              if (remainingWorkspaceUpdateFailures > 0) {
+                remainingWorkspaceUpdateFailures -= 1;
+                return { data: null, error: { message: "transient workspace update failure" } };
+              }
+              billingUpdateCount += 1;
               Object.assign(workspace, fields);
               return { data: [workspace], error: null };
             },
@@ -166,24 +205,38 @@ function makeSupabase(options?: {
           select: () => ({
             eq: (_col: string, val: unknown) => ({
               maybeSingle: async () => ({
-                data: stripeEvents.includes(val as string) ? { event_id: val } : null,
+                data: stripeEvents.get(String(val)) ?? null,
                 error: null,
               }),
             }),
           }),
-          insert: (rows: Array<{ event_id: string }> | { event_id: string }) => {
+          insert: (rows: Array<StripeWebhookRow> | StripeWebhookRow) => {
             const list = Array.isArray(rows) ? rows : [rows];
-            const { event_id } = list[0];
-            if (stripeEvents.includes(event_id)) {
-              return { data: null, error: { code: "23505", message: "duplicate" } };
-            }
-            stripeEvents.push(event_id);
+            const row = list[0];
             return {
-              select: () => ({
-                maybeSingle: async () => ({ data: { event_id }, error: null }),
-              }),
+              select: () => {
+                const runner = async () => {
+                  if (stripeEvents.has(row.event_id)) {
+                    return { data: null, error: { code: "23505", message: "duplicate" } };
+                  }
+                  stripeEvents.set(row.event_id, { ...row });
+                  return { data: stripeEvents.get(row.event_id) ?? null, error: null };
+                };
+                return {
+                  maybeSingle: runner,
+                  single: runner,
+                };
+              },
             };
           },
+          update: (fields: Partial<StripeWebhookRow>) => ({
+            eq: (_col: string, val: unknown) => {
+              const key = String(val);
+              const existing = stripeEvents.get(key);
+              if (existing) Object.assign(existing, fields);
+              return { data: existing ? [existing] : [], error: null };
+            },
+          }),
         };
       }
       throw new Error(`Unexpected table ${table}`);
@@ -191,7 +244,7 @@ function makeSupabase(options?: {
     rpc() {
       return { data: [], error: null };
     },
-  } as unknown as SupabaseClient & { workspace: WorkspaceRow };
+  } as unknown as SupabaseClient & { workspace: WorkspaceRow; getBillingUpdateCount: () => number };
 }
 
 function makeEnv(overrides?: Record<string, unknown>): Record<string, unknown> {
@@ -489,14 +542,18 @@ describe("billing webhook", () => {
       new Request("http://localhost/v1/billing/webhook", { method: "POST", body: "{}" }),
       webhookEnv as Record<string, unknown>,
       makeSupabase() as SupabaseClient,
+      "req-sig",
     );
     expect(res.status).toBe(400);
-    const json = await res.json();
-    expect(json.error.code).toBe("WEBHOOK_SIGNATURE_INVALID");
+    const json = (await res.json()) as { request_id?: string; error: { code: string } };
+    expect(json.error.code).toBe("invalid_webhook_signature");
+    expect(json.request_id).toBe("req-sig");
   });
 
   it("updates workspace on subscription update", async () => {
     const event = {
+      id: "evt_sub_update_1",
+      created: 1_700_000_100,
       type: "customer.subscription.updated",
       data: {
         object: {
@@ -527,6 +584,8 @@ describe("billing webhook", () => {
 
   it("marks workspace past_due on payment failure", async () => {
     const event = {
+      id: "evt_invoice_failed_1",
+      created: 1_700_000_200,
       type: "invoice.payment_failed",
       data: {
         object: {
@@ -546,6 +605,276 @@ describe("billing webhook", () => {
     expect(res.status).toBe(200);
     expect(supabase.workspace.plan_status).toBe("past_due");
     expect(supabase.workspace.plan).toBe("free");
+  });
+
+  it("stores workspace-missing webhook as deferred and processes it once mapping exists", async () => {
+    const event = {
+      id: "evt_deferred_1",
+      created: 1_700_000_250,
+      type: "customer.subscription.updated",
+      data: {
+        object: {
+          id: "sub_deferred",
+          customer: "cus_deferred",
+          status: "active",
+          current_period_end: 1_700_000_800,
+          cancel_at_period_end: false,
+          metadata: { workspace_id: "ws-missing" },
+          items: { data: [{ price: { id: "price_123" } }] },
+        },
+      },
+    } as unknown as Stripe.Event;
+    stripeMocks.webhooks.constructEvent.mockReturnValue(event);
+    const supabase = makeSupabase() as SupabaseClient & {
+      workspace: WorkspaceRow;
+      getBillingUpdateCount: () => number;
+      getWebhookRow: (eventId: string) => StripeWebhookRow | undefined;
+    };
+
+    const makeReq = () =>
+      new Request("http://localhost/v1/billing/webhook", {
+        method: "POST",
+        headers: { "stripe-signature": "sig" },
+        body: "{}",
+      });
+
+    const deferred = await handleBillingWebhook(makeReq(), webhookEnv as Record<string, unknown>, supabase, "req-deferred-1");
+    expect(deferred.status).toBe(202);
+    const deferredJson = await deferred.json();
+    expect(deferredJson.error.code).toBe("webhook_deferred");
+    expect(deferredJson.request_id).toBe("req-deferred-1");
+    const deferredRow = supabase.getWebhookRow("evt_deferred_1");
+    expect(deferredRow?.status).toBe("deferred");
+    expect(deferredRow?.defer_reason).toBe("workspace_not_found");
+    expect(deferredRow?.subscription_id).toBe("sub_deferred");
+
+    supabase.workspace.stripe_customer_id = "cus_deferred";
+    const processed = await handleBillingWebhook(makeReq(), webhookEnv as Record<string, unknown>, supabase, "req-deferred-2");
+    expect(processed.status).toBe(200);
+    expect(supabase.workspace.plan_status).toBe("active");
+    expect(supabase.workspace.stripe_subscription_id).toBe("sub_deferred");
+    expect(supabase.getWebhookRow("evt_deferred_1")?.status).toBe("processed");
+    expect(supabase.getBillingUpdateCount()).toBe(1);
+
+    const replay = await handleBillingWebhook(makeReq(), webhookEnv as Record<string, unknown>, supabase, "req-deferred-3");
+    expect(replay.status).toBe(200);
+    expect(supabase.getBillingUpdateCount()).toBe(1);
+  });
+
+  it("treats replayed webhook event ids as no-op", async () => {
+    const event = {
+      id: "evt_replay_1",
+      created: 1_700_000_300,
+      type: "customer.subscription.updated",
+      data: {
+        object: {
+          id: "sub_replay",
+          customer: "cus_replay",
+          status: "active",
+          current_period_end: 1_700_000_500,
+          cancel_at_period_end: false,
+          metadata: { workspace_id: "ws1" },
+          items: { data: [{ price: { id: "price_123" } }] },
+        },
+      },
+    } as unknown as Stripe.Event;
+    stripeMocks.webhooks.constructEvent.mockReturnValue(event);
+    const supabase = makeSupabase({ workspace: { stripe_customer_id: "cus_replay" } }) as SupabaseClient & {
+      workspace: WorkspaceRow;
+      getBillingUpdateCount: () => number;
+    };
+
+    const makeReq = () =>
+      new Request("http://localhost/v1/billing/webhook", {
+        method: "POST",
+        headers: { "stripe-signature": "sig" },
+        body: "{}",
+      });
+
+    const first = await handleBillingWebhook(makeReq(), webhookEnv as Record<string, unknown>, supabase, "req-replay-1");
+    const second = await handleBillingWebhook(makeReq(), webhookEnv as Record<string, unknown>, supabase, "req-replay-2");
+
+    expect(first.status).toBe(200);
+    expect(second.status).toBe(200);
+    expect(supabase.workspace.plan_status).toBe("active");
+    expect(supabase.workspace.stripe_last_event_id).toBe("evt_replay_1");
+    expect(supabase.getBillingUpdateCount()).toBe(1);
+  });
+
+  it("ignores stale out-of-order webhook updates by event.created", async () => {
+    const newer = {
+      id: "evt_newer",
+      created: 2_000,
+      type: "customer.subscription.updated",
+      data: {
+        object: {
+          id: "sub_order",
+          customer: "cus_order",
+          status: "active",
+          current_period_end: 2_500,
+          cancel_at_period_end: false,
+          metadata: { workspace_id: "ws1" },
+          items: { data: [{ price: { id: "price_123" } }] },
+        },
+      },
+    } as unknown as Stripe.Event;
+    const older = {
+      id: "evt_older",
+      created: 1_000,
+      type: "customer.subscription.created",
+      data: {
+        object: {
+          id: "sub_order",
+          customer: "cus_order",
+          status: "canceled",
+          current_period_end: 1_500,
+          cancel_at_period_end: true,
+          metadata: { workspace_id: "ws1" },
+          items: { data: [{ price: { id: "price_123" } }] },
+        },
+      },
+    } as unknown as Stripe.Event;
+    stripeMocks.webhooks.constructEvent.mockReturnValueOnce(newer).mockReturnValueOnce(older);
+    const supabase = makeSupabase({ workspace: { stripe_customer_id: "cus_order" } }) as SupabaseClient & {
+      workspace: WorkspaceRow;
+      getBillingUpdateCount: () => number;
+    };
+
+    const makeReq = () =>
+      new Request("http://localhost/v1/billing/webhook", {
+        method: "POST",
+        headers: { "stripe-signature": "sig" },
+        body: "{}",
+      });
+
+    const first = await handleBillingWebhook(makeReq(), webhookEnv as Record<string, unknown>, supabase, "req-newer");
+    const second = await handleBillingWebhook(makeReq(), webhookEnv as Record<string, unknown>, supabase, "req-older");
+
+    expect(first.status).toBe(200);
+    expect(second.status).toBe(200);
+    expect(supabase.workspace.plan_status).toBe("active");
+    expect(supabase.workspace.plan).toBe("pro");
+    expect(supabase.workspace.stripe_last_event_id).toBe("evt_newer");
+    expect(supabase.workspace.stripe_last_event_created).toBe(2_000);
+    expect(supabase.getBillingUpdateCount()).toBe(1);
+  });
+
+  it("same-second tie keeps old behavior with reconcile off and uses canonical state with reconcile on", async () => {
+    const event = {
+      id: "evt_a_tie",
+      created: 5_000,
+      type: "customer.subscription.deleted",
+      data: {
+        object: {
+          id: "sub_tie",
+          customer: "cus_tie",
+          status: "canceled",
+          current_period_end: 5_100,
+          cancel_at_period_end: true,
+          metadata: { workspace_id: "ws1" },
+          items: { data: [{ price: { id: "price_123" } }] },
+        },
+      },
+    } as unknown as Stripe.Event;
+    stripeMocks.webhooks.constructEvent.mockReturnValue(event);
+
+    const supabaseOff = makeSupabase({
+      workspace: {
+        stripe_customer_id: "cus_tie",
+        stripe_subscription_id: "sub_tie",
+        plan: "pro",
+        plan_status: "active",
+        stripe_last_event_created: 5_000,
+        stripe_last_event_id: "evt_z_tie",
+      },
+    }) as SupabaseClient & { workspace: WorkspaceRow };
+    const offRes = await handleBillingWebhook(
+      new Request("http://localhost/v1/billing/webhook", {
+        method: "POST",
+        headers: { "stripe-signature": "sig" },
+        body: "{}",
+      }),
+      { ...webhookEnv, BILLING_RECONCILE_ON_AMBIGUITY: "0" } as Record<string, unknown>,
+      supabaseOff,
+      "req-tie-off",
+    );
+    expect(offRes.status).toBe(200);
+    expect(supabaseOff.workspace.plan_status).toBe("active");
+    expect(stripeMocks.subscriptions.retrieve).not.toHaveBeenCalled();
+
+    stripeMocks.subscriptions.retrieve.mockResolvedValue({
+      id: "sub_tie",
+      customer: "cus_tie",
+      status: "canceled",
+      current_period_end: 5_200,
+      cancel_at_period_end: true,
+      metadata: { workspace_id: "ws1" },
+      items: { data: [{ price: { id: "price_123" } }] },
+    });
+    const supabaseOn = makeSupabase({
+      workspace: {
+        stripe_customer_id: "cus_tie",
+        stripe_subscription_id: "sub_tie",
+        plan: "pro",
+        plan_status: "active",
+        stripe_last_event_created: 5_000,
+        stripe_last_event_id: "evt_z_tie",
+      },
+    }) as SupabaseClient & { workspace: WorkspaceRow };
+    const onRes = await handleBillingWebhook(
+      new Request("http://localhost/v1/billing/webhook", {
+        method: "POST",
+        headers: { "stripe-signature": "sig" },
+        body: "{}",
+      }),
+      { ...webhookEnv, BILLING_RECONCILE_ON_AMBIGUITY: "1" } as Record<string, unknown>,
+      supabaseOn,
+      "req-tie-on",
+    );
+    expect(onRes.status).toBe(200);
+    expect(stripeMocks.subscriptions.retrieve).toHaveBeenCalledWith("sub_tie");
+    expect(supabaseOn.workspace.plan_status).toBe("canceled");
+    expect(supabaseOn.workspace.plan).toBe("free");
+  });
+
+  it("allows retry after transient processing failure without duplicating side effects", async () => {
+    const event = {
+      id: "evt_retry_once",
+      created: 3_000,
+      type: "customer.subscription.updated",
+      data: {
+        object: {
+          id: "sub_retry",
+          customer: "cus_retry",
+          status: "active",
+          current_period_end: 3_500,
+          cancel_at_period_end: false,
+          metadata: { workspace_id: "ws1" },
+          items: { data: [{ price: { id: "price_123" } }] },
+        },
+      },
+    } as unknown as Stripe.Event;
+    stripeMocks.webhooks.constructEvent.mockReturnValue(event);
+    const supabase = makeSupabase({
+      workspace: { stripe_customer_id: "cus_retry" },
+      failWorkspaceUpdates: 1,
+    }) as SupabaseClient & { workspace: WorkspaceRow; getBillingUpdateCount: () => number };
+
+    const makeReq = () =>
+      new Request("http://localhost/v1/billing/webhook", {
+        method: "POST",
+        headers: { "stripe-signature": "sig" },
+        body: "{}",
+      });
+
+    const first = await handleBillingWebhook(makeReq(), webhookEnv as Record<string, unknown>, supabase, "req-retry-1");
+    expect(first.status).toBe(500);
+
+    const second = await handleBillingWebhook(makeReq(), webhookEnv as Record<string, unknown>, supabase, "req-retry-2");
+    expect(second.status).toBe(200);
+    expect(supabase.workspace.plan_status).toBe("active");
+    expect(supabase.workspace.stripe_last_event_id).toBe("evt_retry_once");
+    expect(supabase.getBillingUpdateCount()).toBe(1);
   });
 });
 
@@ -675,6 +1004,6 @@ describe("billing endpoint auth", () => {
     );
     expect(res.status).toBe(400);
     const json = await res.json();
-    expect(json.error.code).toBe("WEBHOOK_SIGNATURE_INVALID");
+    expect(json.error.code).toBe("invalid_webhook_signature");
   });
 });

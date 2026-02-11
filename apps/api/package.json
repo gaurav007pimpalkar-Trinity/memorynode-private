@@ -4,8 +4,11 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "dev": "wrangler dev",
-    "build": "wrangler publish --dry-run"
+    "dev": "pnpm exec wrangler dev",
+    "build": "pnpm exec wrangler deploy --env staging --dry-run",
+    "deploy:staging": "pnpm exec wrangler deploy --env staging",
+    "deploy:canary": "pnpm exec wrangler deploy --env canary",
+    "deploy:production": "pnpm exec wrangler deploy --env production"
   },
   "dependencies": {
     "@supabase/supabase-js": "^2.45.2",

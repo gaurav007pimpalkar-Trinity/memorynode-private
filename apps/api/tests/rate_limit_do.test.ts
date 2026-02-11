@@ -90,7 +90,7 @@ describe("rate limiting via Durable Object", () => {
     );
     expect(second.status).toBe(429);
     const body = await second.json();
-    expect(body.error.code).toBe("RATE_LIMITED");
+    expect(body.error.code).toBe("rate_limited");
   });
 
   it("fails closed when DO call errors", async () => {

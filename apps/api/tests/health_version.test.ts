@@ -19,16 +19,19 @@ describe("/healthz version stamp", () => {
     const res = await api.fetch(new Request("http://localhost/healthz"), baseEnv as unknown as FetchEnv);
     const json = await res.json();
     expect(res.status).toBe(200);
+    expect(res.headers.get("x-request-id")).toEqual(expect.any(String));
     expect(json.status).toBe("ok");
     expect(json.version).toBe("dev");
     expect(json.stage).toBeUndefined();
   });
 
   it("returns supplied BUILD_VERSION and stage", async () => {
-    const env = { ...baseEnv, BUILD_VERSION: "test-version", ENVIRONMENT: "staging" };
+    const env = { ...baseEnv, BUILD_VERSION: "test-version", ENVIRONMENT: "staging", GIT_SHA: "abc1234" };
     const res = await api.fetch(new Request("http://localhost/healthz"), env as unknown as FetchEnv);
     const json = await res.json();
     expect(json.version).toBe("test-version");
+    expect(json.build_version).toBe("test-version");
+    expect(json.git_sha).toBe("abc1234");
     expect(json.stage).toBe("staging");
   });
 });

@@ -28,6 +28,35 @@ bindings = [
 tag = "v1"
 new_sqlite_classes = ["RateLimitDO"]
 
+[env.staging.vars]
+EMBEDDINGS_MODE = "openai"
+ENVIRONMENT = "staging"
+RATE_LIMIT_MODE = "on"
+BILLING_RECONCILE_ON_AMBIGUITY = "0"
+BILLING_WEBHOOKS_ENABLED = "1"
+RATE_LIMIT_MAX = "60"
+RATE_LIMIT_WINDOW_MS = "60000"
+
+[env.canary]
+name = "memorynode-api-canary"
+[env.canary.durable_objects]
+bindings = [
+  { name = "RATE_LIMIT_DO", class_name = "RateLimitDO" }
+]
+
+[[env.canary.migrations]]
+tag = "v1"
+new_sqlite_classes = ["RateLimitDO"]
+
+[env.canary.vars]
+EMBEDDINGS_MODE = "openai"
+ENVIRONMENT = "canary"
+RATE_LIMIT_MODE = "on"
+BILLING_RECONCILE_ON_AMBIGUITY = "1"
+BILLING_WEBHOOKS_ENABLED = "1"
+RATE_LIMIT_MAX = "60"
+RATE_LIMIT_WINDOW_MS = "60000"
+
 [env.production]
 name = "memorynode-api"
 [env.production.durable_objects]
@@ -43,3 +72,7 @@ new_sqlite_classes = ["RateLimitDO"]
 EMBEDDINGS_MODE = "openai"
 ENVIRONMENT = "production"
 RATE_LIMIT_MODE = "on"
+BILLING_RECONCILE_ON_AMBIGUITY = "1"
+BILLING_WEBHOOKS_ENABLED = "1"
+RATE_LIMIT_MAX = "60"
+RATE_LIMIT_WINDOW_MS = "60000"

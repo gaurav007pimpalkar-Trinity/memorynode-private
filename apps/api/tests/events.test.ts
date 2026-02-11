@@ -8,6 +8,9 @@ const stripeMocks = {
   checkout: { sessions: { create: vi.fn() } },
   billingPortal: { sessions: { create: vi.fn() } },
   webhooks: { constructEvent: vi.fn() },
+  subscriptions: { retrieve: vi.fn() },
+  invoices: { retrieve: vi.fn() },
+  events: { retrieve: vi.fn() },
 };
 
 vi.mock("stripe", () => {
@@ -19,6 +22,9 @@ vi.mock("stripe", () => {
       checkout = stripeMocks.checkout;
       billingPortal = stripeMocks.billingPortal;
       webhooks = stripeMocks.webhooks;
+      subscriptions = stripeMocks.subscriptions;
+      invoices = stripeMocks.invoices;
+      events = stripeMocks.events;
       constructor() {}
     },
   };
@@ -43,7 +49,7 @@ function makeSupabase(options?: {
   const usage = options?.usage ?? { writes: 0, reads: 0, embeds: 0 };
   const planStatus = options?.plan_status ?? "free";
   const workspaceRow = { id: "ws1", plan_status: planStatus };
-  const stripeEvents: string[] = [];
+  const stripeEvents = new Map<string, Record<string, unknown>>();
 
   return {
     events,
@@ -125,24 +131,37 @@ function makeSupabase(options?: {
           select: () => ({
             eq: (_col: string, val: unknown) => ({
               maybeSingle: async () => ({
-                data: stripeEvents.includes(val as string) ? { event_id: val } : null,
+                data: stripeEvents.get(String(val)) ?? null,
                 error: null,
               }),
             }),
           }),
-          insert: (rows: Array<{ event_id: string }> | { event_id: string }) => {
+          insert: (rows: Array<Record<string, unknown>> | Record<string, unknown>) => {
             const list = Array.isArray(rows) ? rows : [rows];
-            const { event_id } = list[0];
-            if (stripeEvents.includes(event_id)) {
-              return { data: null, error: { code: "23505", message: "duplicate" } };
-            }
-            stripeEvents.push(event_id);
+            const row = list[0];
             return {
-              select: () => ({
-                maybeSingle: async () => ({ data: { event_id }, error: null }),
-              }),
+              select: () => {
+                const run = async () => {
+                  if (stripeEvents.has(String(row.event_id))) {
+                    return { data: null, error: { code: "23505", message: "duplicate" } };
+                  }
+                  stripeEvents.set(String(row.event_id), { ...row });
+                  return { data: stripeEvents.get(String(row.event_id)) ?? null, error: null };
+                };
+                return {
+                  maybeSingle: run,
+                  single: run,
+                };
+              },
             };
           },
+          update: (fields: Record<string, unknown>) => ({
+            eq: (_col: string, val: unknown) => {
+              const existing = stripeEvents.get(String(val));
+              if (existing) Object.assign(existing, fields);
+              return { data: existing ? [existing] : [], error: null };
+            },
+          }),
         };
       }
       if (table === "usage_daily") {
@@ -179,6 +198,9 @@ beforeEach(() => {
   stripeMocks.checkout.sessions.create.mockReset();
   stripeMocks.billingPortal.sessions.create.mockReset();
   stripeMocks.webhooks.constructEvent.mockReset();
+  stripeMocks.subscriptions.retrieve.mockReset();
+  stripeMocks.invoices.retrieve.mockReset();
+  stripeMocks.events.retrieve.mockReset();
 });
 
 describe("product events", () => {
@@ -256,6 +278,8 @@ const env = {
   it("emits upgrade_activated when status becomes active", async () => {
     const supabase = makeSupabase({ plan_status: "free" });
     stripeMocks.webhooks.constructEvent.mockReturnValue({
+      id: "evt_upgrade_1",
+      created: 1_700_000_111,
       type: "customer.subscription.updated",
       data: {
         object: {

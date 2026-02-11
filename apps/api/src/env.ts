@@ -13,6 +13,7 @@ export interface Env {
   ENVIRONMENT?: string;
   NODE_ENV?: string;
   BUILD_VERSION?: string;
+  GIT_SHA?: string;
   RATE_LIMIT_DO: DurableObjectNamespace;
   ALLOWED_ORIGINS?: string;
   MAX_BODY_BYTES?: string;
@@ -21,6 +22,9 @@ export interface Env {
   MAX_EXPORT_BYTES?: string;
   STRIPE_SECRET_KEY?: string;
   STRIPE_WEBHOOK_SECRET?: string;
+  STRIPE_WEBHOOK_TOLERANCE_SEC?: string;
+  BILLING_RECONCILE_ON_AMBIGUITY?: string;
+  BILLING_WEBHOOKS_ENABLED?: string;
   STRIPE_PRICE_PRO?: string;
   STRIPE_PRICE_TEAM?: string;
   PUBLIC_APP_URL?: string;

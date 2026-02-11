@@ -12,6 +12,7 @@ import {
 } from "./limits.js";
 import type { DurableObjectNamespace } from "@cloudflare/workers-types";
 import { RateLimitDO } from "./rateLimitDO.js";
+import { logger, redact } from "./logger.js";
 
 interface Env {
   SUPABASE_URL: string;
@@ -25,6 +26,7 @@ interface Env {
   ENVIRONMENT?: string;
   NODE_ENV?: string;
   BUILD_VERSION?: string;
+  GIT_SHA?: string;
   RATE_LIMIT_DO: DurableObjectNamespace;
   RATE_LIMIT_MODE?: string;
   ALLOWED_ORIGINS?: string;
@@ -34,6 +36,9 @@ interface Env {
   MAX_EXPORT_BYTES?: string;
   STRIPE_SECRET_KEY?: string;
   STRIPE_WEBHOOK_SECRET?: string;
+  STRIPE_WEBHOOK_TOLERANCE_SEC?: string;
+  BILLING_RECONCILE_ON_AMBIGUITY?: string;
+  BILLING_WEBHOOKS_ENABLED?: string;
   STRIPE_PRICE_PRO?: string;
   STRIPE_PRICE_TEAM?: string;
   PUBLIC_APP_URL?: string;
@@ -134,8 +139,11 @@ const RRF_K = 60;
 const ALLOWED_PLAN_STATUS = new Set(["free", "trialing", "active", "past_due", "canceled"]);
 const DEFAULT_SUCCESS_PATH = "/settings/billing?status=success";
 const DEFAULT_CANCEL_PATH = "/settings/billing?status=canceled";
+const DEFAULT_STRIPE_WEBHOOK_TOLERANCE_SEC = 300;
+const DEFAULT_WEBHOOK_REPROCESS_LIMIT = 50;
 let requestCorsHeaders: Record<string, string> = {};
 let securityHeaders: Record<string, string> = {};
+let requestIdHeaderValue = "";
 type ProductEventContext = {
   workspaceId?: string | null;
   requestId?: string;
@@ -147,12 +155,10 @@ type ProductEventContext = {
 };
 
 function emitEventLog(event_name: string, fields: Record<string, unknown>): void {
-  const base = {
-    event_name,
-    ts: new Date().toISOString(),
+  logger.info({
+    event: event_name,
     ...fields,
-  };
-  console.log(JSON.stringify(base));
+  });
 }
 
 async function emitProductEvent(
@@ -187,7 +193,12 @@ async function emitProductEvent(
       props: props ?? {},
     });
   } catch (err) {
-    console.warn("product_event_emit_failed", { event: eventName, message: redact((err as Error)?.message, "message") });
+    logger.error({
+      event: "product_event_emit_failed",
+      event_target: eventName,
+      message: redact((err as Error)?.message, "message"),
+      err,
+    });
   }
 }
 
@@ -201,7 +212,10 @@ function normalizePlanStatus(status: unknown): AuthContext["planStatus"] {
     return status as AuthContext["planStatus"];
   }
   if (status !== undefined) {
-    console.warn("Invalid plan_status value", { plan_status: redact(status, "plan_status") });
+    logger.error({
+      event: "invalid_plan_status",
+      plan_status: redact(status, "plan_status"),
+    });
   }
   return "free";
 }
@@ -353,24 +367,64 @@ const clearSecurityHeadersForRequest = () => {
   securityHeaders = {};
 };
 const getSecurityHeaders = () => securityHeaders;
+const setRequestIdForRequest = (requestId: string) => {
+  requestIdHeaderValue = requestId;
+};
+const clearRequestIdForRequest = () => {
+  requestIdHeaderValue = "";
+};
+const getRequestIdHeaders = (): Record<string, string> => {
+  const headers: Record<string, string> = {};
+  if (requestIdHeaderValue) {
+    headers["x-request-id"] = requestIdHeaderValue;
+  }
+  return headers;
+};
+
+const REQUEST_ID_RE = /^[A-Za-z0-9._:-]{1,128}$/;
+
+function generateRequestId(): string {
+  return typeof crypto.randomUUID === "function" ? crypto.randomUUID() : Math.random().toString(36).slice(2);
+}
+
+function resolveRequestId(request: Request): string {
+  const incoming = (request.headers.get("x-request-id") ?? "").trim();
+  if (incoming && REQUEST_ID_RE.test(incoming)) {
+    return incoming;
+  }
+  return generateRequestId();
+}
+
+function attachRequestIdToErrorPayload(data: unknown, status: number): unknown {
+  if (status < 400) return data;
+  if (!requestIdHeaderValue) return data;
+  if (!data || typeof data !== "object" || Array.isArray(data)) return data;
+  const payload = data as Record<string, unknown>;
+  if (!("error" in payload)) return data;
+  if (typeof payload.request_id === "string" && payload.request_id.length > 0) return data;
+  return { ...payload, request_id: requestIdHeaderValue };
+}
 
 const jsonResponse = (
   data: unknown,
   status = 200,
   extraHeaders?: Record<string, string>,
-): Response =>
-  new Response(JSON.stringify(data), {
+): Response => {
+  const body = attachRequestIdToErrorPayload(data, status);
+  return new Response(JSON.stringify(body), {
     status,
     headers: {
       "content-type": "application/json; charset=utf-8",
       ...getCorsHeaders(),
       ...getSecurityHeaders(),
+      ...getRequestIdHeaders(),
       ...(extraHeaders ?? {}),
     },
   });
+};
 
 const emptyResponse = (status = 204): Response =>
-  new Response(null, { status, headers: { ...getCorsHeaders(), ...getSecurityHeaders() } });
+  new Response(null, { status, headers: { ...getCorsHeaders(), ...getSecurityHeaders(), ...getRequestIdHeaders() } });
 
 type ErrorLogFields = {
   error_code?: string;
@@ -440,7 +494,8 @@ function buildSecurityHeaders(path: string): Record<string, string> {
 export default {
   async fetch(request: Request, env: Env): Promise<Response> {
     const started = Date.now();
-    const requestId = typeof crypto.randomUUID === "function" ? crypto.randomUUID() : Math.random().toString(36).slice(2);
+    const requestId = resolveRequestId(request);
+    setRequestIdForRequest(requestId);
     const ip = request.headers.get("cf-connecting-ip") ?? request.headers.get("x-forwarded-for") ?? "unknown";
     const origin = request.headers.get("origin") ?? "";
     const allowlist = parseAllowedOrigins(env.ALLOWED_ORIGINS);
@@ -472,10 +527,12 @@ export default {
         const buildVersion = (env.BUILD_VERSION ?? "").trim();
         const version = buildVersion || "dev";
         const stage = (env.ENVIRONMENT ?? env.NODE_ENV ?? "").trim();
+        const gitSha = (env.GIT_SHA ?? "").trim();
         response = jsonResponse({
           status: "ok",
           version,
           build_version: version,
+          ...(gitSha ? { git_sha: gitSha } : {}),
           ...(stage ? { stage } : {}),
         });
         return response;
@@ -561,6 +618,11 @@ export default {
         return response;
       }
 
+      if (request.method === "POST" && url.pathname === "/admin/webhooks/reprocess") {
+        response = await handleReprocessDeferredWebhooks(request, env, supabase, requestId);
+        return response;
+      }
+
       if (request.method === "POST" && url.pathname === "/v1/export") {
         response = await handleExport(request, env, supabase, auditCtx);
         return response;
@@ -577,17 +639,17 @@ export default {
       const status = isApiError(error) ? error.status ?? 500 : 500;
       const errorCode = isApiError(error) ? error.code : "INTERNAL";
       const safeMessage = redact((error as Error)?.message, "message");
-      if (status >= 500) {
-        console.error("Unhandled error", {
-          request_id: requestId,
-          route: new URL(request.url).pathname,
-          method: request.method,
-          error_code: errorCode,
-          error_message: safeMessage,
-          message: safeMessage,
-          stack: redact((error as Error)?.stack, "stack"),
-        });
-      }
+      logger.error({
+        event: "request_failed",
+        request_id: requestId,
+        route: url.pathname,
+        method: request.method,
+        status,
+        error_code: errorCode,
+        error_message: safeMessage,
+        workspace_id: auditCtx.workspaceId ?? null,
+        err: error,
+      });
       if (isApiError(error)) {
         response = jsonResponse(
           { error: { code: error.code, message: error.message } },
@@ -602,12 +664,12 @@ export default {
       );
       return response;
     } finally {
-      await emitAuditLog(request, response, started, ip, env, supabase, auditCtx, requestId);
-      const durationMs = Date.now() - started;
-      const errorFields = await extractErrorLogFields(response);
-      console.log(
-        JSON.stringify({
-          event_name: "request_summary",
+      try {
+        await emitAuditLog(request, response, started, ip, env, supabase, auditCtx, requestId);
+        const durationMs = Date.now() - started;
+        const errorFields = await extractErrorLogFields(response);
+        logger.info({
+          event: "request_completed",
           workspace_id: auditCtx.workspaceId ?? null,
           route: url.pathname,
           method: request.method,
@@ -616,10 +678,12 @@ export default {
           latency_ms: durationMs,
           request_id: requestId,
           ...errorFields,
-        }),
-      );
-      clearCorsHeadersForRequest();
-      clearSecurityHeadersForRequest();
+        });
+      } finally {
+        clearRequestIdForRequest();
+        clearCorsHeadersForRequest();
+        clearSecurityHeadersForRequest();
+      }
     }
   },
   RateLimitDO,
@@ -896,7 +960,7 @@ async function handleCreateMemory(
   const rate = await rateLimit(auth.keyHash, env);
   if (!rate.allowed) {
     return jsonResponse(
-      { error: { code: "RATE_LIMITED", message: "Rate limit exceeded" } },
+      { error: { code: "rate_limited", message: "Rate limit exceeded" } },
       429,
       rate.headers,
     );
@@ -1020,7 +1084,7 @@ async function handleListMemories(
   const rate = await rateLimit(auth.keyHash, env);
   if (!rate.allowed) {
     return jsonResponse(
-      { error: { code: "RATE_LIMITED", message: "Rate limit exceeded" } },
+      { error: { code: "rate_limited", message: "Rate limit exceeded" } },
       429,
       rate.headers,
     );
@@ -1053,7 +1117,7 @@ async function handleGetMemory(
   const rate = await rateLimit(auth.keyHash, env);
   if (!rate.allowed) {
     return jsonResponse(
-      { error: { code: "RATE_LIMITED", message: "Rate limit exceeded" } },
+      { error: { code: "rate_limited", message: "Rate limit exceeded" } },
       429,
       rate.headers,
     );
@@ -1092,7 +1156,7 @@ async function handleDeleteMemory(
   const rate = await rateLimit(auth.keyHash, env);
   if (!rate.allowed) {
     return jsonResponse(
-      { error: { code: "RATE_LIMITED", message: "Rate limit exceeded" } },
+      { error: { code: "rate_limited", message: "Rate limit exceeded" } },
       429,
       rate.headers,
     );
@@ -1117,7 +1181,7 @@ async function handleSearch(
   const rate = await rateLimit(auth.keyHash, env);
   if (!rate.allowed) {
     return jsonResponse(
-      { error: { code: "RATE_LIMITED", message: "Rate limit exceeded" } },
+      { error: { code: "rate_limited", message: "Rate limit exceeded" } },
       429,
       rate.headers,
     );
@@ -1178,7 +1242,7 @@ async function handleContext(
   const rate = await rateLimit(auth.keyHash, env);
   if (!rate.allowed) {
     return jsonResponse(
-      { error: { code: "RATE_LIMITED", message: "Rate limit exceeded" } },
+      { error: { code: "rate_limited", message: "Rate limit exceeded" } },
       429,
       rate.headers,
     );
@@ -1471,7 +1535,7 @@ export async function assertBodySize(request: Request, env: Env, overrideLimit?:
   const limit = overrideLimit ?? Number(env.MAX_BODY_BYTES ?? DEFAULT_MAX_BODY_BYTES);
   const lengthHeader = request.headers.get("content-length");
   if (lengthHeader && Number(lengthHeader) > limit) {
-    throw createHttpError(413, "PAYLOAD_TOO_LARGE", `Body exceeds ${limit} bytes`);
+    throw createHttpError(413, "payload_too_large", `Body exceeds ${limit} bytes`);
   }
   if (request.body) {
     const clone = request.clone();
@@ -1483,7 +1547,7 @@ export async function assertBodySize(request: Request, env: Env, overrideLimit?:
       if (done) break;
       received += value?.length ?? 0;
       if (received > limit) {
-        throw createHttpError(413, "PAYLOAD_TOO_LARGE", `Body exceeds ${limit} bytes`);
+        throw createHttpError(413, "payload_too_large", `Body exceeds ${limit} bytes`);
       }
     }
   }
@@ -1528,7 +1592,11 @@ async function emitAuditLog(
       user_agent: request.headers.get("user-agent") ?? null,
       request_id: requestId,
     };
-    console.log(JSON.stringify({ audit: redact(record) }));
+    logger.info({
+      event: "audit_log",
+      request_id: requestId,
+      audit: record,
+    });
     if (supabase) {
       await supabase.from("api_audit_log").insert({
         workspace_id: record.workspace_id,
@@ -1544,40 +1612,14 @@ async function emitAuditLog(
       });
     }
   } catch (err) {
-    console.error("audit_log_failed", err);
+    logger.error({
+      event: "audit_log_failed",
+      request_id: requestId,
+      route: new URL(request.url).pathname,
+      method: request.method,
+      err,
+    });
   }
-}
-
-// Redaction helpers for logging
-const SECRET_KEYS = [
-  "authorization",
-  "api_key",
-  "api-key",
-  "token",
-  "secret",
-  "master_admin_token",
-  "password",
-  "openai",
-  "anthropic",
-];
-const SECRET_PATTERNS = [/sk-[a-zA-Z0-9]{10,}/, /api[-_]?key/i];
-
-export function redact(value: unknown, keyHint?: string): unknown {
-  if (value === null || value === undefined) return value;
-  const isSecretKey = keyHint ? SECRET_KEYS.some((s) => keyHint.toLowerCase().includes(s)) : false;
-  if (typeof value === "string") {
-    const hitKey = isSecretKey;
-    const hitPattern = SECRET_PATTERNS.some((re) => re.test(value));
-    return hitKey || hitPattern ? "***REDACTED***" : value;
-  }
-  if (typeof value !== "object") return value;
-  if (Array.isArray(value)) return value.map((v) => redact(v));
-  const obj: Record<string, unknown> = {};
-  for (const [k, v] of Object.entries(value as Record<string, unknown>)) {
-    const secret = SECRET_KEYS.some((s) => k.toLowerCase().includes(s));
-    obj[k] = secret ? "***REDACTED***" : redact(v, k);
-  }
-  return obj;
 }
 
 function b64encode(bytes: Uint8Array): string {
@@ -1671,7 +1713,7 @@ export async function buildExportArtifact(
   }
   const archive = await zip.generateAsync({ type: "uint8array", compression: "DEFLATE", compressionOptions: { level: 9 } });
   if (archive.length > maxBytes) {
-    throw createHttpError(413, "PAYLOAD_TOO_LARGE", `export exceeds ${maxBytes} bytes`);
+    throw createHttpError(413, "payload_too_large", `export exceeds ${maxBytes} bytes`);
   }
   const sha = await sha256HexBytes(archive);
   return { artifact_base64: b64encode(archive), bytes: archive.length, sha256: sha, archive };
@@ -1699,7 +1741,7 @@ export async function importArtifact(
 
   const zipBytes = b64decode(artifactBase64);
   if (zipBytes.length > maxBytes) {
-    throw createHttpError(413, "PAYLOAD_TOO_LARGE", `artifact exceeds ${maxBytes} bytes`);
+    throw createHttpError(413, "payload_too_large", `artifact exceeds ${maxBytes} bytes`);
   }
   const zip = await JSZip.loadAsync(zipBytes);
   const manifestEntry = zip.file("manifest.json");
@@ -1901,8 +1943,15 @@ async function getApiKeySalt(
   }
 
   if (envSalt && dbSalt && envSalt !== dbSalt) {
-    const requestId = typeof crypto.randomUUID === "function" ? crypto.randomUUID() : "";
-    console.error("API_KEY_SALT mismatch", { request_id: requestId, env: envSalt, db: dbSalt });
+    const requestId = generateRequestId();
+    logger.error({
+      event: "api_key_salt_mismatch",
+      request_id: requestId,
+      env_present: Boolean(envSalt),
+      db_present: Boolean(dbSalt),
+      env_length: envSalt.length,
+      db_length: dbSalt.length,
+    });
     return { salt: envSalt, mismatchFatal: true };
   }
 
@@ -2232,6 +2281,7 @@ export {
   handleCreateMemory,
   handleContext,
   parseApiKeyMeta,
+  redact,
 };
 function createHttpError(
   status: number,
@@ -2434,7 +2484,7 @@ async function handleCreateWorkspace(
   const rate = await rateLimit(`admin:${token}`, env);
   if (!rate.allowed) {
     return jsonResponse(
-      { error: { code: "RATE_LIMITED", message: "Rate limit exceeded" } },
+      { error: { code: "rate_limited", message: "Rate limit exceeded" } },
       429,
       rate.headers,
     );
@@ -2477,7 +2527,7 @@ async function handleCreateApiKey(
   const rate = await rateLimit(`admin:${token}`, env);
   if (!rate.allowed) {
     return jsonResponse(
-      { error: { code: "RATE_LIMITED", message: "Rate limit exceeded" } },
+      { error: { code: "rate_limited", message: "Rate limit exceeded" } },
       429,
       rate.headers,
     );
@@ -2547,7 +2597,7 @@ async function handleListApiKeys(
   const rate = await rateLimit(`admin:${token}`, env);
   if (!rate.allowed) {
     return jsonResponse(
-      { error: { code: "RATE_LIMITED", message: "Rate limit exceeded" } },
+      { error: { code: "rate_limited", message: "Rate limit exceeded" } },
       429,
       rate.headers,
     );
@@ -2595,7 +2645,7 @@ async function handleRevokeApiKey(
   const rate = await rateLimit(`admin:${token}`, env);
   if (!rate.allowed) {
     return jsonResponse(
-      { error: { code: "RATE_LIMITED", message: "Rate limit exceeded" } },
+      { error: { code: "rate_limited", message: "Rate limit exceeded" } },
       429,
       rate.headers,
     );
@@ -2620,6 +2670,131 @@ async function handleRevokeApiKey(
   }
 
   return jsonResponse({ revoked: true }, 200, rate.headers);
+}
+
+async function handleReprocessDeferredWebhooks(
+  request: Request,
+  env: Env,
+  supabase: SupabaseClient,
+  requestId = "",
+): Promise<Response> {
+  const { token } = await requireAdmin(request, env);
+  const rate = await rateLimit(`admin:${token}`, env);
+  if (!rate.allowed) {
+    return jsonResponse(
+      { error: { code: "rate_limited", message: "Rate limit exceeded" } },
+      429,
+      rate.headers,
+    );
+  }
+
+  const url = new URL(request.url);
+  const statusFilterRaw = (url.searchParams.get("status") ?? "deferred").trim().toLowerCase();
+  if (statusFilterRaw !== "deferred" && statusFilterRaw !== "failed") {
+    return jsonResponse(
+      { error: { code: "BAD_REQUEST", message: "status must be one of: deferred, failed" } },
+      400,
+      rate.headers,
+    );
+  }
+  const parsedLimit = Number(url.searchParams.get("limit") ?? DEFAULT_WEBHOOK_REPROCESS_LIMIT);
+  const limit = Number.isFinite(parsedLimit)
+    ? Math.max(1, Math.min(500, Math.floor(parsedLimit)))
+    : DEFAULT_WEBHOOK_REPROCESS_LIMIT;
+
+  emitEventLog("webhook_reprocess_started", {
+    route: "/admin/webhooks/reprocess",
+    method: "POST",
+    request_id: requestId || null,
+    status_filter: statusFilterRaw,
+    limit,
+  });
+
+  const pending = await supabase
+    .from("stripe_webhook_events")
+    .select("event_id,event_type,event_created")
+    .eq("status", statusFilterRaw)
+    .order("event_created", { ascending: true })
+    .limit(limit);
+  if (pending.error) {
+    return jsonResponse(
+      { error: { code: "DB_ERROR", message: pending.error.message ?? "Failed to list deferred webhooks" } },
+      500,
+      rate.headers,
+    );
+  }
+
+  const rows = ((pending.data as Array<{ event_id?: unknown }> | null) ?? [])
+    .filter((row) => typeof row.event_id === "string" && row.event_id.trim().length > 0) as Array<{
+    event_id: string;
+    event_type?: string | null;
+    event_created?: number | null;
+  }>;
+
+  const stripe = getStripeClient(env);
+  let processed = 0;
+  let replayed = 0;
+  let deferred = 0;
+  let failed = 0;
+
+  for (const row of rows) {
+    try {
+      const event = (await stripe.events.retrieve(row.event_id)) as unknown as Stripe.Event;
+      const outcome = await reconcileStripeEvent(event, supabase, env, `${requestId || "admin-reprocess"}:${row.event_id}`);
+      if (outcome.outcome === "replayed") {
+        replayed += 1;
+        emitEventLog("webhook_reprocess_skipped", {
+          route: "/admin/webhooks/reprocess",
+          method: "POST",
+          request_id: requestId || null,
+          stripe_event_id: row.event_id,
+          replay_status: outcome.replayStatus ?? null,
+        });
+        continue;
+      }
+      if (outcome.outcome === "deferred") {
+        deferred += 1;
+        emitEventLog("webhook_reprocess_skipped", {
+          route: "/admin/webhooks/reprocess",
+          method: "POST",
+          request_id: requestId || null,
+          stripe_event_id: row.event_id,
+          reason: outcome.deferReason ?? "workspace_not_found",
+        });
+        continue;
+      }
+      processed += 1;
+      emitEventLog("webhook_reprocess_processed", {
+        route: "/admin/webhooks/reprocess",
+        method: "POST",
+        request_id: requestId || null,
+        stripe_event_id: row.event_id,
+        outcome: outcome.outcome,
+      });
+    } catch (err) {
+      failed += 1;
+      emitEventLog("webhook_reprocess_failed", {
+        route: "/admin/webhooks/reprocess",
+        method: "POST",
+        request_id: requestId || null,
+        stripe_event_id: row.event_id,
+        error_message: redact((err as Error)?.message, "message"),
+      });
+    }
+  }
+
+  return jsonResponse(
+    {
+      scanned: rows.length,
+      processed,
+      replayed,
+      deferred,
+      failed,
+      status_filter: statusFilterRaw,
+    },
+    200,
+    rate.headers,
+  );
 }
 
 function generateApiKey(): string {
@@ -2647,6 +2822,8 @@ export function makeExportResponse(
     const headers = {
       ...rateHeaders,
       ...getCorsHeaders(),
+      ...getSecurityHeaders(),
+      ...getRequestIdHeaders(),
       "content-type": "application/zip",
       "content-disposition": `attachment; filename="memorynode-export-${auth.workspaceId}-${date}.zip"`,
     };
@@ -2672,7 +2849,7 @@ async function handleExport(
   const auth = await authenticate(request, env, supabase, auditCtx);
   const rate = await rateLimit(auth.keyHash, env);
   if (!rate.allowed) {
-    return jsonResponse({ error: { code: "RATE_LIMITED", message: "Rate limit exceeded" } }, 429, rate.headers);
+    return jsonResponse({ error: { code: "rate_limited", message: "Rate limit exceeded" } }, 429, rate.headers);
   }
   const payload = await safeParseJson<ExportPayload>(request);
   if (!payload.ok) return jsonResponse({ error: { code: "BAD_REQUEST", message: payload.error } }, 400, rate.headers);
@@ -2693,7 +2870,7 @@ async function handleImport(
   const auth = await authenticate(request, env, supabase, auditCtx);
   const rate = await rateLimit(auth.keyHash, env);
   if (!rate.allowed) {
-    return jsonResponse({ error: { code: "RATE_LIMITED", message: "Rate limit exceeded" } }, 429, rate.headers);
+    return jsonResponse({ error: { code: "rate_limited", message: "Rate limit exceeded" } }, 429, rate.headers);
   }
   const payload = await safeParseJson<ImportPayload>(request);
   if (!payload.ok || !payload.data.artifact_base64) {
@@ -2722,7 +2899,7 @@ async function handleUsageToday(
   const rate = await rateLimit(auth.keyHash, env);
   if (!rate.allowed) {
     return jsonResponse(
-      { error: { code: "RATE_LIMITED", message: "Rate limit exceeded" } },
+      { error: { code: "rate_limited", message: "Rate limit exceeded" } },
       429,
       rate.headers,
     );
@@ -2762,7 +2939,7 @@ async function handleBillingStatus(
   const rate = await rateLimit(auth.keyHash, env);
   if (!rate.allowed) {
     return jsonResponse(
-      { error: { code: "RATE_LIMITED", message: "Rate limit exceeded" } },
+      { error: { code: "rate_limited", message: "Rate limit exceeded" } },
       429,
       rate.headers,
     );
@@ -2819,7 +2996,7 @@ async function handleBillingCheckout(
   const rate = await rateLimit(auth.keyHash, env);
   if (!rate.allowed) {
     return jsonResponse(
-      { error: { code: "RATE_LIMITED", message: "Rate limit exceeded" } },
+      { error: { code: "rate_limited", message: "Rate limit exceeded" } },
       429,
       rate.headers,
     );
@@ -2913,7 +3090,7 @@ async function handleBillingPortal(
   const rate = await rateLimit(auth.keyHash, env);
   if (!rate.allowed) {
     return jsonResponse(
-      { error: { code: "RATE_LIMITED", message: "Rate limit exceeded" } },
+      { error: { code: "rate_limited", message: "Rate limit exceeded" } },
       429,
       rate.headers,
     );
@@ -2970,13 +3147,38 @@ async function handleBillingWebhook(
   supabase: SupabaseClient,
   requestId = "",
 ): Promise<Response> {
+  if (!resolveBillingWebhooksEnabled(env)) {
+    emitEventLog("webhook_disabled", {
+      route: "/v1/billing/webhook",
+      method: "POST",
+      status: 503,
+      request_id: requestId || null,
+    });
+    return jsonResponse(
+      {
+        error: {
+          code: "BILLING_WEBHOOKS_DISABLED",
+          message: "Billing webhooks are temporarily disabled",
+        },
+        ...(requestId ? { request_id: requestId } : {}),
+      },
+      503,
+    );
+  }
   assertStripeEnvFor("/v1/billing/webhook", env);
   const stripe = getStripeClient(env);
   const signature = request.headers.get("stripe-signature") ?? "";
+  const toleranceSec = resolveStripeWebhookToleranceSeconds(env);
+  emitEventLog("webhook_received", {
+    route: "/v1/billing/webhook",
+    method: "POST",
+    request_id: requestId || null,
+    signature_present: Boolean(signature),
+  });
   let event: Stripe.Event;
   try {
     const raw = await request.text();
-    event = stripe.webhooks.constructEvent(raw, signature, env.STRIPE_WEBHOOK_SECRET!);
+    event = stripe.webhooks.constructEvent(raw, signature, env.STRIPE_WEBHOOK_SECRET!, toleranceSec);
   } catch (err) {
     emitEventLog("billing_webhook_signature_invalid", {
       route: "/v1/billing/webhook",
@@ -2984,22 +3186,316 @@ async function handleBillingWebhook(
       status: 400,
       request_id: requestId,
     });
+    logger.error({
+      event: "webhook_failed",
+      route: "/v1/billing/webhook",
+      method: "POST",
+      status: 400,
+      request_id: requestId || null,
+      error_code: "invalid_webhook_signature",
+      err,
+    });
     return jsonResponse(
-      { error: { code: "WEBHOOK_SIGNATURE_INVALID", message: "Invalid Stripe signature" } },
+      {
+        error: { code: "invalid_webhook_signature", message: "Invalid Stripe signature" },
+        ...(requestId ? { request_id: requestId } : {}),
+      },
       400,
     );
   }
 
   try {
-    await reconcileStripeEvent(event, supabase, env, requestId);
-  } catch (err) {
-    if (isApiError(err)) {
-      return jsonResponse({ error: { code: err.code, message: err.message } }, err.status ?? 500);
+    const stripeEventId = resolveStripeEventId(event);
+    const eventCreated = resolveStripeEventCreated(event);
+    emitEventLog("webhook_verified", {
+      route: "/v1/billing/webhook",
+      method: "POST",
+      request_id: requestId || null,
+      stripe_event_id: stripeEventId,
+      event_type: event.type,
+      event_created: eventCreated,
+      tolerance_sec: toleranceSec,
+    });
+    const outcome = await reconcileStripeEvent(event, supabase, env, requestId);
+    if (outcome.outcome === "replayed") {
+      emitEventLog("webhook_replayed", {
+        route: "/v1/billing/webhook",
+        method: "POST",
+        status: 200,
+        request_id: requestId || null,
+        stripe_event_id: outcome.stripeEventId,
+        event_type: outcome.eventType,
+        event_created: outcome.eventCreated,
+        replay_status: outcome.replayStatus ?? null,
+      });
+    } else {
+      if (outcome.reconciled) {
+        emitEventLog("webhook_reconciled", {
+          route: "/v1/billing/webhook",
+          method: "POST",
+          status: outcome.outcome === "deferred" ? 202 : 200,
+          request_id: requestId || null,
+          stripe_event_id: outcome.stripeEventId,
+          event_type: outcome.eventType,
+          event_created: outcome.eventCreated,
+          subscription_id: outcome.subscriptionId ?? null,
+          workspace_id: outcome.workspaceId ?? null,
+        });
+      }
+      if (outcome.outcome === "deferred") {
+        emitEventLog("webhook_deferred", {
+          route: "/v1/billing/webhook",
+          method: "POST",
+          status: 202,
+          request_id: requestId || null,
+          stripe_event_id: outcome.stripeEventId,
+          event_type: outcome.eventType,
+          event_created: outcome.eventCreated,
+          reason: outcome.deferReason ?? "workspace_not_found",
+          customer_id_redacted: redact(outcome.customerId, "stripe_customer_id"),
+          subscription_id: outcome.subscriptionId ?? null,
+        });
+        return jsonResponse(
+          {
+            error: {
+              code: "webhook_deferred",
+              message: "Webhook deferred until workspace mapping is available",
+            },
+            ...(requestId ? { request_id: requestId } : {}),
+          },
+          202,
+        );
+      }
+      emitEventLog("webhook_processed", {
+        route: "/v1/billing/webhook",
+        method: "POST",
+        status: 200,
+        request_id: requestId || null,
+        stripe_event_id: outcome.stripeEventId,
+        event_type: outcome.eventType,
+        event_created: outcome.eventCreated,
+        outcome: outcome.outcome,
+        workspace_id: outcome.workspaceId ?? null,
+      });
     }
-    return jsonResponse({ error: { code: "INTERNAL", message: "Failed to process webhook" } }, 500);
+  } catch (err) {
+    const maybeEvent = err as { stripe_event_id?: unknown; event_type?: unknown };
+    logger.error({
+      event: "webhook_failed",
+      route: "/v1/billing/webhook",
+      method: "POST",
+      status: isApiError(err) ? err.status ?? 500 : 500,
+      request_id: requestId || null,
+      stripe_event_id:
+        typeof maybeEvent.stripe_event_id === "string" ? maybeEvent.stripe_event_id : null,
+      event_type: typeof maybeEvent.event_type === "string" ? maybeEvent.event_type : null,
+      err,
+    });
+    if (isApiError(err)) {
+      return jsonResponse(
+        {
+          error: { code: err.code, message: err.message },
+          ...(requestId ? { request_id: requestId } : {}),
+        },
+        err.status ?? 500,
+      );
+    }
+    return jsonResponse(
+      {
+        error: { code: "INTERNAL", message: "Failed to process webhook" },
+        ...(requestId ? { request_id: requestId } : {}),
+      },
+      500,
+    );
   }
 
   return jsonResponse({ received: true }, 200);
+}
+
+function resolveStripeWebhookToleranceSeconds(env: Env): number {
+  const parsed = Number(env.STRIPE_WEBHOOK_TOLERANCE_SEC ?? DEFAULT_STRIPE_WEBHOOK_TOLERANCE_SEC);
+  if (!Number.isFinite(parsed) || parsed <= 0) return DEFAULT_STRIPE_WEBHOOK_TOLERANCE_SEC;
+  return Math.floor(parsed);
+}
+
+function resolveBillingReconcileOnAmbiguity(env: Env): boolean {
+  const raw = (env.BILLING_RECONCILE_ON_AMBIGUITY ?? "").trim().toLowerCase();
+  const stage = (env.ENVIRONMENT ?? env.NODE_ENV ?? "").trim().toLowerCase();
+  const defaultEnabled = stage === "prod" || stage === "production";
+  if (!raw) return defaultEnabled;
+  if (["1", "true", "yes", "on"].includes(raw)) return true;
+  if (["0", "false", "no", "off"].includes(raw)) return false;
+  return defaultEnabled;
+}
+
+function resolveBillingWebhooksEnabled(env: Env): boolean {
+  const raw = (env.BILLING_WEBHOOKS_ENABLED ?? "1").trim().toLowerCase();
+  if (["0", "false", "no", "off"].includes(raw)) return false;
+  return true;
+}
+
+function resolveStripeEventId(event: Stripe.Event): string {
+  const raw = typeof event.id === "string" ? event.id.trim() : "";
+  if (raw) return raw;
+  return `missing_event_id:${event.type}:${resolveStripeEventCreated(event)}`;
+}
+
+function resolveStripeEventCreated(event: Stripe.Event): number {
+  const parsed = Number((event as { created?: unknown }).created);
+  if (Number.isFinite(parsed) && parsed > 0) return Math.floor(parsed);
+  return Math.floor(Date.now() / 1000);
+}
+
+type StripeWebhookEventRow = {
+  event_id: string;
+  status?: string | null;
+  event_created?: number | null;
+  event_type?: string | null;
+  processed_at?: string | null;
+  workspace_id?: string | null;
+  customer_id?: string | null;
+  subscription_id?: string | null;
+  defer_reason?: string | null;
+  request_id?: string | null;
+  last_error?: string | null;
+};
+
+type ReconcileWebhookResult = {
+  outcome: "processed" | "replayed" | "ignored_stale" | "deferred";
+  stripeEventId: string;
+  eventType: string;
+  eventCreated: number;
+  workspaceId?: string | null;
+  customerId?: string | null;
+  subscriptionId?: string | null;
+  replayStatus?: string | null;
+  deferReason?: string | null;
+  reconciled?: boolean;
+};
+
+function shouldApplyStripeEvent(
+  lastEventCreatedRaw: unknown,
+  lastEventIdRaw: unknown,
+  incomingEventCreated: number,
+  incomingEventId: string,
+): boolean {
+  const lastEventCreated = Number(lastEventCreatedRaw);
+  if (!Number.isFinite(lastEventCreated) || lastEventCreated <= 0) return true;
+  if (incomingEventCreated > lastEventCreated) return true;
+  if (incomingEventCreated < lastEventCreated) return false;
+  const lastEventId = typeof lastEventIdRaw === "string" ? lastEventIdRaw : "";
+  if (!lastEventId) return true;
+  return incomingEventId.localeCompare(lastEventId) > 0;
+}
+
+async function claimStripeWebhookEvent(
+  supabase: SupabaseClient,
+  eventId: string,
+  eventType: string,
+  eventCreated: number,
+  requestId = "",
+): Promise<{ replayed: boolean; replayStatus?: string | null }> {
+  const inserted = await supabase
+    .from("stripe_webhook_events")
+    .insert({
+      event_id: eventId,
+      event_type: eventType,
+      event_created: eventCreated,
+      status: "processing",
+      request_id: requestId || null,
+      processed_at: null,
+      last_error: null,
+    })
+    .select("event_id,status")
+    .maybeSingle();
+  if (!inserted.error) return { replayed: false };
+  if (inserted.error.code !== "23505") {
+    throw createHttpError(500, "DB_ERROR", inserted.error.message ?? "Failed to register webhook idempotency key");
+  }
+
+  const existing = await supabase
+    .from("stripe_webhook_events")
+    .select("event_id,status")
+    .eq("event_id", eventId)
+    .maybeSingle();
+  if (existing.error) {
+    throw createHttpError(500, "DB_ERROR", existing.error.message ?? "Failed to read webhook idempotency row");
+  }
+  const existingStatus = ((existing.data as StripeWebhookEventRow | null)?.status ?? "processed").toLowerCase();
+  if (existingStatus === "failed" || existingStatus === "deferred") {
+    const retry = await supabase
+      .from("stripe_webhook_events")
+      .update({
+        status: "processing",
+        request_id: requestId || null,
+        event_type: eventType,
+        event_created: eventCreated,
+        processed_at: null,
+        last_error: null,
+        defer_reason: null,
+      })
+      .eq("event_id", eventId);
+    if (retry.error) {
+      throw createHttpError(500, "DB_ERROR", retry.error.message ?? "Failed to reopen failed webhook event");
+    }
+    return { replayed: false };
+  }
+  return { replayed: true, replayStatus: existingStatus };
+}
+
+async function finalizeStripeWebhookEvent(
+  supabase: SupabaseClient,
+  eventId: string,
+  status: "processed" | "ignored_stale" | "deferred",
+  fields: {
+    workspaceId?: string | null;
+    customerId?: string | null;
+    subscriptionId?: string | null;
+    requestId?: string;
+    deferReason?: string | null;
+  },
+): Promise<void> {
+  const finalize = await supabase
+    .from("stripe_webhook_events")
+    .update({
+      status,
+      processed_at: status === "deferred" ? null : new Date().toISOString(),
+      workspace_id: fields.workspaceId ?? null,
+      customer_id: fields.customerId ?? null,
+      subscription_id: fields.subscriptionId ?? null,
+      request_id: fields.requestId || null,
+      defer_reason: status === "deferred" ? fields.deferReason ?? "deferred" : null,
+      last_error: status === "deferred" ? fields.deferReason ?? "Webhook deferred" : null,
+    })
+    .eq("event_id", eventId);
+  if (finalize.error) {
+    throw createHttpError(500, "DB_ERROR", finalize.error.message ?? "Failed to finalize webhook event");
+  }
+}
+
+async function failStripeWebhookEvent(
+  supabase: SupabaseClient,
+  eventId: string,
+  err: unknown,
+): Promise<void> {
+  const message = redact((err as Error)?.message, "message");
+  const fail = await supabase
+    .from("stripe_webhook_events")
+    .update({
+      status: "failed",
+      last_error: typeof message === "string" ? message : "Webhook processing failed",
+      processed_at: null,
+      defer_reason: null,
+    })
+    .eq("event_id", eventId);
+  if (fail.error) {
+    logger.error({
+      event: "webhook_event_mark_failed_error",
+      stripe_event_id: eventId,
+      error_message: fail.error.message,
+      err: fail.error,
+    });
+  }
 }
 
 async function findWorkspaceForCustomer(
@@ -3020,6 +3516,165 @@ async function findWorkspaceForCustomer(
   return null;
 }
 
+function asStripeId(raw: unknown): string | null {
+  if (typeof raw === "string" && raw.trim().length > 0) return raw.trim();
+  if (raw && typeof raw === "object" && typeof (raw as { id?: unknown }).id === "string") {
+    const id = ((raw as { id?: unknown }).id as string).trim();
+    return id.length > 0 ? id : null;
+  }
+  return null;
+}
+
+function extractEventSubscriptionId(event: Stripe.Event): string | null {
+  if (event.type.startsWith("customer.subscription.")) {
+    const subscription = event.data.object as Stripe.Subscription;
+    return asStripeId(subscription?.id);
+  }
+  if (event.type === "invoice.paid" || event.type === "invoice.payment_failed") {
+    const invoice = event.data.object as Stripe.Invoice & { subscription?: unknown };
+    return asStripeId(invoice.subscription);
+  }
+  return null;
+}
+
+function isPlanDowngrade(
+  current: AuthContext["planStatus"] | undefined,
+  incoming: AuthContext["planStatus"] | undefined,
+): boolean {
+  if (!current || !incoming) return false;
+  const currentPaid = current === "active" || current === "trialing";
+  const incomingPaid = incoming === "active" || incoming === "trialing";
+  return currentPaid && !incomingPaid;
+}
+
+function resolveCursorFields(
+  current: {
+    stripe_last_event_created?: number | null;
+    stripe_last_event_id?: string | null;
+    stripe_last_event_type?: string | null;
+  } | null,
+  eventId: string,
+  eventType: string,
+  eventCreated: number,
+): {
+  stripe_last_event_id: string | null;
+  stripe_last_event_type: string | null;
+  stripe_last_event_created: number | null;
+} {
+  if (shouldApplyStripeEvent(current?.stripe_last_event_created, current?.stripe_last_event_id, eventCreated, eventId)) {
+    return {
+      stripe_last_event_id: eventId,
+      stripe_last_event_type: eventType,
+      stripe_last_event_created: eventCreated,
+    };
+  }
+  return {
+    stripe_last_event_id: current?.stripe_last_event_id ?? null,
+    stripe_last_event_type: current?.stripe_last_event_type ?? null,
+    stripe_last_event_created: current?.stripe_last_event_created ?? null,
+  };
+}
+
+type CanonicalBillingSnapshot = {
+  customerId: string;
+  subscriptionId: string | null;
+  workspaceHint: string | null;
+  plan: AuthContext["plan"];
+  planStatus: AuthContext["planStatus"];
+  priceId: string | null;
+  currentPeriodEnd: string | null;
+  cancelAtPeriodEnd: boolean;
+};
+
+function snapshotFromSubscription(subscription: Stripe.Subscription, env: Env): CanonicalBillingSnapshot | null {
+  const customerId = asStripeId(subscription.customer);
+  if (!customerId) return null;
+  const subscriptionId = asStripeId(subscription.id);
+  const workspaceHint = typeof subscription.metadata?.workspace_id === "string" ? subscription.metadata.workspace_id : null;
+  const priceId =
+    subscription.items?.data?.[0]?.price?.id ??
+    (typeof subscription.items?.data?.[0]?.price === "string" ? subscription.items.data[0].price : null);
+  const planStatus = normalizeStripeStatus(subscription.status);
+  const plan: AuthContext["plan"] = planStatus === "active" || planStatus === "trialing" ? planFromPriceId(priceId, env) : "free";
+  const currentPeriodEnd = subscription.current_period_end ? new Date(subscription.current_period_end * 1000).toISOString() : null;
+  return {
+    customerId,
+    subscriptionId,
+    workspaceHint,
+    plan,
+    planStatus,
+    priceId: priceId ?? null,
+    currentPeriodEnd,
+    cancelAtPeriodEnd: Boolean(subscription.cancel_at_period_end),
+  };
+}
+
+async function fetchCanonicalBillingSnapshot(
+  stripe: Stripe,
+  event: Stripe.Event,
+  env: Env,
+  requestId = "",
+): Promise<CanonicalBillingSnapshot | null> {
+  try {
+    if (event.type.startsWith("customer.subscription.")) {
+      const subId = extractEventSubscriptionId(event);
+      if (!subId) return null;
+      const canonical = await stripe.subscriptions.retrieve(subId);
+      return snapshotFromSubscription(canonical as Stripe.Subscription, env);
+    }
+
+    if (event.type === "invoice.paid" || event.type === "invoice.payment_failed") {
+      const baseInvoice = event.data.object as Stripe.Invoice & { subscription?: unknown };
+      const invoiceId = asStripeId(baseInvoice.id);
+      const invoice = invoiceId
+        ? ((await stripe.invoices.retrieve(invoiceId)) as Stripe.Invoice & { subscription?: unknown })
+        : baseInvoice;
+      const subscriptionId = asStripeId(invoice.subscription);
+      if (!subscriptionId) return null;
+      const canonical = await stripe.subscriptions.retrieve(subscriptionId);
+      return snapshotFromSubscription(canonical as Stripe.Subscription, env);
+    }
+  } catch (err) {
+    emitEventLog("webhook_reconcile_fetch_failed", {
+      route: "/v1/billing/webhook",
+      method: "POST",
+      request_id: requestId || null,
+      stripe_event_id: resolveStripeEventId(event),
+      event_type: event.type,
+      error_message: redact((err as Error)?.message, "message"),
+    });
+    return null;
+  }
+
+  return null;
+}
+
+async function applyCanonicalSnapshotToWorkspace(
+  supabase: SupabaseClient,
+  workspaceId: string,
+  currentBilling: {
+    stripe_last_event_created?: number | null;
+    stripe_last_event_id?: string | null;
+    stripe_last_event_type?: string | null;
+  } | null,
+  eventId: string,
+  eventType: string,
+  eventCreated: number,
+  snapshot: CanonicalBillingSnapshot,
+): Promise<void> {
+  const cursor = resolveCursorFields(currentBilling, eventId, eventType, eventCreated);
+  await updateWorkspaceBilling(supabase, workspaceId, {
+    stripe_customer_id: snapshot.customerId,
+    stripe_subscription_id: snapshot.subscriptionId,
+    stripe_price_id: snapshot.priceId,
+    plan: snapshot.plan,
+    plan_status: snapshot.planStatus,
+    current_period_end: snapshot.currentPeriodEnd,
+    cancel_at_period_end: snapshot.cancelAtPeriodEnd,
+    ...cursor,
+  });
+}
+
 async function updateWorkspaceBilling(
   supabase: SupabaseClient,
   workspaceId: string,
@@ -3031,6 +3686,9 @@ async function updateWorkspaceBilling(
     plan_status: AuthContext["planStatus"];
     current_period_end: string | null;
     cancel_at_period_end: boolean;
+    stripe_last_event_id: string | null;
+    stripe_last_event_type: string | null;
+    stripe_last_event_created: number | null;
   }>,
 ): Promise<void> {
   const { error } = await supabase
@@ -3047,37 +3705,62 @@ async function reconcileStripeEvent(
   supabase: SupabaseClient,
   env: Env,
   requestId = "",
-): Promise<void> {
-  // Idempotency: ignore already-processed events
-  const seen = await supabase.from("stripe_webhook_events").select("event_id").eq("event_id", event.id).maybeSingle();
-  if (seen.data?.event_id) return;
-  const inserted = await supabase.from("stripe_webhook_events").insert({ event_id: event.id }).select("event_id").maybeSingle();
-  if (inserted.error) {
-    // conflict => already processed
-    if (inserted.error.code === "23505") return;
-    throw createHttpError(500, "DB_ERROR", inserted.error.message ?? "Failed to upsert webhook event");
+): Promise<ReconcileWebhookResult> {
+  const eventId = resolveStripeEventId(event);
+  const eventType = event.type;
+  const eventCreated = resolveStripeEventCreated(event);
+  const claim = await claimStripeWebhookEvent(supabase, eventId, eventType, eventCreated, requestId);
+  if (claim.replayed) {
+    return {
+      outcome: "replayed",
+      stripeEventId: eventId,
+      eventType,
+      eventCreated,
+      replayStatus: claim.replayStatus ?? null,
+    };
   }
-  switch (event.type) {
+
+  const stripe = getStripeClient(env);
+  const reconcileOnAmbiguity = resolveBillingReconcileOnAmbiguity(env);
+  let workspaceId: string | null = null;
+  let customerId: string | null = null;
+  let subscriptionId: string | null = extractEventSubscriptionId(event);
+  let deferReason: string | null = null;
+  let reconciled = false;
+  let outcome: "processed" | "ignored_stale" | "deferred" = "processed";
+
+  const markWorkspaceDeferred = (workspaceHint?: unknown) => {
+    deferReason = "workspace_not_found";
+    outcome = "deferred";
+    emitEventLog("billing_webhook_workspace_not_found", {
+      route: "/v1/billing/webhook",
+      method: "POST",
+      status: 202,
+      request_id: requestId || null,
+      customer_id_redacted: redact(customerId, "stripe_customer_id"),
+      workspace_id_redacted: redact(workspaceHint, "workspace_id"),
+      stripe_event_id: eventId,
+      event_type: eventType,
+      subscription_id: subscriptionId ?? null,
+    });
+  };
+
+  try {
+    switch (eventType) {
     case "customer.subscription.created":
     case "customer.subscription.updated":
     case "customer.subscription.deleted": {
       const subscription = event.data.object as Stripe.Subscription;
-      const customerId = (subscription.customer as string) ?? "";
-      const workspaceId = await findWorkspaceForCustomer(
+      customerId = asStripeId(subscription.customer) ?? "";
+      subscriptionId = asStripeId(subscription.id) ?? subscriptionId;
+      workspaceId = await findWorkspaceForCustomer(
         supabase,
         customerId,
         (subscription.metadata?.workspace_id as string | undefined) ?? null,
       );
       if (!workspaceId) {
-        emitEventLog("billing_webhook_workspace_not_found", {
-          route: "/v1/billing/webhook",
-          method: "POST",
-          status: 200,
-          request_id: requestId,
-          customer_id_redacted: redact(customerId, "stripe_customer_id"),
-          workspace_id_redacted: redact(subscription.metadata?.workspace_id, "workspace_id"),
-        });
-        return;
+        markWorkspaceDeferred(subscription.metadata?.workspace_id);
+        break;
       }
       const priceId =
         subscription.items?.data?.[0]?.price?.id ??
@@ -3087,10 +3770,81 @@ async function reconcileStripeEvent(
         plan_status === "active" || plan_status === "trialing" ? planFromPriceId(priceId, env) : "free";
       const currentRow = await supabase
         .from("workspaces")
-        .select("plan_status")
+        .select("plan_status,stripe_subscription_id,stripe_last_event_created,stripe_last_event_id,stripe_last_event_type")
         .eq("id", workspaceId)
         .maybeSingle();
-      const oldStatus = normalizePlanStatus((currentRow.data as { plan_status?: string } | null)?.plan_status);
+      if (currentRow.error) {
+        throw createHttpError(500, "DB_ERROR", currentRow.error.message ?? "Failed to read billing cursor");
+      }
+      const currentBilling = currentRow.data as
+        | {
+          plan_status?: string;
+          stripe_subscription_id?: string | null;
+          stripe_last_event_created?: number | null;
+          stripe_last_event_id?: string | null;
+          stripe_last_event_type?: string | null;
+        }
+        | null;
+      const shouldApply = shouldApplyStripeEvent(
+        currentBilling?.stripe_last_event_created,
+        currentBilling?.stripe_last_event_id,
+        eventCreated,
+        eventId,
+      );
+      const lastCreated = Number(currentBilling?.stripe_last_event_created);
+      const isTie = Number.isFinite(lastCreated) && lastCreated > 0 && lastCreated === eventCreated;
+      const currentStatus = normalizePlanStatus(currentBilling?.plan_status);
+      const unknownCurrentState = !currentBilling?.stripe_subscription_id || !currentBilling?.plan_status;
+      const shouldReconcile =
+        reconcileOnAmbiguity &&
+        (isTie || !shouldApply || unknownCurrentState || isPlanDowngrade(currentStatus, plan_status));
+      if (shouldReconcile) {
+        const canonical = await fetchCanonicalBillingSnapshot(stripe, event, env, requestId);
+        if (canonical) {
+          customerId = canonical.customerId;
+          subscriptionId = canonical.subscriptionId;
+          workspaceId = await findWorkspaceForCustomer(supabase, canonical.customerId, canonical.workspaceHint);
+          if (!workspaceId) {
+            markWorkspaceDeferred(canonical.workspaceHint);
+            break;
+          }
+          await applyCanonicalSnapshotToWorkspace(
+            supabase,
+            workspaceId,
+            currentBilling,
+            eventId,
+            eventType,
+            eventCreated,
+            canonical,
+          );
+          const oldStatus = normalizePlanStatus(currentBilling?.plan_status);
+          if (
+            (canonical.planStatus === "active" || canonical.planStatus === "trialing") &&
+            !(oldStatus === "active" || oldStatus === "trialing")
+          ) {
+            void emitProductEvent(
+              supabase,
+              "upgrade_activated",
+              {
+                workspaceId,
+                requestId,
+                route: "/v1/billing/webhook",
+                method: "POST",
+                status: 200,
+                effectivePlan: canonical.plan,
+                planStatus: canonical.planStatus,
+              },
+            );
+          }
+          reconciled = true;
+          break;
+        }
+      }
+      if (!shouldApply) {
+        outcome = "ignored_stale";
+        break;
+      }
+      const oldStatus = normalizePlanStatus(currentBilling?.plan_status);
       const current_period_end = subscription.current_period_end
         ? new Date(subscription.current_period_end * 1000).toISOString()
         : null;
@@ -3102,6 +3856,9 @@ async function reconcileStripeEvent(
         plan_status,
         current_period_end,
         cancel_at_period_end: Boolean(subscription.cancel_at_period_end),
+        stripe_last_event_id: eventId,
+        stripe_last_event_type: eventType,
+        stripe_last_event_created: eventCreated,
       });
 
       if ((plan_status === "active" || plan_status === "trialing") && !(oldStatus === "active" || oldStatus === "trialing")) {
@@ -3119,57 +3876,192 @@ async function reconcileStripeEvent(
           },
         );
       }
-      return;
+      break;
     }
     case "invoice.paid": {
-      const invoice = event.data.object as Stripe.Invoice;
-      const customerId = (invoice.customer as string) ?? "";
-      const workspaceId = await findWorkspaceForCustomer(
+      const invoice = event.data.object as Stripe.Invoice & { subscription?: unknown };
+      customerId = asStripeId(invoice.customer) ?? "";
+      subscriptionId = asStripeId(invoice.subscription) ?? subscriptionId;
+      workspaceId = await findWorkspaceForCustomer(
         supabase,
         customerId,
         (invoice.metadata?.workspace_id as string | undefined) ?? null,
       );
       if (!workspaceId) {
-        emitEventLog("billing_webhook_workspace_not_found", {
-          route: "/v1/billing/webhook",
-          method: "POST",
-          status: 200,
-          request_id: requestId,
-          customer_id_redacted: redact(customerId, "stripe_customer_id"),
-          workspace_id_redacted: redact(invoice.metadata?.workspace_id, "workspace_id"),
-        });
-        return;
+        markWorkspaceDeferred(invoice.metadata?.workspace_id);
+        break;
       }
+      const currentRow = await supabase
+        .from("workspaces")
+        .select("plan_status,stripe_subscription_id,stripe_last_event_created,stripe_last_event_id,stripe_last_event_type")
+        .eq("id", workspaceId)
+        .maybeSingle();
+      if (currentRow.error) {
+        throw createHttpError(500, "DB_ERROR", currentRow.error.message ?? "Failed to read billing cursor");
+      }
+      const currentBilling = currentRow.data as
+        | {
+          plan_status?: string;
+          stripe_subscription_id?: string | null;
+          stripe_last_event_created?: number | null;
+          stripe_last_event_id?: string | null;
+          stripe_last_event_type?: string | null;
+        }
+        | null;
+      const shouldApply = shouldApplyStripeEvent(
+        currentBilling?.stripe_last_event_created,
+        currentBilling?.stripe_last_event_id,
+        eventCreated,
+        eventId,
+      );
+      const lastCreated = Number(currentBilling?.stripe_last_event_created);
+      const isTie = Number.isFinite(lastCreated) && lastCreated > 0 && lastCreated === eventCreated;
+      const shouldReconcile =
+        reconcileOnAmbiguity &&
+        (isTie || !shouldApply || !currentBilling?.stripe_subscription_id || !currentBilling?.plan_status);
+      if (shouldReconcile) {
+        const canonical = await fetchCanonicalBillingSnapshot(stripe, event, env, requestId);
+        if (canonical) {
+          customerId = canonical.customerId;
+          subscriptionId = canonical.subscriptionId;
+          workspaceId = await findWorkspaceForCustomer(supabase, canonical.customerId, canonical.workspaceHint);
+          if (!workspaceId) {
+            markWorkspaceDeferred(canonical.workspaceHint);
+            break;
+          }
+          await applyCanonicalSnapshotToWorkspace(
+            supabase,
+            workspaceId,
+            currentBilling,
+            eventId,
+            eventType,
+            eventCreated,
+            canonical,
+          );
+          reconciled = true;
+          break;
+        }
+      }
+      if (!shouldApply) {
+        outcome = "ignored_stale";
+        break;
+      }
+      const cursor = resolveCursorFields(currentBilling, eventId, eventType, eventCreated);
       await updateWorkspaceBilling(supabase, workspaceId, {
         plan: "pro",
         plan_status: "active",
         stripe_customer_id: customerId,
+        stripe_subscription_id: subscriptionId,
+        ...cursor,
       });
-      return;
+      break;
     }
     case "invoice.payment_failed": {
-      const invoice = event.data.object as Stripe.Invoice;
-      const customerId = (invoice.customer as string) ?? "";
-      const workspaceId = await findWorkspaceForCustomer(
+      const invoice = event.data.object as Stripe.Invoice & { subscription?: unknown };
+      customerId = asStripeId(invoice.customer) ?? "";
+      subscriptionId = asStripeId(invoice.subscription) ?? subscriptionId;
+      workspaceId = await findWorkspaceForCustomer(
         supabase,
         customerId,
         (invoice.metadata?.workspace_id as string | undefined) ?? null,
       );
       if (!workspaceId) {
-        console.warn("Stripe webhook: workspace not found for payment_failed", {
-          customer_id: redact(customerId, "stripe_customer_id"),
-          workspace_id: redact(invoice.metadata?.workspace_id, "workspace_id"),
-        });
-        return;
+        markWorkspaceDeferred(invoice.metadata?.workspace_id);
+        break;
       }
+      const currentRow = await supabase
+        .from("workspaces")
+        .select("plan_status,stripe_subscription_id,stripe_last_event_created,stripe_last_event_id,stripe_last_event_type")
+        .eq("id", workspaceId)
+        .maybeSingle();
+      if (currentRow.error) {
+        throw createHttpError(500, "DB_ERROR", currentRow.error.message ?? "Failed to read billing cursor");
+      }
+      const currentBilling = currentRow.data as
+        | {
+          plan_status?: string;
+          stripe_subscription_id?: string | null;
+          stripe_last_event_created?: number | null;
+          stripe_last_event_id?: string | null;
+          stripe_last_event_type?: string | null;
+        }
+        | null;
+      const shouldApply = shouldApplyStripeEvent(
+        currentBilling?.stripe_last_event_created,
+        currentBilling?.stripe_last_event_id,
+        eventCreated,
+        eventId,
+      );
+      const lastCreated = Number(currentBilling?.stripe_last_event_created);
+      const isTie = Number.isFinite(lastCreated) && lastCreated > 0 && lastCreated === eventCreated;
+      const shouldReconcile =
+        reconcileOnAmbiguity &&
+        (isTie ||
+          !shouldApply ||
+          !currentBilling?.stripe_subscription_id ||
+          !currentBilling?.plan_status ||
+          isPlanDowngrade(normalizePlanStatus(currentBilling?.plan_status), "past_due"));
+      if (shouldReconcile) {
+        const canonical = await fetchCanonicalBillingSnapshot(stripe, event, env, requestId);
+        if (canonical) {
+          customerId = canonical.customerId;
+          subscriptionId = canonical.subscriptionId;
+          workspaceId = await findWorkspaceForCustomer(supabase, canonical.customerId, canonical.workspaceHint);
+          if (!workspaceId) {
+            markWorkspaceDeferred(canonical.workspaceHint);
+            break;
+          }
+          await applyCanonicalSnapshotToWorkspace(
+            supabase,
+            workspaceId,
+            currentBilling,
+            eventId,
+            eventType,
+            eventCreated,
+            canonical,
+          );
+          reconciled = true;
+          break;
+        }
+      }
+      if (!shouldApply) {
+        outcome = "ignored_stale";
+        break;
+      }
+      const cursor = resolveCursorFields(currentBilling, eventId, eventType, eventCreated);
       await updateWorkspaceBilling(supabase, workspaceId, {
         plan: "free",
         plan_status: "past_due",
         stripe_customer_id: customerId,
+        stripe_subscription_id: subscriptionId,
+        ...cursor,
       });
-      return;
+      break;
     }
     default:
-      return;
+      break;
+    }
+    const finalizeStatus = outcome as "processed" | "ignored_stale" | "deferred";
+    await finalizeStripeWebhookEvent(
+      supabase,
+      eventId,
+      finalizeStatus,
+      { workspaceId, customerId, subscriptionId, requestId, deferReason },
+    );
+  } catch (err) {
+    await failStripeWebhookEvent(supabase, eventId, err);
+    throw err;
   }
+  return {
+    outcome,
+    stripeEventId: eventId,
+    eventType,
+    eventCreated,
+    workspaceId,
+    customerId,
+    subscriptionId,
+    deferReason,
+    reconciled,
+  };
 }
+
