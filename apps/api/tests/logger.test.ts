@@ -14,7 +14,7 @@ describe("logger redaction", () => {
       request_id: "req-1",
       headers: {
         authorization: "Bearer really-secret-token-value",
-        "x-api-key": "mn_live_super_secret_key_value_1234567890",
+        "x-api-key": "mn_test_key_12345",
       },
     });
 
@@ -23,7 +23,7 @@ describe("logger redaction", () => {
     expect(line).toContain("\"event_name\":\"redaction_check\"");
     expect(line).toContain("\"request_id\":\"req-1\"");
     expect(line).not.toContain("really-secret-token-value");
-    expect(line).not.toContain("mn_live_super_secret_key_value_1234567890");
+    expect(line).not.toContain("mn_test_key_12345");
     expect(line).toContain("***REDACTED***");
   });
 

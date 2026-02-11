@@ -41,7 +41,7 @@ const baseEnv = {
     get: vi.fn(),
   },
   STRIPE_SECRET_KEY: "sk_test_123",
-  STRIPE_WEBHOOK_SECRET: "whsec_123",
+  STRIPE_WEBHOOK_SECRET: "stripe_webhook_secret_test_123",
   STRIPE_PRICE_PRO: "price_123",
   PUBLIC_APP_URL: "https://app.example.com",
   SUPABASE_MODE: "stub",
