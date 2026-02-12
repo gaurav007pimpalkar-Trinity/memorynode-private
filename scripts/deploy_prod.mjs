@@ -7,7 +7,7 @@
  * 3) db:check against prod DB
  * 4) wrangler deploy --env production
  * 5) Post-deploy smoke: /healthz and /v1/usage/today (auth)
- * 6) Optional: stripe:webhook-test if STRIPE_WEBHOOK_SECRET is set
+ * 6) Optional: payu:webhook-test if PAYU_MERCHANT_KEY + PAYU_MERCHANT_SALT are set
  *
  * Safety: refuses to run unless DEPLOY_CONFIRM === "memorynode-prod".
  */
@@ -247,12 +247,12 @@ async function main() {
   // Post-deploy smoke
   await smoke(baseUrl, apiKey);
 
-  // Optional Stripe webhook test if secrets present
-  if (process.env.STRIPE_WEBHOOK_SECRET) {
-    console.log("\n[optional] Running stripe:webhook-test (STRIPE_WEBHOOK_SECRET present)");
-    run("pnpm stripe:webhook-test");
+  // Optional PayU webhook test if secrets present
+  if (process.env.PAYU_MERCHANT_KEY && process.env.PAYU_MERCHANT_SALT) {
+    console.log("\n[optional] Running payu:webhook-test (PAYU_MERCHANT_KEY + PAYU_MERCHANT_SALT present)");
+    run("pnpm payu:webhook-test");
   } else {
-    console.log("\n[optional] Skipping stripe:webhook-test (STRIPE_WEBHOOK_SECRET not set)");
+    console.log("\n[optional] Skipping payu:webhook-test (PAYU_MERCHANT_KEY/PAYU_MERCHANT_SALT not set)");
   }
 
   console.log("\n✅ Production deploy complete");

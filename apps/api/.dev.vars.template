@@ -3,8 +3,9 @@ SUPABASE_SERVICE_ROLE_KEY=
 OPENAI_API_KEY=
 API_KEY_SALT=
 MASTER_ADMIN_TOKEN=dev_admin_token
-STRIPE_SECRET_KEY=
-STRIPE_WEBHOOK_SECRET=
+PAYU_MERCHANT_KEY=
+PAYU_MERCHANT_SALT=
+PAYU_WEBHOOK_SECRET=
 
 # Vars (safe to keep in wrangler.toml)
 SUPABASE_URL=
@@ -13,8 +14,8 @@ EMBEDDINGS_MODE=stub # dev-only; set to openai in prod
 ENVIRONMENT=dev
 RATE_LIMIT_MODE=on
 PUBLIC_APP_URL=http://localhost:5173
-STRIPE_PRICE_PRO=
-STRIPE_PRICE_TEAM=
-STRIPE_PORTAL_CONFIGURATION_ID=
-STRIPE_SUCCESS_PATH=/settings/billing?status=success
-STRIPE_CANCEL_PATH=/settings/billing?status=canceled
+PAYU_BASE_URL=https://secure.payu.in/_payment
+PAYU_PRO_AMOUNT=49.00
+PAYU_PRODUCT_INFO=MemoryNode Platform Pro
+PAYU_SUCCESS_PATH=/settings/billing?status=success
+PAYU_CANCEL_PATH=/settings/billing?status=canceled

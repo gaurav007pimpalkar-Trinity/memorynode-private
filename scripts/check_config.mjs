@@ -139,7 +139,7 @@ if (strictStage) {
     requireVar(errors, "PAYU_MERCHANT_KEY", `${billingContext} Required for checkout field signing.`);
     requireVar(errors, "PAYU_MERCHANT_SALT", `${billingContext} Required for webhook/signature verification.`);
     requireVar(errors, "PAYU_BASE_URL", `${billingContext} Required for hosted PayU checkout endpoint.`);
-    requireVar(errors, "PUBLIC_APP_URL", `${billingContext} Required to generate checkout/portal URLs.`);
+    requireVar(errors, "PUBLIC_APP_URL", `${billingContext} Required to generate checkout callback URLs.`);
   } else {
     notes.push(
       `[${stage}] Billing checks skipped because BILLING_WEBHOOKS_ENABLED=0 and no PayU billing config signals were provided.`,
