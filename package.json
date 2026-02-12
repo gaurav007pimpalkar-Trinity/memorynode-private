@@ -16,6 +16,8 @@
     "typecheck": "tsc -b",
     "test": "vitest run",
     "test:watch": "vitest watch",
+    "check:workspace-scripts": "node scripts/check_workspace_scripts.mjs",
+    "check:tracked-artifacts": "node scripts/check_tracked_runtime_artifacts.mjs",
     "check:wrangler": "node scripts/check_wrangler.mjs && node scripts/check_wrangler_prod.mjs",
     "prod:smoke": "node scripts/prod_smoke.mjs",
     "bootstrap:dev": "node scripts/dev_bootstrap.mjs",

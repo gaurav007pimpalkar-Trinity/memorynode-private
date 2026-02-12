@@ -74,7 +74,7 @@ corepack pnpm dev:api   # starts wrangler dev, prints base URL (default 8787)
 ## Green checks (should pass before PR)
 - pnpm install
 - pnpm lint
-- pnpm -r typecheck
+- pnpm typecheck
 - pnpm test
 
 ## 5) Run the dashboard

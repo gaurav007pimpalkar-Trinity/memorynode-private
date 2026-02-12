@@ -5,6 +5,9 @@
   "type": "module",
   "scripts": {
     "dev": "pnpm exec wrangler dev",
+    "lint": "eslint src tests",
+    "typecheck": "tsc -b",
+    "test": "vitest run --root ../.. apps/api/tests",
     "build": "pnpm exec wrangler deploy --env staging --dry-run",
     "deploy:staging": "pnpm exec wrangler deploy --env staging",
     "deploy:canary": "pnpm exec wrangler deploy --env canary",

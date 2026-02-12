@@ -21,6 +21,8 @@ function run(cmd) {
 
 try {
   const checks = [
+    "pnpm check:workspace-scripts",
+    "pnpm check:tracked-artifacts",
     "pnpm check:typed-entry",
     "pnpm check:wrangler",
     "pnpm check:config",

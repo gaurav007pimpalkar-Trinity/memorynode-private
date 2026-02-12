@@ -5,6 +5,9 @@
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
   "scripts": {
+    "lint": "eslint src tests",
+    "typecheck": "tsc -b",
+    "test": "vitest run --root ../.. packages/sdk/tests",
     "build": "tsc -b"
   },
   "dependencies": {

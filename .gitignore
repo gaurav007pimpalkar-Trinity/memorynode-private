@@ -76,6 +76,7 @@ key.json
 ws.json
 gate.env
 staging_verify_output.txt
+staging_release_log.txt
 staged_files.txt
 _founder_notes/
 .tmp/

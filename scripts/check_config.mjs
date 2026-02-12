@@ -98,6 +98,7 @@ const notes = [];
 const strictStage = STRICT_STAGES.has(stage);
 const embeddingsMode = `${env.EMBEDDINGS_MODE || ""}`.trim().toLowerCase();
 const supabaseMode = `${env.SUPABASE_MODE || ""}`.trim().toLowerCase();
+const rateLimitMode = `${env.RATE_LIMIT_MODE || "on"}`.trim().toLowerCase();
 const billingWebhooksEnabled = isBillingWebhooksEnabled();
 const billingRequired = strictStage && (billingWebhooksEnabled || hasBillingConfigSignals());
 
@@ -155,6 +156,9 @@ if (strictStage) {
     }
     if (embeddingsMode === "stub") {
       errors.push("[production] EMBEDDINGS_MODE=stub is forbidden. Use EMBEDDINGS_MODE=openai in production.");
+    }
+    if (FALSE_VALUES.has(rateLimitMode)) {
+      errors.push("[production] RATE_LIMIT_MODE=off is forbidden. Remove RATE_LIMIT_MODE or set it to 'on'.");
     }
   }
   if (checkMode === "ci") {

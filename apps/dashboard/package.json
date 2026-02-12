@@ -5,6 +5,8 @@
   "type": "module",
   "scripts": {
     "dev": "vite dev",
+    "lint": "eslint src",
+    "test": "vitest run --passWithNoTests",
     "build": "vite build",
     "preview": "vite preview",
     "typecheck": "tsc -b"

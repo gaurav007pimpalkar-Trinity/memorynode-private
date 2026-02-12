@@ -41,6 +41,12 @@ jobs:
       - name: Migration docs/sequence guard
         run: pnpm migrations:check
 
+      - name: Workspace script guard
+        run: pnpm check:workspace-scripts
+
+      - name: Tracked runtime artifact guard
+        run: pnpm check:tracked-artifacts
+
       - name: Validate script syntax
         run: |
           bash -n scripts/verify_e2e.sh

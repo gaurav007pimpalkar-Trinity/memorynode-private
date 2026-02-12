@@ -462,6 +462,27 @@ function ensureRateLimitDo(env: Env): void {
   }
 }
 
+function isProductionStage(env: Env): boolean {
+  const stage = (env.ENVIRONMENT ?? env.NODE_ENV ?? "").trim().toLowerCase();
+  return stage === "prod" || stage === "production";
+}
+
+function enforceRuntimeConfigGuards(env: Env): void {
+  if (!isProductionStage(env)) return;
+  const supabaseMode = (env.SUPABASE_MODE ?? "").trim().toLowerCase();
+  if (supabaseMode === "stub") {
+    throw createHttpError(500, "CONFIG_ERROR", "SUPABASE_MODE=stub is forbidden in production");
+  }
+  const embeddingsMode = (env.EMBEDDINGS_MODE ?? "openai").trim().toLowerCase();
+  if (embeddingsMode === "stub") {
+    throw createHttpError(500, "CONFIG_ERROR", "EMBEDDINGS_MODE=stub is forbidden in production");
+  }
+  const rateLimitMode = (env.RATE_LIMIT_MODE ?? "on").trim().toLowerCase();
+  if (["0", "false", "no", "off"].includes(rateLimitMode)) {
+    throw createHttpError(500, "CONFIG_ERROR", "RATE_LIMIT_MODE=off is forbidden in production");
+  }
+}
+
 function resolveBodyLimit(method: string, path: string, env: Env): number {
   const base = Number(env.MAX_BODY_BYTES ?? DEFAULT_MAX_BODY_BYTES);
   if (method === "POST" && path === "/v1/memories") return Math.min(base, MEMORIES_MAX_BODY_BYTES);
@@ -514,6 +535,7 @@ export default {
         return response;
       }
 
+      enforceRuntimeConfigGuards(env);
       ensureRateLimitDo(env);
 
       if (request.method === "OPTIONS") {
@@ -702,10 +724,9 @@ export { RateLimitDO, createSupabaseClient };
 
 function createSupabaseClient(env: Env): SupabaseClient {
   const supabaseMode = (env.SUPABASE_MODE ?? "").toLowerCase();
-  const isProd = (env.ENVIRONMENT ?? env.NODE_ENV ?? "").toLowerCase() === "production";
   if (supabaseMode === "stub") {
-    if (isProd) {
-      throw createHttpError(500, "CONFIG_ERROR", "Stub Supabase mode is forbidden in production");
+    if (isProductionStage(env)) {
+      throw createHttpError(500, "CONFIG_ERROR", "SUPABASE_MODE=stub is forbidden in production");
     }
     return createStubSupabase(env) as unknown as SupabaseClient;
   }

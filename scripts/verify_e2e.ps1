@@ -5,7 +5,9 @@ $ProgressPreference = "SilentlyContinue"
 
 $script:Wrangler = $null
 $script:Root = Split-Path -Parent $PSScriptRoot
-$script:Log = Join-Path $script:Root ".tmp\e2e_smoke.log"
+$script:RunId = [Guid]::NewGuid().ToString("N")
+$script:Log = Join-Path $script:Root ".tmp\e2e_smoke_$($script:RunId).log"
+$script:ErrLog = Join-Path $script:Root ".tmp\e2e_smoke_$($script:RunId).err.log"
 $script:BaseUrl = ""
 $script:CurlExe = ""
 
@@ -34,7 +36,10 @@ function Import-DotEnv {
       if ($eq -gt 0) {
         $name = $line.Substring(0, $eq).Trim()
         $value = $line.Substring($eq + 1)
-        [Environment]::SetEnvironmentVariable($name, $value)
+        $existing = [Environment]::GetEnvironmentVariable($name)
+        if ([string]::IsNullOrWhiteSpace($existing)) {
+          [Environment]::SetEnvironmentVariable($name, $value)
+        }
       }
     }
   }
@@ -60,9 +65,7 @@ function Invoke-Checked {
 function Cleanup {
   if ($null -ne $script:Wrangler) {
     try {
-      if (-not $script:Wrangler.HasExited) {
-        Stop-Process -Id $script:Wrangler.Id -ErrorAction SilentlyContinue
-      }
+      & taskkill /PID $script:Wrangler.Id /T /F *> $null
     } catch {
       # best-effort cleanup
     }
@@ -71,7 +74,18 @@ function Cleanup {
 
 function Tail-Logs {
   if (Test-Path $script:Log) {
-    Get-Content $script:Log -Tail 200
+    try {
+      Get-Content $script:Log -Tail 200
+    } catch {
+      Write-Host "(unable to read log file: $script:Log)"
+    }
+  }
+  if (Test-Path $script:ErrLog) {
+    try {
+      Get-Content $script:ErrLog -Tail 200
+    } catch {
+      Write-Host "(unable to read log file: $script:ErrLog)"
+    }
   }
 }
 
@@ -80,23 +94,9 @@ function Redact-Headers {
     [Parameter(Mandatory = $true)]
     [string]$Text
   )
-  $masked = [System.Text.RegularExpressions.Regex]::Replace(
-    $Text,
-    '(?im)^(Authorization\s*:\s*Bearer\s+)(\S+)\s*$',
-    {
-      param($m)
-      return "$($m.Groups[1].Value)$(Mask-SecretValue -Value $m.Groups[2].Value)"
-    }
-  )
-  $masked = [System.Text.RegularExpressions.Regex]::Replace(
-    $masked,
-    '(?im)^(x-api-key\s*:\s*)(\S+)\s*$',
-    {
-      param($m)
-      return "$($m.Groups[1].Value)$(Mask-SecretValue -Value $m.Groups[2].Value)"
-    }
-  )
-  return $masked
+  $lines = $Text -split "\r?\n"
+  $masked = foreach ($line in $lines) { Mask-HeaderValue -Header $line }
+  return ($masked -join [Environment]::NewLine)
 }
 
 function Mask-SecretValue {
@@ -104,16 +104,43 @@ function Mask-SecretValue {
     [Parameter(Mandatory = $true)]
     [string]$Value
   )
-  $raw = $Value.Trim()
-  if ([string]::IsNullOrWhiteSpace($raw)) {
-    return "***redacted***"
+  return "***redacted***"
+}
+
+function Get-SensitiveValues {
+  $values = New-Object System.Collections.Generic.List[string]
+  foreach ($item in Get-ChildItem Env:) {
+    if ($item.Name -match '(?i)(token|key|cookie|authorization)' -and -not [string]::IsNullOrWhiteSpace($item.Value)) {
+      if ($item.Value.Length -ge 4) {
+        [void]$values.Add($item.Value)
+      }
+    }
   }
-  if ($raw.Length -le 10) {
-    $left = $raw.Substring(0, [Math]::Min(2, $raw.Length))
-    $right = $raw.Substring([Math]::Max(0, $raw.Length - [Math]::Min(2, $raw.Length)))
-    return "$left...$right"
+  return $values | Sort-Object Length -Descending -Unique
+}
+
+function Mask-ArgumentValue {
+  param(
+    [Parameter(Mandatory = $true)]
+    [string]$Value
+  )
+  $masked = $Value
+  foreach ($secret in Get-SensitiveValues) {
+    if (-not [string]::IsNullOrEmpty($secret)) {
+      $masked = $masked.Replace($secret, (Mask-SecretValue -Value $secret))
+    }
   }
-  return "{0}...{1}" -f $raw.Substring(0, 6), $raw.Substring($raw.Length - 4)
+  return $masked
+}
+
+function Is-SensitiveHeaderName {
+  param(
+    [Parameter(Mandatory = $true)]
+    [string]$Name
+  )
+  $n = $Name.Trim().ToLowerInvariant()
+  if ($n -eq "authorization" -or $n -eq "cookie") { return $true }
+  return ($n -like "*token*" -or $n -like "*key*")
 }
 
 function Mask-HeaderValue {
@@ -121,19 +148,22 @@ function Mask-HeaderValue {
     [Parameter(Mandatory = $true)]
     [string]$Header
   )
-  $line = $Header.Trim()
-
-  $auth = [System.Text.RegularExpressions.Regex]::Match($line, '^(?i)(Authorization\s*:\s*Bearer\s+)(\S+)\s*$')
-  if ($auth.Success) {
-    return "$($auth.Groups[1].Value)$(Mask-SecretValue -Value $auth.Groups[2].Value)"
+  $line = $Header.TrimEnd()
+  $pair = [System.Text.RegularExpressions.Regex]::Match($line, '^\s*([^:]+)\s*:\s*(.*)$')
+  if (-not $pair.Success) {
+    return Mask-ArgumentValue -Value $line
   }
 
-  $xApi = [System.Text.RegularExpressions.Regex]::Match($line, '^(?i)(x-api-key\s*:\s*)(\S+)\s*$')
-  if ($xApi.Success) {
-    return "$($xApi.Groups[1].Value)$(Mask-SecretValue -Value $xApi.Groups[2].Value)"
+  $name = $pair.Groups[1].Value.Trim()
+  $value = $pair.Groups[2].Value
+  if (Is-SensitiveHeaderName -Name $name) {
+    if ($name -match '(?i)^authorization$' -and $value -match '^(?i)\s*bearer\s+') {
+      return "$($name): Bearer $(Mask-SecretValue -Value $value)"
+    }
+    return "$($name): $(Mask-SecretValue -Value $value)"
   }
 
-  return $Header
+  return "$($name): $(Mask-ArgumentValue -Value $value)"
 }
 
 function Format-CommandForLog {
@@ -156,7 +186,7 @@ function Format-CommandForLog {
       $i++
       continue
     }
-    $safeArgs.Add($arg)
+    $safeArgs.Add((Mask-ArgumentValue -Value $arg))
   }
   return "$FilePath $($safeArgs -join ' ')"
 }
@@ -180,29 +210,37 @@ function Get-StatusCodeFromHeaders {
 
 function Invoke-MaskSelfTest {
   $sampleBearer = "mn_live_SAMPLE_TOKEN_NOT_REAL"
-  $sampleHeader = "x-api-key: mn_live_TEST_TOKEN_DO_NOT_USE"
+  $sampleApiKey = "mn_live_TEST_TOKEN_DO_NOT_USE"
+  $sampleCookie = "session=mn_live_COOKIE_DO_NOT_USE"
+  $sampleToken = "x-session-token: mn_live_HEADER_TOKEN_DO_NOT_USE"
+  $env:E2E_PREVIEW_SELFTEST_KEY = $sampleApiKey
   $preview = Format-CommandForLog -FilePath "curl.exe" -Arguments @(
     "-sS",
     "-H", "Authorization: Bearer $sampleBearer",
-    "-H", $sampleHeader,
-    "https://example.test/healthz"
+    "-H", "x-api-key: $sampleApiKey",
+    "-H", "cookie: $sampleCookie",
+    "-H", $sampleToken,
+    "https://example.test/healthz?access_key=$sampleApiKey"
   )
   Write-Host $preview
 
   $headerDump = @(
     "HTTP/1.1 401 Unauthorized",
     "Authorization: Bearer $sampleBearer",
-    $sampleHeader
+    "x-api-key: $sampleApiKey",
+    "cookie: $sampleCookie",
+    $sampleToken
   ) -join "`n"
   $maskedDump = Redact-Headers -Text $headerDump
   Write-Host $maskedDump
 
   if ($preview -match 'mn_live_[A-Za-z0-9_-]{10,}') {
-    throw "Mask self-test failed: bearer/x-api-key leaked in command preview"
+    throw "Mask self-test failed: secret leaked in command preview"
   }
   if ($maskedDump -match 'mn_live_[A-Za-z0-9_-]{10,}') {
-    throw "Mask self-test failed: bearer/x-api-key leaked in header redaction"
+    throw "Mask self-test failed: secret leaked in header redaction"
   }
+  Remove-Item Env:E2E_PREVIEW_SELFTEST_KEY -ErrorAction SilentlyContinue
 }
 
 function Call-Health {
@@ -283,6 +321,72 @@ function Call-Api {
   }
 }
 
+function Bootstrap-LocalApiKey {
+  $headerFile = [System.IO.Path]::GetTempFileName()
+  $bodyFile = [System.IO.Path]::GetTempFileName()
+
+  try {
+    Write-Host "Bootstrapping local E2E API key via admin endpoints..."
+    $workspaceArgs = @(
+      "-sS",
+      "-D", $headerFile,
+      "-o", $bodyFile,
+      "-X", "POST",
+      "$script:BaseUrl/v1/workspaces",
+      "-H", "x-admin-token: $($env:MASTER_ADMIN_TOKEN)",
+      "-H", "Content-Type: application/json",
+      "--data", '{"name":"E2E Smoke Workspace"}'
+    )
+    Invoke-Checked -FilePath $script:CurlExe -Arguments $workspaceArgs
+    $workspaceStatus = Get-StatusCodeFromHeaders -HeaderFile $headerFile
+    if ($workspaceStatus -ne 200) {
+      Write-Host "Workspace bootstrap expected 200 got $workspaceStatus"
+      Write-Host "Headers:"
+      Write-Host (Redact-Headers -Text (Get-Content $headerFile -Raw))
+      Write-Host "Body:"
+      Write-Host (Get-Content $bodyFile -Raw)
+      throw "Workspace bootstrap failed"
+    }
+    $workspaceJson = Get-Content $bodyFile -Raw | ConvertFrom-Json
+    $workspaceId = "$($workspaceJson.workspace_id)"
+    if ([string]::IsNullOrWhiteSpace($workspaceId)) {
+      throw "Workspace bootstrap did not return workspace_id"
+    }
+
+    Set-Content -Path $headerFile -Value ""
+    Set-Content -Path $bodyFile -Value ""
+    $apiKeyBody = @{ workspace_id = $workspaceId; name = "e2e-smoke" } | ConvertTo-Json -Compress
+    $keyArgs = @(
+      "-sS",
+      "-D", $headerFile,
+      "-o", $bodyFile,
+      "-X", "POST",
+      "$script:BaseUrl/v1/api-keys",
+      "-H", "x-admin-token: $($env:MASTER_ADMIN_TOKEN)",
+      "-H", "Content-Type: application/json",
+      "--data", $apiKeyBody
+    )
+    Invoke-Checked -FilePath $script:CurlExe -Arguments $keyArgs
+    $keyStatus = Get-StatusCodeFromHeaders -HeaderFile $headerFile
+    if ($keyStatus -ne 200) {
+      Write-Host "API key bootstrap expected 200 got $keyStatus"
+      Write-Host "Headers:"
+      Write-Host (Redact-Headers -Text (Get-Content $headerFile -Raw))
+      Write-Host "Body:"
+      Write-Host (Get-Content $bodyFile -Raw)
+      throw "API key bootstrap failed"
+    }
+    $keyJson = Get-Content $bodyFile -Raw | ConvertFrom-Json
+    $apiKey = "$($keyJson.api_key)"
+    if ([string]::IsNullOrWhiteSpace($apiKey)) {
+      throw "API key bootstrap did not return api_key"
+    }
+    $env:E2E_API_KEY = $apiKey
+  } finally {
+    Remove-Item $headerFile, $bodyFile -ErrorAction SilentlyContinue
+  }
+}
+
 try {
   if ((Get-EnvValue -Name "E2E_MASK_SELF_TEST") -eq "1") {
     Invoke-MaskSelfTest
@@ -294,6 +398,7 @@ try {
     New-Item -ItemType Directory ".tmp" | Out-Null
   }
   Set-Content -Path $script:Log -Value ""
+  Set-Content -Path $script:ErrLog -Value ""
 
   Import-DotEnv -Path (Join-Path $script:Root ".env.e2e")
 
@@ -301,17 +406,16 @@ try {
     $env:E2E_API_KEY = $env:MEMORYNODE_API_KEY
   }
 
-  if ([string]::IsNullOrWhiteSpace($env:E2E_API_KEY)) {
-    throw "Missing required env vars: E2E_API_KEY (or MEMORYNODE_API_KEY)"
-  }
-
   if ([string]::IsNullOrWhiteSpace($env:BASE_URL)) {
-    $script:BaseUrl = "https://api-staging.memorynode.ai"
+    $script:BaseUrl = "http://127.0.0.1:8787"
   } else {
     $script:BaseUrl = $env:BASE_URL
   }
 
   $isLocal = $script:BaseUrl -match "^http://(127\.0\.0\.1|localhost):"
+  if (-not $isLocal -and [string]::IsNullOrWhiteSpace($env:E2E_API_KEY)) {
+    throw "Missing required env vars for remote mode: BASE_URL + E2E_API_KEY (or MEMORYNODE_API_KEY)"
+  }
 
   if (Get-Command curl.exe -ErrorAction SilentlyContinue) {
     $script:CurlExe = "curl.exe"
@@ -322,7 +426,20 @@ try {
   }
 
   if ($isLocal) {
-    $requiredLocal = @("E2E_API_KEY", "SUPABASE_URL", "SUPABASE_SERVICE_ROLE_KEY", "API_KEY_SALT")
+    $localVarsPath = Get-EnvValue -Name "E2E_LOCAL_VARS_FILE"
+    if ([string]::IsNullOrWhiteSpace($localVarsPath)) {
+      $localVarsPath = Join-Path $script:Root "apps/api/.dev.vars"
+    }
+    if (Test-Path $localVarsPath) {
+      Import-DotEnv -Path $localVarsPath
+    } else {
+      Write-Host "Local vars file not found at $localVarsPath. Load vars and rerun: Get-Content apps/api/.dev.vars | % { if (`$_ -and -not `$_.StartsWith('#') -and `$_.Contains('=')) { `$n,`$v = `$_.Split('=',2); Set-Item Env:`$n `$v } }; pnpm e2e:verify"
+    }
+
+    $requiredLocal = @("SUPABASE_URL", "SUPABASE_SERVICE_ROLE_KEY", "API_KEY_SALT")
+    if ([string]::IsNullOrWhiteSpace($env:E2E_API_KEY)) {
+      $requiredLocal += "MASTER_ADMIN_TOKEN"
+    }
     $missing = @()
     foreach ($name in $requiredLocal) {
       if ([string]::IsNullOrWhiteSpace((Get-EnvValue -Name $name))) {
@@ -350,16 +467,16 @@ try {
     if (-not (Select-String -Path $wranglerToml -Pattern "durable_objects" -Quiet)) {
       throw "ERROR: wrangler.toml is missing durable_objects section (expected RATE_LIMIT_DO)"
     }
-    if (-not (Select-String -Path $wranglerToml -Pattern 'binding\s*=\s*"RATE_LIMIT_DO"' -Quiet)) {
-      throw "ERROR: wrangler.toml is missing durable_objects binding RATE_LIMIT_DO"
+    if (-not (Select-String -Path $wranglerToml -Pattern '(binding|name)\s*=\s*"RATE_LIMIT_DO"' -Quiet)) {
+      throw "ERROR: wrangler.toml is missing durable_objects binding/name RATE_LIMIT_DO"
     }
 
     Write-Host "Starting API dev server on port $port..."
-    $script:Wrangler = Start-Process -FilePath "pnpm" `
-      -ArgumentList @("--filter", "@memorynode/api", "run", "dev", "--", "--port", "$port", "--log-level", "error") `
+    $script:Wrangler = Start-Process -FilePath "pnpm.cmd" `
+      -ArgumentList @("--filter", "@memorynode/api", "exec", "wrangler", "dev", "--port", "$port", "--log-level", "error") `
       -WorkingDirectory $script:Root `
       -RedirectStandardOutput $script:Log `
-      -RedirectStandardError $script:Log `
+      -RedirectStandardError $script:ErrLog `
       -PassThru
     Start-Sleep -Milliseconds 500
 
@@ -398,6 +515,9 @@ try {
 
     $script:BaseUrl = "http://127.0.0.1:$port"
     Write-Host "Base URL (local dev): $script:BaseUrl"
+    if ([string]::IsNullOrWhiteSpace($env:E2E_API_KEY)) {
+      Bootstrap-LocalApiKey
+    }
   } else {
     Write-Host "Base URL (remote): $script:BaseUrl"
   }
@@ -413,6 +533,7 @@ try {
 } catch {
   $msg = if ($_.Exception -and $_.Exception.Message) { $_.Exception.Message } else { $_ | Out-String }
   [Console]::Error.WriteLine("E2E smoke failed: $msg")
+  Cleanup
   Tail-Logs
   exit 1
 } finally {
