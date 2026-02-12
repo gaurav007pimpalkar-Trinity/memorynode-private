@@ -15,8 +15,9 @@ const SECRET_KEYS = [
   "master_admin_token",
   "openai_api_key",
   "supabase_service_role_key",
-  "stripe_secret_key",
-  "stripe_webhook_secret",
+  "payu_merchant_key",
+  "payu_merchant_salt",
+  "payu_webhook_secret",
 ];
 
 const SECRET_PATTERNS = [

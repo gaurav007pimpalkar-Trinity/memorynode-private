@@ -9,4 +9,4 @@ Canonical release commands are now:
 Keep this file as a stable pointer only. Do not duplicate deploy commands here.
 
 Migration manifest token (CI guard):
-- `MIGRATIONS_TOTAL=22; MIGRATIONS_LATEST=020_webhook_deferred_reconcile.sql`
+- `MIGRATIONS_TOTAL=23; MIGRATIONS_LATEST=021_payu_billing.sql`

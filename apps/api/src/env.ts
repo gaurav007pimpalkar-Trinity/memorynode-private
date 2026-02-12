@@ -20,17 +20,17 @@ export interface Env {
   AUDIT_IP_SALT?: string;
   MAX_IMPORT_BYTES?: string;
   MAX_EXPORT_BYTES?: string;
-  STRIPE_SECRET_KEY?: string;
-  STRIPE_WEBHOOK_SECRET?: string;
-  STRIPE_WEBHOOK_TOLERANCE_SEC?: string;
+  PAYU_MERCHANT_KEY?: string;
+  PAYU_MERCHANT_SALT?: string;
+  PAYU_WEBHOOK_SECRET?: string;
   BILLING_RECONCILE_ON_AMBIGUITY?: string;
   BILLING_WEBHOOKS_ENABLED?: string;
-  STRIPE_PRICE_PRO?: string;
-  STRIPE_PRICE_TEAM?: string;
+  PAYU_BASE_URL?: string;
+  PAYU_PRO_AMOUNT?: string;
+  PAYU_PRODUCT_INFO?: string;
   PUBLIC_APP_URL?: string;
-  STRIPE_PORTAL_CONFIGURATION_ID?: string;
-  STRIPE_SUCCESS_PATH?: string;
-  STRIPE_CANCEL_PATH?: string;
+  PAYU_SUCCESS_PATH?: string;
+  PAYU_CANCEL_PATH?: string;
   RATE_LIMIT_MODE?: string;
 }
 

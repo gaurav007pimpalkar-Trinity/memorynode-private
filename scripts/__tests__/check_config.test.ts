@@ -23,11 +23,13 @@ const RELEVANT_ENV_KEYS = [
   "EMBEDDINGS_MODE",
   "OPENAI_API_KEY",
   "BILLING_WEBHOOKS_ENABLED",
-  "STRIPE_SECRET_KEY",
-  "STRIPE_WEBHOOK_SECRET",
+  "PAYU_MERCHANT_KEY",
+  "PAYU_MERCHANT_SALT",
+  "PAYU_WEBHOOK_SECRET",
+  "PAYU_BASE_URL",
   "PUBLIC_APP_URL",
-  "STRIPE_PRICE_PRO",
-  "STRIPE_PRICE_TEAM",
+  "PAYU_SUCCESS_PATH",
+  "PAYU_CANCEL_PATH",
 ];
 
 function runCheckConfig(overrides: Record<string, string | undefined>) {
@@ -63,11 +65,13 @@ const STRICT_BASE = {
   MASTER_ADMIN_TOKEN: "admin_token_123",
   EMBEDDINGS_MODE: "openai",
   OPENAI_API_KEY: "sk-test-1234567890",
-  STRIPE_SECRET_KEY: "stripe_secret_test_key_1234567890",
-  STRIPE_WEBHOOK_SECRET: "stripe_webhook_secret_test_1234567890",
+  PAYU_MERCHANT_KEY: "payu_merchant_key_1234567890",
+  PAYU_MERCHANT_SALT: "payu_merchant_salt_1234567890",
+  PAYU_WEBHOOK_SECRET: "payu_webhook_secret_1234567890",
+  PAYU_BASE_URL: "https://secure.payu.in",
   PUBLIC_APP_URL: "https://app.memorynode.ai",
-  STRIPE_PRICE_PRO: "price_pro_123",
-  STRIPE_PRICE_TEAM: "price_team_123",
+  PAYU_SUCCESS_PATH: "/settings/billing?status=success",
+  PAYU_CANCEL_PATH: "/settings/billing?status=canceled",
 };
 
 describe("check_config", () => {
@@ -101,23 +105,25 @@ describe("check_config", () => {
       EMBEDDINGS_MODE: "stub",
       OPENAI_API_KEY: undefined,
       BILLING_WEBHOOKS_ENABLED: "0",
-      STRIPE_SECRET_KEY: undefined,
-      STRIPE_WEBHOOK_SECRET: undefined,
+      PAYU_MERCHANT_KEY: undefined,
+      PAYU_MERCHANT_SALT: undefined,
+      PAYU_WEBHOOK_SECRET: undefined,
+      PAYU_BASE_URL: undefined,
       PUBLIC_APP_URL: undefined,
-      STRIPE_PRICE_PRO: undefined,
-      STRIPE_PRICE_TEAM: undefined,
+      PAYU_SUCCESS_PATH: undefined,
+      PAYU_CANCEL_PATH: undefined,
     });
     expect(result.status).toBe(0);
     expect(result.output).toContain("Billing checks skipped");
   });
 
-  it("fails in production when billing is enabled but Stripe vars are missing", () => {
+  it("fails in production when billing is enabled but PayU vars are missing", () => {
     const result = runCheckConfig({
       ...STRICT_BASE,
-      STRIPE_WEBHOOK_SECRET: undefined,
+      PAYU_MERCHANT_SALT: undefined,
     });
     expect(result.status).toBe(1);
-    expect(result.output).toContain("Missing STRIPE_WEBHOOK_SECRET");
+    expect(result.output).toContain("Missing PAYU_MERCHANT_SALT");
   });
 
   it("passes in production with strict requirements satisfied", () => {

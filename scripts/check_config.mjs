@@ -81,14 +81,13 @@ function isBillingWebhooksEnabled() {
 
 function hasBillingConfigSignals() {
   const keys = [
-    "STRIPE_SECRET_KEY",
-    "STRIPE_WEBHOOK_SECRET",
-    "STRIPE_PRICE_PRO",
-    "STRIPE_PRICE_TEAM",
+    "PAYU_MERCHANT_KEY",
+    "PAYU_MERCHANT_SALT",
+    "PAYU_BASE_URL",
     "PUBLIC_APP_URL",
-    "STRIPE_PORTAL_CONFIGURATION_ID",
-    "STRIPE_SUCCESS_PATH",
-    "STRIPE_CANCEL_PATH",
+    "PAYU_SUCCESS_PATH",
+    "PAYU_CANCEL_PATH",
+    "PAYU_WEBHOOK_SECRET",
   ];
   return keys.some((key) => !isMissing(key));
 }
@@ -137,14 +136,13 @@ if (strictStage) {
 
   if (billingRequired) {
     const billingContext = `Billing is considered enabled in ${stage} (BILLING_WEBHOOKS_ENABLED=${billingWebhooksEnabled ? "1" : "0"}).`;
-    requireVar(errors, "STRIPE_SECRET_KEY", `${billingContext} Required for billing endpoints.`);
-    requireVar(errors, "STRIPE_WEBHOOK_SECRET", `${billingContext} Required for webhook signature verification.`);
+    requireVar(errors, "PAYU_MERCHANT_KEY", `${billingContext} Required for checkout field signing.`);
+    requireVar(errors, "PAYU_MERCHANT_SALT", `${billingContext} Required for webhook/signature verification.`);
+    requireVar(errors, "PAYU_BASE_URL", `${billingContext} Required for hosted PayU checkout endpoint.`);
     requireVar(errors, "PUBLIC_APP_URL", `${billingContext} Required to generate checkout/portal URLs.`);
-    requireVar(errors, "STRIPE_PRICE_PRO", `${billingContext} Required for Pro checkout plan.`);
-    requireVar(errors, "STRIPE_PRICE_TEAM", `${billingContext} Required for Team checkout plan.`);
   } else {
     notes.push(
-      `[${stage}] Billing checks skipped because BILLING_WEBHOOKS_ENABLED=0 and no Stripe billing config signals were provided.`,
+      `[${stage}] Billing checks skipped because BILLING_WEBHOOKS_ENABLED=0 and no PayU billing config signals were provided.`,
     );
   }
 

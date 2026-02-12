@@ -11,6 +11,7 @@ with required_tables(name) as (
     ('api_audit_log'),
     ('product_events'),
     ('stripe_webhook_events'),
+    ('payu_webhook_events'),
     ('memorynode_migrations')
 ),
 missing_tables as (
@@ -36,9 +37,15 @@ required_columns(table_name, column_name) as (
   values
     ('workspaces', 'plan'),
     ('workspaces', 'plan_status'),
+    ('workspaces', 'billing_provider'),
     ('workspaces', 'stripe_customer_id'),
     ('workspaces', 'stripe_last_event_created'),
     ('workspaces', 'stripe_last_event_id'),
+    ('workspaces', 'payu_last_event_created'),
+    ('workspaces', 'payu_last_event_id'),
+    ('workspaces', 'payu_last_status'),
+    ('workspaces', 'payu_txn_id'),
+    ('workspaces', 'payu_payment_id'),
     ('api_keys', 'key_hash'),
     ('memories', 'workspace_id'),
     ('memory_chunks', 'embedding'),
@@ -49,7 +56,13 @@ required_columns(table_name, column_name) as (
     ('stripe_webhook_events', 'event_created'),
     ('stripe_webhook_events', 'processed_at'),
     ('stripe_webhook_events', 'defer_reason'),
-    ('stripe_webhook_events', 'subscription_id')
+    ('stripe_webhook_events', 'subscription_id'),
+    ('payu_webhook_events', 'event_id'),
+    ('payu_webhook_events', 'status'),
+    ('payu_webhook_events', 'event_created'),
+    ('payu_webhook_events', 'processed_at'),
+    ('payu_webhook_events', 'defer_reason'),
+    ('payu_webhook_events', 'txn_id')
 ),
 missing_columns as (
   select rc.table_name, rc.column_name
