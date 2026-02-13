@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { handleCreateMemory, handleSearch, handleBillingCheckout, handleBillingWebhook } from "../src/index.js";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import crypto from "node:crypto";
@@ -22,10 +22,10 @@ function signPayUWebhook(payload: Record<string, string>, env: Record<string, un
     "",
     "",
     "",
-    "",
-    "",
-    "",
-    "",
+    payload.udf5 ?? "",
+    payload.udf4 ?? "",
+    payload.udf3 ?? "",
+    payload.udf2 ?? "",
     payload.udf1 ?? "",
     payload.email ?? "",
     payload.firstname ?? "",
@@ -56,6 +56,9 @@ function makeSupabase(options?: {
     payu_last_plan: null,
   } as Record<string, unknown>;
   const payuEvents = new Map<string, Record<string, unknown>>();
+  const payuTransactions = new Map<string, Record<string, unknown>>();
+  const entitlements: Array<Record<string, unknown>> = [];
+  let entitlementId = 1;
 
   return {
     events,
@@ -189,6 +192,66 @@ function makeSupabase(options?: {
           }),
         };
       }
+      if (table === "payu_transactions") {
+        return {
+          select: () => ({
+            eq: (_col: string, val: unknown) => ({
+              maybeSingle: async () => ({
+                data: payuTransactions.get(String(val)) ?? null,
+                error: null,
+              }),
+            }),
+          }),
+          insert: (rows: Array<Record<string, unknown>> | Record<string, unknown>) => {
+            const list = Array.isArray(rows) ? rows : [rows];
+            const row = list[0];
+            if (payuTransactions.has(String(row.txn_id))) {
+              return { data: null, error: { code: "23505", message: "duplicate" } };
+            }
+            payuTransactions.set(String(row.txn_id), { ...row });
+            return { data: [row], error: null };
+          },
+          update: (fields: Record<string, unknown>) => ({
+            eq: (_col: string, val: unknown) => {
+              const row = payuTransactions.get(String(val));
+              if (row) Object.assign(row, fields);
+              return { data: row ? [row] : [], error: null };
+            },
+          }),
+        };
+      }
+      if (table === "workspace_entitlements") {
+        const filters: Array<[string, unknown]> = [];
+        const applyFilters = () =>
+          entitlements.filter((row) => filters.every(([col, val]) => row[col] === val));
+        const builder = {
+          eq: (col: string, val: unknown) => {
+            filters.push([col, val]);
+            return builder;
+          },
+          order: () => builder,
+          limit: (n: number) => ({ data: applyFilters().slice(0, n), error: null }),
+          maybeSingle: async () => ({ data: applyFilters()[0] ?? null, error: null }),
+          update: (fields: Record<string, unknown>) => ({
+            eq: (_col: string, val: unknown) => {
+              const row = entitlements.find((entry) => Number(entry.id) === Number(val));
+              if (row) Object.assign(row, fields);
+              return { data: row ? [row] : [], error: null };
+            },
+          }),
+          insert: (rows: Array<Record<string, unknown>> | Record<string, unknown>) => {
+            const list = Array.isArray(rows) ? rows : [rows];
+            const inserted = list.map((row) => ({ ...row, id: entitlementId++ }));
+            entitlements.push(...inserted);
+            return { data: inserted, error: null };
+          },
+        };
+        return {
+          select: () => builder,
+          update: builder.update,
+          insert: builder.insert,
+        };
+      }
       if (table === "usage_daily") {
         return {
           select: () => ({
@@ -235,11 +298,45 @@ describe("product events", () => {
     PAYU_MERCHANT_KEY: "payu_key",
     PAYU_MERCHANT_SALT: "payu_salt",
     PAYU_BASE_URL: "https://secure.payu.in/_payment",
+    PAYU_VERIFY_URL: "https://info.payu.in/merchant/postservice?form=2",
+    PAYU_CURRENCY: "INR",
     PAYU_PRO_AMOUNT: "49.00",
     PAYU_PRODUCT_INFO: "MemoryNode Platform Pro",
     PUBLIC_APP_URL: "https://app.example.com",
     EMBEDDINGS_MODE: "stub",
   } as Record<string, unknown>;
+
+  const realFetch = globalThis.fetch;
+
+  afterEach(() => {
+    vi.restoreAllMocks();
+    vi.stubGlobal("fetch", realFetch);
+  });
+
+  function mockVerify(status: "success" | "failure", paymentId: string) {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (_input: RequestInfo | URL, init?: RequestInit) => {
+        const body = init?.body instanceof URLSearchParams ? init.body : new URLSearchParams(String(init?.body ?? ""));
+        const txnid = body.get("var1") ?? "txn_upgrade_1";
+        return new Response(
+          JSON.stringify({
+            status: 1,
+            transaction_details: {
+              [txnid]: {
+                txnid,
+                status,
+                amount: "49.00",
+                currency: "INR",
+                mihpayid: paymentId,
+              },
+            },
+          }),
+          { status: 200, headers: { "content-type": "application/json" } },
+        );
+      }),
+    );
+  }
 
   it("emits first_ingest_success only once", async () => {
     const supabase = makeSupabase({ usage: { writes: 0, reads: 0, embeds: 0 } });
@@ -286,6 +383,16 @@ describe("product events", () => {
 
   it("emits upgrade_activated when payment becomes successful", async () => {
     const supabase = makeSupabase({ plan_status: "free" });
+    const inserted = supabase.from("payu_transactions").insert({
+      txn_id: "txn_upgrade_1",
+      workspace_id: "ws1",
+      plan_code: "pro",
+      amount: "49.00",
+      currency: "INR",
+      status: "initiated",
+    });
+    expect(inserted.error).toBeNull();
+    mockVerify("success", "mih_upgrade_1");
     const payload = {
       key: String(env.PAYU_MERCHANT_KEY),
       txnid: "txn_upgrade_1",
@@ -296,6 +403,10 @@ describe("product events", () => {
       firstname: "MemoryNode",
       email: "ws1@example.com",
       udf1: "ws1",
+      udf2: "pro",
+      udf3: "",
+      udf4: "",
+      udf5: "",
     } as Record<string, string>;
     payload.hash = signPayUWebhook(payload, env);
 

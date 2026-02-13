@@ -1,6 +1,9 @@
 import crypto from "node:crypto";
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import {
+  buildPayURequestHashInput,
+  buildPayUResponseReverseHashInput,
+  computeSha512Hex,
   handleBillingStatus,
   handleBillingCheckout,
   handleBillingPortal,
@@ -46,6 +49,34 @@ type PayUWebhookRow = {
   payload?: Record<string, unknown>;
 };
 
+type PayUTransactionRow = {
+  txn_id: string;
+  workspace_id: string;
+  plan_code: string;
+  amount: string;
+  currency: string;
+  status: string;
+  payu_payment_id?: string | null;
+  verify_status?: string | null;
+  verify_payload?: Record<string, unknown> | null;
+  request_id?: string | null;
+  last_error?: string | null;
+};
+
+type WorkspaceEntitlementRow = {
+  id: number;
+  workspace_id: string;
+  source_txn_id: string;
+  plan_code: string;
+  status: string;
+  starts_at: string;
+  expires_at: string | null;
+  caps_json: { writes: number; reads: number; embeds: number };
+  metadata?: Record<string, unknown>;
+  created_at?: string;
+  updated_at?: string;
+};
+
 function makeSupabase(options?: {
   plan?: WorkspaceRow["plan"];
   plan_status?: WorkspaceRow["plan_status"];
@@ -69,6 +100,9 @@ function makeSupabase(options?: {
 
   const usage = options?.usage ?? { writes: 0, reads: 0, embeds: 0 };
   const payuEvents = new Map<string, PayUWebhookRow>();
+  const payuTransactions = new Map<string, PayUTransactionRow>();
+  const entitlements: WorkspaceEntitlementRow[] = [];
+  let entitlementId = 1;
   let billingUpdateCount = 0;
   let remainingWorkspaceUpdateFailures = options?.failWorkspaceUpdates ?? 0;
 
@@ -76,6 +110,8 @@ function makeSupabase(options?: {
     workspace,
     getBillingUpdateCount: () => billingUpdateCount,
     getWebhookRow: (eventId: string) => payuEvents.get(eventId),
+    getTransactionRow: (txnId: string) => payuTransactions.get(txnId),
+    getEntitlementByTxn: (txnId: string) => entitlements.find((row) => row.source_txn_id === txnId),
     from(table: string) {
       if (table === "app_settings") {
         return {
@@ -165,6 +201,69 @@ function makeSupabase(options?: {
           },
         };
       }
+      if (table === "payu_transactions") {
+        return {
+          select: () => ({
+            eq: (_col: string, val: unknown) => ({
+              maybeSingle: async () => ({
+                data: payuTransactions.get(String(val)) ?? null,
+                error: null,
+              }),
+            }),
+          }),
+          insert: (rows: Array<PayUTransactionRow> | PayUTransactionRow) => {
+            const list = Array.isArray(rows) ? rows : [rows];
+            const row = { ...list[0] };
+            if (payuTransactions.has(row.txn_id)) {
+              return { data: null, error: { code: "23505", message: "duplicate" } };
+            }
+            payuTransactions.set(row.txn_id, row);
+            return { data: [row], error: null };
+          },
+          update: (fields: Partial<PayUTransactionRow>) => ({
+            eq: (_col: string, val: unknown) => {
+              const row = payuTransactions.get(String(val));
+              if (row) Object.assign(row, fields);
+              return { data: row ? [row] : [], error: null };
+            },
+          }),
+        };
+      }
+      if (table === "workspace_entitlements") {
+        const filters: Array<[string, unknown]> = [];
+        const applyFilters = () =>
+          entitlements.filter((row) => filters.every(([col, val]) => (row as Record<string, unknown>)[col] === val));
+        const builder = {
+          eq: (col: string, val: unknown) => {
+            filters.push([col, val]);
+            return builder;
+          },
+          order: () => builder,
+          limit: (n: number) => ({ data: applyFilters().slice(0, n), error: null }),
+          maybeSingle: async () => ({ data: applyFilters()[0] ?? null, error: null }),
+          update: (fields: Partial<WorkspaceEntitlementRow>) => ({
+            eq: (_col: string, val: unknown) => {
+              const row = entitlements.find((entry) => entry.id === Number(val));
+              if (row) Object.assign(row, fields);
+              return { data: row ? [row] : [], error: null };
+            },
+          }),
+          insert: (rows: Array<Omit<WorkspaceEntitlementRow, "id">> | Omit<WorkspaceEntitlementRow, "id">) => {
+            const list = Array.isArray(rows) ? rows : [rows];
+            const inserted = list.map((row) => ({
+              ...row,
+              id: entitlementId++,
+            })) as WorkspaceEntitlementRow[];
+            entitlements.push(...inserted);
+            return { data: inserted, error: null };
+          },
+        };
+        return {
+          select: () => builder,
+          insert: builder.insert,
+          update: builder.update,
+        };
+      }
       if (table === "payu_webhook_events") {
         return {
           select: () => ({
@@ -216,6 +315,8 @@ function makeSupabase(options?: {
     workspace: WorkspaceRow;
     getBillingUpdateCount: () => number;
     getWebhookRow: (eventId: string) => PayUWebhookRow | undefined;
+    getTransactionRow: (txnId: string) => PayUTransactionRow | undefined;
+    getEntitlementByTxn: (txnId: string) => WorkspaceEntitlementRow | undefined;
   };
 }
 
@@ -230,6 +331,8 @@ function makeEnv(overrides?: Record<string, unknown>): Record<string, unknown> {
     PAYU_MERCHANT_KEY: "payu_key",
     PAYU_MERCHANT_SALT: "payu_salt",
     PAYU_BASE_URL: "https://secure.payu.in/_payment",
+    PAYU_VERIFY_URL: "https://info.payu.in/merchant/postservice?form=2",
+    PAYU_CURRENCY: "INR",
     PAYU_PRO_AMOUNT: "49.00",
     PAYU_PRODUCT_INFO: "MemoryNode Platform Pro",
     PUBLIC_APP_URL: "https://app.example.com",
@@ -238,28 +341,146 @@ function makeEnv(overrides?: Record<string, unknown>): Record<string, unknown> {
 }
 
 function signPayUWebhook(payload: Record<string, string>, env = makeEnv()) {
-  const sequence = [
-    String(env.PAYU_MERCHANT_SALT ?? ""),
-    payload.status ?? "",
-    "",
-    "",
-    "",
-    "",
-    "",
-    "",
-    "",
-    "",
-    "",
-    payload.udf1 ?? "",
-    payload.email ?? "",
-    payload.firstname ?? "",
-    payload.productinfo ?? "",
-    payload.amount ?? "",
-    payload.txnid ?? "",
-    String(env.PAYU_MERCHANT_KEY ?? ""),
-  ].join("|");
+  const sequence = buildPayUResponseReverseHashInput(payload, {
+    PAYU_MERCHANT_KEY: String(env.PAYU_MERCHANT_KEY ?? ""),
+    PAYU_MERCHANT_SALT: String(env.PAYU_MERCHANT_SALT ?? ""),
+  });
   return crypto.createHash("sha512").update(sequence).digest("hex");
 }
+
+const realFetch = globalThis.fetch;
+
+afterEach(() => {
+  vi.restoreAllMocks();
+  vi.stubGlobal("fetch", realFetch);
+});
+
+function mockPayUVerifyApi(status: "success" | "failure" | "pending" | "canceled", options?: {
+  amount?: string;
+  currency?: string;
+  paymentId?: string;
+}) {
+  vi.stubGlobal(
+    "fetch",
+    vi.fn(async (_input: RequestInfo | URL, init?: RequestInit) => {
+      let txnid = "txn_default";
+      const body = init?.body;
+      if (body instanceof URLSearchParams) {
+        txnid = body.get("var1") ?? txnid;
+      } else if (typeof body === "string") {
+        txnid = new URLSearchParams(body).get("var1") ?? txnid;
+      }
+      return new Response(
+        JSON.stringify({
+          status: 1,
+          transaction_details: {
+            [txnid]: {
+              txnid,
+              status,
+              amount: options?.amount ?? "49.00",
+              currency: options?.currency ?? "INR",
+              mihpayid: options?.paymentId ?? `mih_${txnid}`,
+            },
+          },
+        }),
+        { status: 200, headers: { "content-type": "application/json" } },
+      );
+    }),
+  );
+}
+
+function seedPayUTransaction(
+  supabase: SupabaseClient,
+  options: {
+    txnId: string;
+    workspaceId?: string;
+    amount?: string;
+    currency?: string;
+    planCode?: string;
+  },
+) {
+  const inserted = supabase.from("payu_transactions").insert({
+    txn_id: options.txnId,
+    workspace_id: options.workspaceId ?? "ws1",
+    plan_code: options.planCode ?? "pro",
+    amount: options.amount ?? "49.00",
+    currency: options.currency ?? "INR",
+    status: "initiated",
+  });
+  expect(inserted.error).toBeNull();
+}
+
+function seedEntitlement(
+  supabase: SupabaseClient,
+  options: {
+    workspaceId?: string;
+    txnId: string;
+    status?: "active" | "expired" | "revoked" | "pending";
+    planCode?: string;
+    startsAt?: string;
+    expiresAt?: string | null;
+    caps?: { writes: number; reads: number; embeds: number };
+  },
+) {
+  const inserted = supabase.from("workspace_entitlements").insert({
+    workspace_id: options.workspaceId ?? "ws1",
+    source_txn_id: options.txnId,
+    plan_code: options.planCode ?? "pro",
+    status: options.status ?? "active",
+    starts_at: options.startsAt ?? new Date(Date.now() - 60_000).toISOString(),
+    expires_at: options.expiresAt ?? null,
+    caps_json: options.caps ?? { writes: 100, reads: 1000, embeds: 100 },
+    metadata: {},
+    created_at: new Date().toISOString(),
+    updated_at: new Date().toISOString(),
+  });
+  expect(inserted.error).toBeNull();
+}
+
+describe("PayU hash construction", () => {
+  it("builds request hash with fixed field order and blank udf slots", async () => {
+    const input = buildPayURequestHashInput({
+      key: "payu_key",
+      txnid: "txn_fixture_001",
+      amount: "499.00",
+      productinfo: "MemoryNode Platform Pro",
+      firstname: "Memory",
+      email: "memory@example.com",
+      udf1: "ws_fixture",
+      udf2: "deploy",
+      udf3: "",
+      udf4: "",
+      udf5: "",
+      salt: "payu_salt",
+    });
+    expect(input).toBe("payu_key|txn_fixture_001|499.00|MemoryNode Platform Pro|Memory|memory@example.com|ws_fixture|deploy|||||||||payu_salt");
+    const hash = await computeSha512Hex(input);
+    expect(hash).toBe("827e99a34b32f9b92f2574921031259119d3564115d6b7708ca7c771b3f8dcafe74beb43a700b02acc379663a207ab9fc1c3890f2c87d148207756d943804378");
+  });
+
+  it("builds reverse response hash using salt|status||||||udf5..udf1 order", async () => {
+    const payload = {
+      status: "success",
+      udf5: "u5",
+      udf4: "u4",
+      udf3: "u3",
+      udf2: "u2",
+      udf1: "ws_fixture",
+      email: "memory@example.com",
+      firstname: "Memory",
+      productinfo: "MemoryNode Platform Pro",
+      amount: "499.00",
+      txnid: "txn_fixture_001",
+    };
+    const input = buildPayUResponseReverseHashInput(payload, {
+      PAYU_MERCHANT_KEY: "payu_key",
+      PAYU_MERCHANT_SALT: "payu_salt",
+    });
+    expect(input).toBe("payu_salt|success||||||u5|u4|u3|u2|ws_fixture|memory@example.com|Memory|MemoryNode Platform Pro|499.00|txn_fixture_001|payu_key");
+    const hash = await computeSha512Hex(input);
+    expect(hash).toBe("2416f5d436c9347236ce7d52b30e258dddb72864773b2c2a0cb1ecc9a19bd9f7fe52624c94e7c6f723c5bb3b36469b4ec12fe07c31395ec78b2a15882ff4a6d3");
+  });
+});
 
 describe("billing status", () => {
   it("returns billing status for workspace", async () => {
@@ -340,6 +561,10 @@ describe("billing checkout + portal", () => {
     expect(json.fields).toBeTruthy();
     expect(typeof json.fields.hash).toBe("string");
     expect(supabase.workspace.payu_txn_id).toMatch(/^mn/);
+    const txn = supabase.getTransactionRow(String(supabase.workspace.payu_txn_id));
+    expect(txn?.status).toBe("initiated");
+    expect(txn?.amount).toBe("49.00");
+    expect(txn?.currency).toBe("INR");
   });
 
   it("rejects team plan because platform-only billing is enforced", async () => {
@@ -376,6 +601,42 @@ describe("billing checkout + portal", () => {
 });
 
 describe("billing webhook", () => {
+  it("valid response hash passes signature verification", async () => {
+    const env = makeEnv();
+    const payload = {
+      key: String(env.PAYU_MERCHANT_KEY),
+      txnid: "txn_hash_valid_1",
+      mihpayid: "mih_hash_valid_1",
+      status: "success",
+      amount: "49.00",
+      productinfo: "MemoryNode Platform Pro",
+      firstname: "MemoryNode",
+      email: "ws1@example.com",
+      udf1: "ws1",
+      udf2: "pro",
+      udf3: "",
+      udf4: "",
+      udf5: "",
+    } as Record<string, string>;
+    payload.hash = signPayUWebhook(payload, env);
+    const supabase = makeSupabase();
+    seedPayUTransaction(supabase, { txnId: payload.txnid, workspaceId: "ws1" });
+    mockPayUVerifyApi("success");
+
+    const res = await handleBillingWebhook(
+      new Request("http://localhost/v1/billing/webhook", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify(payload),
+      }),
+      env,
+      supabase as SupabaseClient,
+      "req-hash-valid",
+    );
+
+    expect(res.status).toBe(200);
+  });
+
   it("rejects invalid signature", async () => {
     const payload = {
       key: "payu_key",
@@ -418,10 +679,16 @@ describe("billing webhook", () => {
       firstname: "MemoryNode",
       email: "ws1@example.com",
       udf1: "ws1",
+      udf2: "pro",
+      udf3: "",
+      udf4: "",
+      udf5: "",
     } as Record<string, string>;
     payload.hash = signPayUWebhook(payload, env);
 
     const supabase = makeSupabase();
+    seedPayUTransaction(supabase, { txnId: "txn_success_1" });
+    mockPayUVerifyApi("success", { paymentId: "mihpay_1" });
     const res = await handleBillingWebhook(
       new Request("http://localhost/v1/billing/webhook", {
         method: "POST",
@@ -439,6 +706,90 @@ describe("billing webhook", () => {
     expect(supabase.workspace.payu_txn_id).toBe("txn_success_1");
     expect(supabase.workspace.payu_payment_id).toBe("mihpay_1");
     expect(supabase.workspace.payu_last_status).toBe("success");
+    expect(supabase.getTransactionRow("txn_success_1")?.status).toBe("success");
+    expect(supabase.getEntitlementByTxn("txn_success_1")?.status).toBe("active");
+  });
+
+  it("does not grant entitlements when callback says success but verify API returns failure", async () => {
+    const env = makeEnv();
+    const payload = {
+      key: String(env.PAYU_MERCHANT_KEY),
+      txnid: "txn_verify_fail_1",
+      mihpayid: "mih_verify_fail_1",
+      status: "success",
+      amount: "49.00",
+      productinfo: "MemoryNode Platform Pro",
+      firstname: "MemoryNode",
+      email: "ws1@example.com",
+      udf1: "ws1",
+      udf2: "pro",
+      udf3: "",
+      udf4: "",
+      udf5: "",
+    } as Record<string, string>;
+    payload.hash = signPayUWebhook(payload, env);
+
+    const supabase = makeSupabase({ plan: "free", plan_status: "free" });
+    seedPayUTransaction(supabase, { txnId: "txn_verify_fail_1", workspaceId: "ws1" });
+    mockPayUVerifyApi("failure", { paymentId: "mih_verify_fail_1" });
+
+    const res = await handleBillingWebhook(
+      new Request("http://localhost/v1/billing/webhook", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify(payload),
+      }),
+      env,
+      supabase,
+      "req-verify-fail",
+    );
+
+    expect(res.status).toBe(200);
+    expect(supabase.workspace.plan).toBe("free");
+    expect(supabase.workspace.plan_status).toBe("past_due");
+    expect(supabase.getEntitlementByTxn("txn_verify_fail_1")).toBeUndefined();
+    expect(supabase.getTransactionRow("txn_verify_fail_1")?.status).toBe("verify_failed");
+  });
+
+  it("grants entitlements only after verify API confirms success", async () => {
+    const env = makeEnv();
+    const payload = {
+      key: String(env.PAYU_MERCHANT_KEY),
+      txnid: "txn_verify_success_1",
+      mihpayid: "mih_verify_success_1",
+      status: "success",
+      amount: "49.00",
+      productinfo: "MemoryNode Platform Pro",
+      firstname: "MemoryNode",
+      email: "ws1@example.com",
+      udf1: "ws1",
+      udf2: "pro",
+      udf3: "",
+      udf4: "",
+      udf5: "",
+    } as Record<string, string>;
+    payload.hash = signPayUWebhook(payload, env);
+
+    const supabase = makeSupabase({ plan: "free", plan_status: "free" });
+    seedPayUTransaction(supabase, { txnId: "txn_verify_success_1", workspaceId: "ws1" });
+    mockPayUVerifyApi("success", { paymentId: "mih_verify_success_1" });
+
+    const res = await handleBillingWebhook(
+      new Request("http://localhost/v1/billing/webhook", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify(payload),
+      }),
+      env,
+      supabase,
+      "req-verify-success",
+    );
+
+    expect(res.status).toBe(200);
+    expect(supabase.workspace.plan).toBe("pro");
+    expect(supabase.workspace.plan_status).toBe("active");
+    expect(supabase.getTransactionRow("txn_verify_success_1")?.status).toBe("success");
+    expect(supabase.getEntitlementByTxn("txn_verify_success_1")?.status).toBe("active");
   });
 
   it("treats replayed webhook event ids as no-op", async () => {
@@ -453,10 +804,16 @@ describe("billing webhook", () => {
       firstname: "MemoryNode",
       email: "ws1@example.com",
       udf1: "ws1",
+      udf2: "pro",
+      udf3: "",
+      udf4: "",
+      udf5: "",
     } as Record<string, string>;
     payload.hash = signPayUWebhook(payload, env);
 
     const supabase = makeSupabase();
+    seedPayUTransaction(supabase, { txnId: "txn_replay_1", workspaceId: "ws1" });
+    mockPayUVerifyApi("success", { paymentId: "mihpay_replay_1" });
     const req = () =>
       new Request("http://localhost/v1/billing/webhook", {
         method: "POST",
@@ -471,6 +828,66 @@ describe("billing webhook", () => {
     expect(second.status).toBe(200);
     expect(supabase.workspace.payu_last_event_id).toBe("mihpay_replay_1");
     expect(supabase.getBillingUpdateCount()).toBe(1);
+    expect(supabase.getEntitlementByTxn("txn_replay_1")?.status).toBe("active");
+  });
+
+  it("keeps transaction state monotonic and safe on replay with changed verify outcome", async () => {
+    const env = makeEnv();
+    const supabase = makeSupabase({ plan: "free", plan_status: "free" });
+    seedPayUTransaction(supabase, { txnId: "txn_mono_1", workspaceId: "ws1" });
+
+    const successPayload = {
+      key: String(env.PAYU_MERCHANT_KEY),
+      txnid: "txn_mono_1",
+      mihpayid: "mih_mono_1",
+      status: "success",
+      amount: "49.00",
+      productinfo: "MemoryNode Platform Pro",
+      firstname: "MemoryNode",
+      email: "ws1@example.com",
+      udf1: "ws1",
+      udf2: "pro",
+      addedon: "2026-02-13T10:00:00Z",
+    } as Record<string, string>;
+    successPayload.hash = signPayUWebhook(successPayload, env);
+
+    mockPayUVerifyApi("success", { paymentId: "mih_mono_1" });
+    const first = await handleBillingWebhook(
+      new Request("http://localhost/v1/billing/webhook", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify(successPayload),
+      }),
+      env,
+      supabase,
+      "req-mono-1",
+    );
+    expect(first.status).toBe(200);
+    expect(supabase.getTransactionRow("txn_mono_1")?.status).toBe("success");
+
+    const failurePayload = {
+      ...successPayload,
+      mihpayid: "mih_mono_2",
+      status: "failure",
+      addedon: "2026-02-13T10:01:00Z",
+    };
+    failurePayload.hash = signPayUWebhook(failurePayload, env);
+
+    mockPayUVerifyApi("failure", { paymentId: "mih_mono_2" });
+    const second = await handleBillingWebhook(
+      new Request("http://localhost/v1/billing/webhook", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify(failurePayload),
+      }),
+      env,
+      supabase,
+      "req-mono-2",
+    );
+    expect(second.status).toBe(200);
+    expect(supabase.getTransactionRow("txn_mono_1")?.status).toBe("success");
+    expect(supabase.workspace.plan).toBe("pro");
+    expect(supabase.workspace.plan_status).toBe("active");
   });
 
   it("stores workspace-missing webhook as deferred", async () => {
@@ -595,6 +1012,40 @@ describe("cap enforcement upgrade path", () => {
     expect(json.error.code).toBe("CAP_EXCEEDED");
     expect(json.error.upgrade_required).toBe(true);
     expect(json.error.effective_plan).toBe("free");
+  });
+
+  it("blocks quota-consuming routes when entitlement is expired", async () => {
+    const supabase = makeSupabase({
+      plan: "pro",
+      plan_status: "active",
+      usage: { writes: 0, reads: 0, embeds: 0 },
+    });
+    seedEntitlement(supabase, {
+      workspaceId: "ws1",
+      txnId: "txn_expired_1",
+      status: "active",
+      startsAt: new Date(Date.now() - 2 * 24 * 60 * 60 * 1000).toISOString(),
+      expiresAt: new Date(Date.now() - 60_000).toISOString(),
+      caps: { writes: 999, reads: 999, embeds: 999 },
+    });
+
+    const res = await handleSearch(
+      new Request("http://localhost/v1/search", {
+        method: "POST",
+        headers: { authorization: "Bearer mn_live_test", "content-type": "application/json" },
+        body: JSON.stringify({ user_id: "u1", query: "hello" }),
+      }),
+      makeEnv({ PUBLIC_APP_URL: "https://app.example.com" }) as Record<string, unknown>,
+      supabase,
+      {},
+    );
+
+    expect(res.status).toBe(402);
+    const json = await res.json();
+    expect(json.error.code).toBe("ENTITLEMENT_EXPIRED");
+    expect(json.error.upgrade_required).toBe(true);
+    expect(json.error.effective_plan).toBe("free");
+    expect(typeof json.error.expired_at).toBe("string");
   });
 });
 
