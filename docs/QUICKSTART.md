@@ -3,7 +3,7 @@
 ## Prereqs
 - Node.js 20+, `corepack`, `wrangler` (Cloudflare), git.
 - Supabase project (URL + service role key).
-- Stripe keys optional for local; not needed to ingest/search in stub mode.
+- PayU billing keys optional for local; not needed to ingest/search in stub mode. Billing uses PayU; see docs/BILLING_RUNBOOK.md.
 
 ### pnpm setup (via Corepack)
 - Preferred:
@@ -41,11 +41,9 @@ API_KEY_SALT=dev_salt_12345
 MASTER_ADMIN_TOKEN=dev_admin
 ALLOWED_ORIGINS=http://127.0.0.1:4173
 EMBEDDINGS_MODE=stub
-STRIPE_SECRET_KEY=dummy
-STRIPE_PRICE_PRO=price_pro_dummy
-STRIPE_PRICE_TEAM=price_team_dummy
 PUBLIC_APP_URL=http://127.0.0.1:4173
 ```
+For production billing (PayU), also set: `PAYU_MERCHANT_KEY`, `PAYU_MERCHANT_SALT`, `PAYU_VERIFY_URL`, `PAYU_BASE_URL`, and optionally `PAYU_WEBHOOK_SECRET`. See docs/PROD_SETUP_CHECKLIST.md and docs/BILLING_RUNBOOK.md.
 
 ## 3) Apply migrations (canonical path, deterministic)
 Set DB connection and run the scripted migrator (this is the source of truth; do not run SQL files manually out-of-band):
@@ -64,7 +62,7 @@ Print the exact ordered migration manifest from filesystem:
 pnpm migrations:list
 ```
 
-Migration manifest (CI-checked): `MIGRATIONS_TOTAL=24; MIGRATIONS_LATEST=022_payu_transactions_entitlements.sql`
+Migration manifest (CI-checked): `MIGRATIONS_TOTAL=27; MIGRATIONS_LATEST=025_api_keys_last_used.sql`
 
 ## 4) Run the API locally
 ```bash
@@ -123,4 +121,16 @@ curl -X GET "$BASE/v1/usage/today" \
 | 429 | Rate limited | Back off; honor `Retry-After`; check Durable Object rate limit binding. |
 | 500 CONFIG_ERROR | Missing env/binding (e.g., `RATE_LIMIT_DO`, Supabase vars) | Verify `.dev.vars` / Wrangler env and redeploy. |
 
-More: see API reference/OpenAPI and `docs/LAUNCH_CHECKLIST.md` for deployment steps.
+More: see `docs/TROUBLESHOOTING_BETA.md` for the full symptom → fix playbook.
+
+## 9) Next steps
+
+| Goal | Doc |
+| --- | --- |
+| Full API reference | `docs/API_REFERENCE.md` |
+| Deploy to production | `docs/PROD_SETUP_CHECKLIST.md` → `docs/RELEASE_RUNBOOK.md` |
+| Monitor production | `docs/OBSERVABILITY.md` (health checklist) → `docs/ALERTS.md` (alert triage) |
+| PayU billing ops | `docs/BILLING_RUNBOOK.md` |
+| Secret rotation | `docs/SECURITY.md` |
+| Run tests | `pnpm test` (Vitest, 150+ tests; shared helpers in `apps/api/tests/helpers/`) |
+| Smoke test | `pnpm smoke` (macOS/Linux) or `pnpm smoke:ps` (Windows) |

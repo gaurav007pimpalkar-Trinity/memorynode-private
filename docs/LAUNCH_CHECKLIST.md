@@ -42,4 +42,4 @@ Idempotency and replay handling:
 - Transaction status transitions are monotonic and terminal for `success|failed|canceled`.
 
 Migration manifest token (CI guard):
-- `MIGRATIONS_TOTAL=24; MIGRATIONS_LATEST=022_payu_transactions_entitlements.sql`
+- `MIGRATIONS_TOTAL=27; MIGRATIONS_LATEST=025_api_keys_last_used.sql`

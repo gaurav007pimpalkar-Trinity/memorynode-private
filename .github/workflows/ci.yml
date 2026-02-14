@@ -41,6 +41,12 @@ jobs:
       - name: Migration docs/sequence guard
         run: pnpm migrations:check
 
+      - name: Check docs billing (PayU)
+        run: pnpm check:docs-billing
+
+      - name: CI trust gates (G1–G5)
+        run: pnpm ci:trust-gates
+
       - name: Workspace script guard
         run: pnpm check:workspace-scripts
 
@@ -81,7 +87,12 @@ jobs:
         run: pnpm typecheck
 
       - name: Build
+        env:
+          VITE_API_BASE_URL: https://api.memorynode.ai
         run: pnpm -w build
+
+      - name: OpenAPI spec drift check
+        run: pnpm openapi:check
 
       - name: Test
         run: pnpm test

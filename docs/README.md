@@ -16,14 +16,66 @@
 - `docs/TROUBLESHOOTING_BETA.md` – beta symptom->cause->fix playbook and support template.
 - `docs/QUICKSTART.md` – 10-minute developer quickstart (envs, migrations, dev servers, curls).
 - `docs/API_REFERENCE.md` – endpoint reference (Worker API, admin, billing, plans).
+- `docs/IMPROVEMENTS.md` – what’s wrong in the repo and improvements to make it invincible and smart.
+- `docs/IMPROVEMENT_PLAN.md` – phased plan to fix all wrongs and implement all improvements (with tasks and checklists).
+- `docs/BEST_IN_MARKET_PLAN.md` – CEO/CTO strategic plan to make MemoryNode best-in-market (trust breakers, moat, observability, retrieval cockpit).
+
+## Documentation Map (Reading Order)
+
+Follow this path depending on what you need:
+
+### New developer? Start here:
+
+1. **`docs/QUICKSTART.md`** — 10-minute setup: install, env vars, migrations, dev server, first curls
+1. **`docs/API_REFERENCE.md`** — endpoint reference (all routes, auth, billing, plans)
+1. **`docs/TROUBLESHOOTING_BETA.md`** — symptom → cause → fix playbook
+
+### Deploying to production?
+
+1. **`docs/PROD_SETUP_CHECKLIST.md`** — founder production input checklist (Cloudflare, Supabase, PayU, DNS)
+1. **`docs/RELEASE_RUNBOOK.md`** — canonical staging → canary → production deploy, validate, rollback
+1. **`docs/PROD_READY.md`** — final go/no-go checklist
+
+### Operating in production?
+
+1. **`docs/OBSERVABILITY.md`** — golden metrics, structured events, 60-second health checklist
+1. **`docs/ALERTS.md`** — alert definitions mapped 1:1 to golden metrics, triage playbooks
+1. **`docs/OPERATIONS.md`** — incident checklist, rollback notes, operator procedures
+1. **`docs/SECURITY.md`** — secrets hygiene, PayU secret rotation, incident response
+1. **`docs/BILLING_RUNBOOK.md`** — PayU webhook ops, replay/reprocess, reconciliation
+
+### Testing?
+
+- Run `pnpm test` for unit tests (Vitest, 150+ tests)
+- Shared test helpers in `apps/api/tests/helpers/` (env, supabase, payu, rate_limit_do)
+- Run `pnpm smoke` (or `pnpm smoke:ps` on Windows) for local E2E smoke
+- See "Local smoke test" and "E2E smoke" sections below for details
+
+### Strategy / best-in-market:
+
+- **`docs/BEST_IN_MARKET_PLAN.md`** — CEO/CTO plan: trust breakers (P0), API/config, Worker split, observability, retrieval cockpit, first 10 minutes. Execution order and go/no-go criteria.
+
+### Reference / historical:
+
+- `docs/LAUNCH_CHECKLIST.md` — pointer to `PROD_READY.md`
+- `docs/LAUNCH_RUNBOOK.md` — pointer to `RELEASE_RUNBOOK.md`
+- `docs/BETA_ONBOARDING.md` — beta onboarding guide
+- `docs/IMPROVEMENTS.md` / `docs/IMPROVEMENT_PLAN.md` — improvement tracking
+
+## Billing (PayU)
+
+- Production billing is PayU-only. See `docs/BILLING_RUNBOOK.md` for webhook ops and `docs/PROD_SETUP_CHECKLIST.md` for PayU setup.
 
 ## Canonical Ops Docs (Source of Truth)
+
 - `docs/RELEASE_RUNBOOK.md` – canonical staging/canary/production deploy, validate, rollback, kill switches.
 - `docs/PROD_READY.md` – canonical go/no-go checklist.
-- `docs/BILLING_RUNBOOK.md` – webhook operations, replay/reprocess, reconciliation behavior.
-- `docs/OBSERVABILITY.md` – request tracing, log events, and alert guidance.
+- `docs/BILLING_RUNBOOK.md` – PayU webhook operations, replay/reprocess, reconciliation behavior.
+- `docs/OBSERVABILITY.md` – golden metrics, structured events, health checklist, SLOs.
+- `docs/ALERTS.md` – alert definitions, thresholds, triage playbooks (maps 1:1 to OBSERVABILITY).
 - `docs/OPERATIONS.md` – incident checklist, rollback notes, and operator procedures.
-- `docs/PROD_SETUP_CHECKLIST.md` – Founder production setup checklist.
+- `docs/SECURITY.md` – secrets hygiene, PayU rotation playbook, incident response SLAs.
+- `docs/PROD_SETUP_CHECKLIST.md` – founder production setup checklist.
 - Some older docs are retained for historical context; when instructions conflict, follow the canonical docs above.
 
 ## Tracked env templates
@@ -37,11 +89,12 @@
 - Rotation/incident runbook: `docs/SECURITY.md`
 - Billing webhook runbook: `docs/BILLING_RUNBOOK.md`
 
-## Analytics events (minimal)
-- See `docs/LAUNCH_CHECKLIST.md` and product events table (`infra/sql/013_events.sql`).
+## Analytics & Observability
+
+- **Golden metrics and structured events**: see `docs/OBSERVABILITY.md` for the complete event catalog, golden metrics, and 60-second health checklist.
+- **Alert definitions**: see `docs/ALERTS.md` for alert thresholds mapped 1:1 to golden metrics.
 - Product event names (persisted to `product_events`): `workspace_created`, `api_key_created`, `first_ingest_success`, `first_search_success`, `first_context_success`, `cap_exceeded`, `checkout_started`, `upgrade_activated`.
-- Structured log event names (`console.log`/`console.warn`): `request_completed`, `request_failed`, `cap_exceeded`, `billing_endpoint_error`, `webhook_received`, `webhook_verified`, `webhook_processed`, `webhook_replayed`, `webhook_deferred`, `webhook_reconciled`, `webhook_failed`, `billing_webhook_workspace_not_found`.
-- Stored fields: `workspace_id`, `event_name`, `request_id`, `route`, `method`, `status`, `effective_plan`, `plan_status`, `props` (redacted-safe counts/booleans only).
+- Structured log event names: `request_completed` (with `route_group`), `request_failed`, `cap_exceeded`, `embed_request`, `search_request`, `db_rpc`, `audit_log`, `webhook_received`, `webhook_verified`, `webhook_processed`, `webhook_replayed`, `webhook_deferred`, `webhook_reconciled`, `webhook_failed`, `billing_webhook_signature_invalid`, `billing_webhook_workspace_not_found`, `billing_endpoint_error`.
 
 ## Getting Started
 1) Install dependencies:
@@ -197,7 +250,7 @@ It checks `/healthz`, validates authenticated usage/search/context paths, and ve
    - `MASTER_ADMIN_TOKEN`
    - `EMBEDDINGS_MODE` (`openai` or `stub`; use `stub` for local dev to avoid OpenAI calls)
 
-Migration manifest (CI-checked): `MIGRATIONS_TOTAL=24; MIGRATIONS_LATEST=022_payu_transactions_entitlements.sql`
+Migration manifest (CI-checked): `MIGRATIONS_TOTAL=27; MIGRATIONS_LATEST=025_api_keys_last_used.sql`
 
 ## Admin & Bootstrap
 - Admin endpoints require header `x-admin-token: $MASTER_ADMIN_TOKEN`.

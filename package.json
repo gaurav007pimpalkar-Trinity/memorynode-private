@@ -29,6 +29,8 @@
     "test:ci": "pnpm run check:typed-entry && pnpm run check:wrangler && pnpm run migrations:check && pnpm run check:config && vitest run --silent",
     "check:typed-entry": "node scripts/check_typed_entry.mjs",
     "check:config": "node scripts/check_config.mjs",
+    "check:docs-billing": "node scripts/check_docs_billing.mjs",
+    "ci:trust-gates": "node scripts/ci_trust_gates.mjs",
     "migrations:list": "node scripts/migrations_list.mjs",
     "migrations:check": "node scripts/migrations_check.mjs",
     "db:migrate": "node scripts/db_migrate.mjs",
@@ -62,6 +64,8 @@
     "secrets:check": "node scripts/secret_scan.mjs --staged",
     "secrets:check:tracked": "node scripts/secret_scan_tracked.mjs",
     "scan:secrets": "pnpm secrets:check:tracked",
+    "openapi:gen": "node apps/api/scripts/generate_openapi.mjs",
+    "openapi:check": "node apps/api/scripts/generate_openapi.mjs --check",
     "push:gate": "pnpm secrets:check && pnpm secrets:check:tracked && pnpm lint && pnpm typecheck && pnpm test:ci"
   },
   "devDependencies": {
