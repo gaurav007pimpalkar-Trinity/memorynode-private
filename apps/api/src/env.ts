@@ -32,6 +32,11 @@ export interface Env {
   BILLING_RECONCILE_ON_AMBIGUITY?: string;
   BILLING_WEBHOOKS_ENABLED?: string;
   PAYU_BASE_URL?: string;
+  /** Per-plan amounts (preferred). Fallback: PAYU_PRO_AMOUNT for backward compat. */
+  PAYU_LAUNCH_AMOUNT?: string;
+  PAYU_BUILD_AMOUNT?: string;
+  PAYU_DEPLOY_AMOUNT?: string;
+  PAYU_SCALE_AMOUNT?: string;
   PAYU_PRO_AMOUNT?: string;
   PAYU_PRODUCT_INFO?: string;
   PUBLIC_APP_URL?: string;

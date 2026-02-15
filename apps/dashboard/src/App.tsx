@@ -1126,7 +1126,7 @@ ${Object.entries(res.fields)
       </div>
       <div className="row">
         <button onClick={openCheckout} disabled={loading}>
-          Upgrade to Pro (PayU)
+          Upgrade plan (PayU)
         </button>
         <button className="ghost" onClick={load} disabled={loading}>
           Refresh

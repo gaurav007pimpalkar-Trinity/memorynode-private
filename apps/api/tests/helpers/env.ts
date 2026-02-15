@@ -68,7 +68,7 @@ export function makeTestEnvWithPayU(overrides?: Partial<TestEnv>): TestEnv {
     PAYU_VERIFY_URL: "https://info.payu.in/merchant/postservice?form=2",
     PAYU_CURRENCY: "INR",
     PAYU_PRO_AMOUNT: "49.00",
-    PAYU_PRODUCT_INFO: "MemoryNode Platform Pro",
+    PAYU_PRODUCT_INFO: "MemoryNode Platform",
     PUBLIC_APP_URL: "https://app.example.com",
     BILLING_WEBHOOKS_ENABLED: "1",
     BILLING_RECONCILE_ON_AMBIGUITY: "1",

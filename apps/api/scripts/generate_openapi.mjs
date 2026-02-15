@@ -207,17 +207,20 @@ const UsageResponse = z
 // ── Billing schemas ─────────────────────────────────────────────────────────
 const BillingStatusResponse = z
   .object({
-    plan: z.string().openapi({ example: "free" }),
-    billing_enabled: z.boolean(),
+    plan: z.string().openapi({ example: "free", description: "Legacy internal DB plan label (free/pro) for compatibility. Use effective_plan for display and quotas." }),
+    plan_status: z.string().openapi({ example: "active" }),
+    current_period_end: z.string().nullable().openapi({ example: null }),
+    cancel_at_period_end: z.boolean().openapi({ example: false }),
+    effective_plan: z.string().openapi({ example: "build", description: "Plan code for display: launch|build|deploy|scale|scale_plus|free." }),
   })
   .openapi("BillingStatusResponse");
 
 const BillingCheckoutPayload = z
   .object({
     plan: z
-      .enum(["pro", "team"])
+      .enum(["launch", "build", "deploy", "scale", "scale_plus"])
       .optional()
-      .openapi({ example: "pro" }),
+      .openapi({ example: "build" }),
   })
   .openapi("BillingCheckoutPayload");
 

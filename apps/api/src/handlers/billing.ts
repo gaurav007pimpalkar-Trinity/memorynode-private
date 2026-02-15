@@ -9,10 +9,12 @@ import type { AuthContext } from "../auth.js";
 import { authenticate, rateLimit } from "../auth.js";
 import type { HandlerDeps } from "../router.js";
 
+const CHECKOUT_PLAN_IDS = ["launch", "build", "deploy", "scale", "scale_plus"] as const;
+
 export interface BillingHandlerDeps extends HandlerDeps {
   safeParseJson: <T>(request: Request) => Promise<{ ok: true; data: T } | { ok: false; error: string }>;
-  effectivePlan: (plan: AuthContext["plan"], status?: AuthContext["planStatus"]) => AuthContext["plan"];
   normalizePlanStatus: (raw: string | null | undefined) => AuthContext["planStatus"];
+  resolveQuotaForWorkspace: (auth: AuthContext, supabase: SupabaseClient) => Promise<QuotaResolutionLike>;
   emitEventLog: (event_name: string, fields: Record<string, unknown>) => void;
   redact: (value: unknown, keyHint?: string) => unknown;
   isPayUBillingConfigured: (env: Env) => boolean;
@@ -20,7 +22,6 @@ export interface BillingHandlerDeps extends HandlerDeps {
   shortHash: (value: string, length?: number) => Promise<string>;
   fetchPayUTransactionByTxnId: (supabase: SupabaseClient, txnId: string) => Promise<PayUTransactionLike | null>;
   formatAmountStrict: (raw: unknown) => string;
-  normalizeMoneyString: (raw: string | undefined) => string;
   normalizeCurrency: (raw: string | undefined) => string;
   transitionPayUTransactionStatus: (
     supabase: SupabaseClient,
@@ -38,9 +39,18 @@ export interface BillingHandlerDeps extends HandlerDeps {
     props?: Record<string, unknown>,
   ) => Promise<void>;
   resolveEntitlementPlanCode: (plan: string) => string;
+  getAmountForPlan: (planCode: string, env: Env) => string;
+  getProductInfoForPlan: (planCode: string, env: Env) => string;
   defaultSuccessPath: string;
   defaultCancelPath: string;
   defaultProductInfo: string;
+}
+
+export interface QuotaResolutionLike {
+  caps: { writes: number; reads: number; embeds: number };
+  effectivePlan: string;
+  planStatus: AuthContext["planStatus"];
+  blocked: boolean;
 }
 
 export interface PayUTransactionLike {
@@ -135,13 +145,14 @@ export function createBillingHandlers(
       }
 
       const row = data as { plan?: string; plan_status?: string; current_period_end?: string | null; cancel_at_period_end?: boolean };
+      const quota = await d.resolveQuotaForWorkspace(auth, supabase);
       return jsonResponse(
         {
           plan: row.plan ?? "free",
           plan_status: d.normalizePlanStatus(row.plan_status) ?? "free",
           current_period_end: row.current_period_end ?? null,
           cancel_at_period_end: row.cancel_at_period_end ?? false,
-          effective_plan: d.effectivePlan((row.plan as AuthContext["plan"]) ?? "free", d.normalizePlanStatus(row.plan_status)),
+          effective_plan: quota.effectivePlan,
         },
         200,
         rate.headers,
@@ -151,14 +162,14 @@ export function createBillingHandlers(
     async handleBillingCheckout(request, env, supabase, auditCtx, requestId = "", deps?) {
       const d = (deps ?? defaultDeps) as BillingHandlerDeps;
       const { jsonResponse } = d;
-      const parsedBody = await d.safeParseJson<{ plan?: AuthContext["plan"]; firstname?: string; email?: string; phone?: string }>(request);
+      const parsedBody = await d.safeParseJson<{ plan?: string; firstname?: string; email?: string; phone?: string }>(request);
       const requestedPlan = parsedBody.ok ? parsedBody.data.plan : undefined;
-      if (requestedPlan && requestedPlan !== "pro" && requestedPlan !== "free") {
+      if (requestedPlan != null && requestedPlan !== "" && !CHECKOUT_PLAN_IDS.includes(requestedPlan as (typeof CHECKOUT_PLAN_IDS)[number])) {
         return jsonResponse(
           {
             error: {
               code: "PLAN_NOT_SUPPORTED",
-              message: "Platform-only billing is enabled; seat/team pricing is not available.",
+              message: `Allowed plans: ${CHECKOUT_PLAN_IDS.join(", ")}. Pro/team are no longer available; use platform plans.`,
             },
           },
           400,
@@ -190,13 +201,13 @@ export function createBillingHandlers(
         );
       }
 
+      const planCode = d.resolveEntitlementPlanCode(requestedPlan ?? "build");
       const monthKey = new Date().toISOString().slice(0, 7).replace("-", "");
       const clientIdem = request.headers.get("Idempotency-Key") ?? request.headers.get("idempotency-key");
       const workspaceHash = await d.shortHash(auth.workspaceId, 8);
       const idemHash = clientIdem ? await d.shortHash(clientIdem, 8) : "default1";
       const txnId = `mn${monthKey}${workspaceHash}${idemHash}`.slice(0, 40);
-      const planCode = d.resolveEntitlementPlanCode("pro");
-      const amount = d.normalizeMoneyString(env.PAYU_PRO_AMOUNT);
+      const amount = d.getAmountForPlan(planCode, env);
       const currency = d.normalizeCurrency(env.PAYU_CURRENCY);
 
       const existingTxn = await d.fetchPayUTransactionByTxnId(supabase, txnId);
@@ -269,7 +280,7 @@ export function createBillingHandlers(
 
       const successUrl = new URL(env.PAYU_SUCCESS_PATH ?? d.defaultSuccessPath, env.PUBLIC_APP_URL!).toString();
       const cancelUrl = new URL(env.PAYU_CANCEL_PATH ?? d.defaultCancelPath, env.PUBLIC_APP_URL!).toString();
-      const productInfo = (env.PAYU_PRODUCT_INFO ?? d.defaultProductInfo).trim();
+      const productInfo = d.getProductInfoForPlan(planCode, env);
       const firstname = (parsedBody.ok ? parsedBody.data.firstname : undefined)?.trim() || "MemoryNode";
       const email = (parsedBody.ok ? parsedBody.data.email : undefined)?.trim() || `${auth.workspaceId}@payu.local`;
       const phone = (parsedBody.ok ? parsedBody.data.phone : undefined)?.trim() || "";
@@ -309,6 +320,7 @@ export function createBillingHandlers(
         udf5: "",
       };
 
+      const quota = await d.resolveQuotaForWorkspace(auth, supabase);
       void d.emitProductEvent(
         supabase,
         "checkout_started",
@@ -318,7 +330,7 @@ export function createBillingHandlers(
           route: "/v1/billing/checkout",
           method: "POST",
           status: 200,
-          effectivePlan: d.effectivePlan(auth.plan, auth.planStatus),
+          effectivePlan: quota.effectivePlan,
           planStatus: auth.planStatus,
         },
         { txn_id: d.redact(txnId, "payu_txn_id"), provider: "payu" },

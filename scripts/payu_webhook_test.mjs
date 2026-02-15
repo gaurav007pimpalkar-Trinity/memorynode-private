@@ -29,7 +29,7 @@ function makePayload(eventId) {
     mihpayid: eventId,
     status: "success",
     amount: "49.00",
-    productinfo: "MemoryNode Platform Pro",
+    productinfo: "MemoryNode Platform",
     firstname: "MemoryNode",
     email: "ws1@example.com",
     udf1: "ws1",

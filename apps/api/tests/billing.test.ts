@@ -362,7 +362,7 @@ function makeEnv(overrides?: Record<string, unknown>): Record<string, unknown> {
     PAYU_VERIFY_URL: "https://info.payu.in/merchant/postservice?form=2",
     PAYU_CURRENCY: "INR",
     PAYU_PRO_AMOUNT: "49.00",
-    PAYU_PRODUCT_INFO: "MemoryNode Platform Pro",
+    PAYU_PRODUCT_INFO: "MemoryNode Platform",
     PUBLIC_APP_URL: "https://app.example.com",
     ...overrides,
   };
@@ -471,7 +471,7 @@ describe("PayU hash construction", () => {
       key: "payu_key",
       txnid: "txn_fixture_001",
       amount: "499.00",
-      productinfo: "MemoryNode Platform Pro",
+      productinfo: "MemoryNode Platform",
       firstname: "Memory",
       email: "memory@example.com",
       udf1: "ws_fixture",
@@ -481,9 +481,9 @@ describe("PayU hash construction", () => {
       udf5: "",
       salt: "payu_salt",
     });
-    expect(input).toBe("payu_key|txn_fixture_001|499.00|MemoryNode Platform Pro|Memory|memory@example.com|ws_fixture|deploy|||||||||payu_salt");
+    expect(input).toBe("payu_key|txn_fixture_001|499.00|MemoryNode Platform|Memory|memory@example.com|ws_fixture|deploy|||||||||payu_salt");
     const hash = await computeSha512Hex(input);
-    expect(hash).toBe("827e99a34b32f9b92f2574921031259119d3564115d6b7708ca7c771b3f8dcafe74beb43a700b02acc379663a207ab9fc1c3890f2c87d148207756d943804378");
+    expect(hash).toBe("c1ca466b7a792259c92d6a8f20640a24f7279a4f5ea284326ff470163f270d666c9c66221fb46c41956474e48726480ef22f5095e7dffd3a45b31dba449a82c5");
   });
 
   it("builds reverse response hash using salt|status||||||udf5..udf1 order", async () => {
@@ -496,7 +496,7 @@ describe("PayU hash construction", () => {
       udf1: "ws_fixture",
       email: "memory@example.com",
       firstname: "Memory",
-      productinfo: "MemoryNode Platform Pro",
+      productinfo: "MemoryNode Platform",
       amount: "499.00",
       txnid: "txn_fixture_001",
     };
@@ -504,9 +504,9 @@ describe("PayU hash construction", () => {
       PAYU_MERCHANT_KEY: "payu_key",
       PAYU_MERCHANT_SALT: "payu_salt",
     });
-    expect(input).toBe("payu_salt|success||||||u5|u4|u3|u2|ws_fixture|memory@example.com|Memory|MemoryNode Platform Pro|499.00|txn_fixture_001|payu_key");
+    expect(input).toBe("payu_salt|success||||||u5|u4|u3|u2|ws_fixture|memory@example.com|Memory|MemoryNode Platform|499.00|txn_fixture_001|payu_key");
     const hash = await computeSha512Hex(input);
-    expect(hash).toBe("2416f5d436c9347236ce7d52b30e258dddb72864773b2c2a0cb1ecc9a19bd9f7fe52624c94e7c6f723c5bb3b36469b4ec12fe07c31395ec78b2a15882ff4a6d3");
+    expect(hash).toBe("af95c234c6650ab03c4cb88c7b28a2413bfdc43067554cba9ad4e304cba21bcc6f2ca78a344a63d657b7a61a6e3e03fab1288116bfe7969083312432d9782865");
   });
 });
 
@@ -591,11 +591,11 @@ describe("billing checkout + portal", () => {
     expect(supabase.workspace.payu_txn_id).toMatch(/^mn/);
     const txn = supabase.getTransactionRow(String(supabase.workspace.payu_txn_id));
     expect(txn?.status).toBe("initiated");
-    expect(txn?.amount).toBe("49.00");
+    expect(txn?.amount).toBe("499.00");
     expect(txn?.currency).toBe("INR");
   });
 
-  it("rejects team plan because platform-only billing is enforced", async () => {
+  it("rejects pro/team and accepts only launch|build|deploy|scale|scale_plus", async () => {
     const res = await handleBillingCheckout(
       new Request("http://localhost/v1/billing/checkout", {
         method: "POST",
@@ -637,7 +637,7 @@ describe("billing webhook", () => {
       mihpayid: "mih_hash_valid_1",
       status: "success",
       amount: "49.00",
-      productinfo: "MemoryNode Platform Pro",
+      productinfo: "MemoryNode Platform",
       firstname: "MemoryNode",
       email: "ws1@example.com",
       udf1: "ws1",
@@ -672,7 +672,7 @@ describe("billing webhook", () => {
       mihpayid: "mih_bad_sig",
       status: "success",
       amount: "49.00",
-      productinfo: "MemoryNode Platform Pro",
+      productinfo: "MemoryNode Platform",
       firstname: "MemoryNode",
       email: "ws1@example.com",
       udf1: "ws1",
@@ -703,7 +703,7 @@ describe("billing webhook", () => {
       mihpayid: "mihpay_1",
       status: "success",
       amount: "49.00",
-      productinfo: "MemoryNode Platform Pro",
+      productinfo: "MemoryNode Platform",
       firstname: "MemoryNode",
       email: "ws1@example.com",
       udf1: "ws1",
@@ -746,7 +746,7 @@ describe("billing webhook", () => {
       mihpayid: "mih_verify_fail_1",
       status: "success",
       amount: "49.00",
-      productinfo: "MemoryNode Platform Pro",
+      productinfo: "MemoryNode Platform",
       firstname: "MemoryNode",
       email: "ws1@example.com",
       udf1: "ws1",
@@ -787,7 +787,7 @@ describe("billing webhook", () => {
       mihpayid: "mih_verify_success_1",
       status: "success",
       amount: "49.00",
-      productinfo: "MemoryNode Platform Pro",
+      productinfo: "MemoryNode Platform",
       firstname: "MemoryNode",
       email: "ws1@example.com",
       udf1: "ws1",
@@ -828,7 +828,7 @@ describe("billing webhook", () => {
       mihpayid: "mihpay_replay_1",
       status: "success",
       amount: "49.00",
-      productinfo: "MemoryNode Platform Pro",
+      productinfo: "MemoryNode Platform",
       firstname: "MemoryNode",
       email: "ws1@example.com",
       udf1: "ws1",
@@ -870,7 +870,7 @@ describe("billing webhook", () => {
       mihpayid: "mih_mono_1",
       status: "success",
       amount: "49.00",
-      productinfo: "MemoryNode Platform Pro",
+      productinfo: "MemoryNode Platform",
       firstname: "MemoryNode",
       email: "ws1@example.com",
       udf1: "ws1",
@@ -926,7 +926,7 @@ describe("billing webhook", () => {
       mihpayid: "mihpay_deferred_1",
       status: "success",
       amount: "49.00",
-      productinfo: "MemoryNode Platform Pro",
+      productinfo: "MemoryNode Platform",
       firstname: "MemoryNode",
       email: "missing@example.com",
       udf1: "ws-missing",

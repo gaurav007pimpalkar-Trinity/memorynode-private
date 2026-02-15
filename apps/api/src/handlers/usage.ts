@@ -18,7 +18,7 @@ export interface UsageRowLike {
 
 export interface QuotaResolutionLike {
   caps: UsageSnapshot;
-  effectivePlan: AuthContext["plan"];
+  effectivePlan: string;
   planStatus: AuthContext["planStatus"];
   blocked: boolean;
 }

@@ -17,7 +17,12 @@ PUBLIC_APP_URL=http://localhost:5173
 PAYU_BASE_URL=https://secure.payu.in/_payment
 PAYU_VERIFY_URL=https://info.payu.in/merchant/postservice?form=2
 PAYU_CURRENCY=INR
-PAYU_PRO_AMOUNT=49.00
-PAYU_PRODUCT_INFO=MemoryNode Platform Pro
+# Per-plan amounts (optional; fallback PAYU_PRO_AMOUNT). Values as string, e.g. 299.00
+# PAYU_LAUNCH_AMOUNT=299.00
+# PAYU_BUILD_AMOUNT=499.00
+# PAYU_DEPLOY_AMOUNT=1999.00
+# PAYU_SCALE_AMOUNT=4999.00
+PAYU_PRO_AMOUNT=499.00
+PAYU_PRODUCT_INFO=MemoryNode Platform
 PAYU_SUCCESS_PATH=/settings/billing?status=success
 PAYU_CANCEL_PATH=/settings/billing?status=canceled

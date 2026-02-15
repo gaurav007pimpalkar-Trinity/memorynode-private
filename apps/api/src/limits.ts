@@ -1,14 +1,16 @@
-export const FREE_DAILY_WRITES = 200;
-export const FREE_DAILY_READS = 500;
-export const FREE_DAILY_EMBEDS = 2000;
+/**
+ * Usage caps and rate limits. Plan limits come from @memorynode/shared (single source of truth).
+ * Enforcement still uses embeds count; embed_tokens/day is documented and exposed for future hard gate.
+ */
 
-export const PRO_DAILY_WRITES = 2000;
-export const PRO_DAILY_READS = 5000;
-export const PRO_DAILY_EMBEDS = 20000;
+import {
+  getUsageCapsForPlanCode,
+  RATE_LIMIT_RPM_DEFAULT,
+  RATE_LIMIT_RPM_NEW_KEY,
+  type UsageCaps as SharedUsageCaps,
+} from "@memorynode/shared";
 
-export const TEAM_DAILY_WRITES = 10000;
-export const TEAM_DAILY_READS = 20000;
-export const TEAM_DAILY_EMBEDS = 100000;
+export type UsageCaps = SharedUsageCaps;
 
 export const MAX_TEXT_CHARS = 50_000;
 export const MAX_QUERY_CHARS = 2_000;
@@ -16,26 +18,18 @@ export const DEFAULT_TOPK = 8;
 export const MAX_TOPK = 20;
 
 export const RATE_LIMIT_WINDOW_MS = 60_000;
-export const RATE_LIMIT_MAX = 60;
+export const RATE_LIMIT_MAX = RATE_LIMIT_RPM_DEFAULT;
 
-export type UsageCaps = { writes: number; reads: number; embeds: number };
+/** Resolve caps by plan code (launch/build/deploy/scale/scale_plus or "free" for unentitled). */
+export function capsByPlanCode(planCode: string | null | undefined): UsageCaps {
+  return getUsageCapsForPlanCode(planCode);
+}
 
+/** Deprecated: legacy free/pro/team mapping retained only for internal fixtures/tests; do not use for new code. Not in OpenAPI or public types. */
 export const capsByPlan: Record<"free" | "pro" | "team", UsageCaps> = {
-  free: {
-    writes: FREE_DAILY_WRITES,
-    reads: FREE_DAILY_READS,
-    embeds: FREE_DAILY_EMBEDS,
-  },
-  pro: {
-    writes: PRO_DAILY_WRITES,
-    reads: PRO_DAILY_READS,
-    embeds: PRO_DAILY_EMBEDS,
-  },
-  team: {
-    writes: TEAM_DAILY_WRITES,
-    reads: TEAM_DAILY_READS,
-    embeds: TEAM_DAILY_EMBEDS,
-  },
+  free: getUsageCapsForPlanCode("free"),
+  pro: getUsageCapsForPlanCode("build"),
+  team: getUsageCapsForPlanCode("deploy"),
 };
 
 export type UsageSnapshot = { writes: number; reads: number; embeds: number };
@@ -47,3 +41,5 @@ export function exceedsCaps(caps: UsageCaps, usage: UsageSnapshot, delta: UsageD
   const wouldEmbeds = usage.embeds + delta.embedsDelta;
   return wouldWrites > caps.writes || wouldReads > caps.reads || wouldEmbeds > caps.embeds;
 }
+
+export { RATE_LIMIT_RPM_NEW_KEY };

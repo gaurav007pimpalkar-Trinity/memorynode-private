@@ -52,15 +52,13 @@ Admin (control plane)
 - **Rotation:** Create a new key via `POST /v1/api-keys`, then revoke the old key via `POST /v1/api-keys/revoke` after a grace period (e.g. 24 h) so clients can switch. “If you lose your key, you rotate” — no key recovery; rotation is the supported path.
 
 Billing
-- `GET /v1/billing/status`
-- `POST /v1/billing/checkout` – Body `{ plan?: "pro"|"team" }`, returns PayU hosted checkout (URL or POST form fields).
+- `GET /v1/billing/status` – Returns `plan`, `plan_status`, `effective_plan`, `current_period_end`, `cancel_at_period_end`. Use **effective_plan** for display and quotas; `plan` is legacy DB (free/pro).
+- `POST /v1/billing/checkout` – Body `{ plan?: "launch"|"build"|"deploy"|"scale"|"scale_plus" }`, returns PayU hosted checkout (URL or POST form fields).
 - `POST /v1/billing/portal` – returns `410 Gone` (legacy Stripe portal removed; PayU billing is platform-only via checkout/webhooks).
 - `POST /v1/billing/webhook` – PayU callback (raw body, hash verified with PAYU_MERCHANT_SALT/PAYU_MERCHANT_KEY).
 
-Plans & Caps (defaults)
-- free: writes 200 / reads 500 / embeds 2000 per day  
-- pro: writes 2000 / reads 5000 / embeds 20000  
-- team: writes 10000 / reads 20000 / embeds 100000
+Plans & Limits
+- See [Plans & Limits](README.md#plans--limits) in docs. Plans: Launch ₹299/7d, Build ₹499/month, Deploy ₹1,999/month, Scale ₹4,999/month, Scale+ custom. Limits: writes/day, reads/day, embed_tokens/day (hard gate). Rate limit: 60 req/min (15 for new keys first 24–48h).
 
 Retrieval quality (Phase 5)
 - `GET /v1/eval/sets` – list eval sets

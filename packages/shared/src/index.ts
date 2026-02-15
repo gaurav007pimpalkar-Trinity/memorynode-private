@@ -145,3 +145,18 @@ export interface ListApiKeysResponse {
 export interface RevokeApiKeyResponse {
   revoked: boolean;
 }
+
+// Plans & limits (single source of truth)
+export type { PlanId, Plan, PlanLimits, UsageCaps } from "./plans.js";
+export {
+  PLANS_BY_ID,
+  CHECKOUT_PLAN_IDS,
+  RATE_LIMIT_RPM_DEFAULT,
+  RATE_LIMIT_RPM_NEW_KEY,
+  TOKENS_PER_EMBED_ASSUMED,
+  getPlan,
+  getFreeCaps,
+  getLimitsForPlanCode,
+  embedsCapFromEmbedTokens,
+  getUsageCapsForPlanCode,
+} from "./plans.js";

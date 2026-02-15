@@ -308,21 +308,40 @@ components:
       properties:
         plan:
           type: string
+          description: Legacy internal DB plan label (free/pro) for compatibility. Use effective_plan for display and quotas.
           example: free
-        billing_enabled:
+        plan_status:
+          type: string
+          example: active
+        current_period_end:
+          type: string
+          nullable: true
+          example: null
+        cancel_at_period_end:
           type: boolean
+          example: false
+        effective_plan:
+          type: string
+          description: "Plan code for display: launch|build|deploy|scale|scale_plus|free."
+          example: build
       required:
         - plan
-        - billing_enabled
+        - plan_status
+        - current_period_end
+        - cancel_at_period_end
+        - effective_plan
     BillingCheckoutPayload:
       type: object
       properties:
         plan:
           type: string
           enum:
-            - pro
-            - team
-          example: pro
+            - launch
+            - build
+            - deploy
+            - scale
+            - scale_plus
+          example: build
     CreateWorkspacePayload:
       type: object
       properties:

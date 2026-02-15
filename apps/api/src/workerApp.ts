@@ -2,12 +2,13 @@ import { createClient, type SupabaseClient } from "@supabase/supabase-js";
 import JSZip from "jszip";
 import {
   DEFAULT_TOPK,
-  capsByPlan,
+  capsByPlanCode,
   exceedsCaps,
   MAX_QUERY_CHARS,
   MAX_TOPK,
   type UsageSnapshot,
 } from "./limits.js";
+import { getPlan } from "@memorynode/shared";
 import type { Env } from "./env.js";
 import { logger, redact } from "./logger.js";
 import { route, type HandlerDeps } from "./router.js";
@@ -158,9 +159,8 @@ const EXPORT_MAX_BODY_BYTES = 100_000; // exports carry no payload; keep tight
 const RRF_K = 60;
 const DEFAULT_SUCCESS_PATH = "/settings/billing?status=success";
 const DEFAULT_CANCEL_PATH = "/settings/billing?status=canceled";
-const DEFAULT_PAYU_PRO_AMOUNT = "49.00";
-const DEFAULT_PAYU_PRODUCT_INFO = "MemoryNode Platform Pro";
 const DEFAULT_PAYU_CURRENCY = "INR";
+const DEFAULT_PAYU_PRODUCT_INFO = "MemoryNode Platform";
 const DEFAULT_PAYU_VERIFY_URL = "https://info.payu.in/merchant/postservice?form=2";
 const DEFAULT_PAYU_VERIFY_TIMEOUT_MS = 10_000;
 const DEFAULT_WEBHOOK_REPROCESS_LIMIT = 50;
@@ -173,13 +173,17 @@ const ENTITLEMENT_DURATION_DAYS: Record<string, number | null> = {
   scale_plus: null,
   pro: 30,
 };
+
+/** Effective plan surfaced in API responses (plan_code or "free"). Not internal DB plan (free/pro/team). */
+export type EffectivePlanCode = "launch" | "build" | "deploy" | "scale" | "scale_plus" | "free";
+
 type ProductEventContext = {
   workspaceId?: string | null;
   requestId?: string;
   route?: string;
   method?: string;
   status?: number;
-  effectivePlan?: AuthContext["plan"];
+  effectivePlan?: EffectivePlanCode | AuthContext["plan"];
   planStatus?: AuthContext["planStatus"];
 };
 
@@ -267,10 +271,40 @@ function planStatusFromPayUStatus(status: "success" | "pending" | "failure" | "c
   return "past_due";
 }
 
-function normalizeMoneyString(raw: string | undefined): string {
-  const parsed = Number(raw ?? DEFAULT_PAYU_PRO_AMOUNT);
-  if (!Number.isFinite(parsed) || parsed <= 0) return DEFAULT_PAYU_PRO_AMOUNT;
+function normalizeMoneyString(raw: string | undefined, fallback = "499.00"): string {
+  const parsed = Number(raw ?? fallback);
+  if (!Number.isFinite(parsed) || parsed <= 0) return fallback;
   return parsed.toFixed(2);
+}
+
+/** Format INR amount as string with two decimals (PayU expects "499.00", never "499"). */
+function formatINRAmount(n: number): string {
+  return Number.isFinite(n) ? Number(n).toFixed(2) : "0.00";
+}
+
+function resolvePayUAmountForPlan(planCode: string, env: Env): string {
+  const code = resolveEntitlementPlanCode(planCode);
+  const fromEnv =
+    code === "launch" ? env.PAYU_LAUNCH_AMOUNT
+    : code === "build" ? env.PAYU_BUILD_AMOUNT
+    : code === "deploy" ? env.PAYU_DEPLOY_AMOUNT
+    : code === "scale" ? env.PAYU_SCALE_AMOUNT
+    : env.PAYU_PRO_AMOUNT;
+  if (fromEnv != null && fromEnv.trim() !== "") {
+    const parsed = Number(fromEnv.trim());
+    if (Number.isFinite(parsed) && parsed > 0) return formatINRAmount(parsed);
+  }
+  const plan = getPlan(code);
+  return plan && plan.price_inr > 0
+    ? formatINRAmount(plan.price_inr)
+    : (env.PAYU_PRO_AMOUNT ? normalizeMoneyString(env.PAYU_PRO_AMOUNT, "499.00") : "499.00");
+}
+
+function resolveProductInfoForPlan(planCode: string, env: Env): string {
+  const code = resolveEntitlementPlanCode(planCode);
+  const plan = getPlan(code);
+  const base = (env.PAYU_PRODUCT_INFO ?? DEFAULT_PAYU_PRODUCT_INFO).trim() || DEFAULT_PAYU_PRODUCT_INFO;
+  return plan ? `${base} — ${plan.label}` : base;
 }
 
 function normalizeCurrency(raw: string | undefined): string {
@@ -490,12 +524,12 @@ type PayUVerifyResponse = {
 
 type QuotaResolution = {
   caps: UsageSnapshot;
-  effectivePlan: AuthContext["plan"];
+  effectivePlan: EffectivePlanCode;
   planStatus: AuthContext["planStatus"];
   blocked: false;
 } | {
   caps: UsageSnapshot;
-  effectivePlan: AuthContext["plan"];
+  effectivePlan: EffectivePlanCode;
   planStatus: AuthContext["planStatus"];
   blocked: true;
   errorCode: "ENTITLEMENT_EXPIRED";
@@ -559,8 +593,14 @@ function formatAmountStrict(raw: unknown): string {
   return value.toFixed(2);
 }
 
-function authPlanFromEntitlement(planCode: string): AuthContext["plan"] {
-  return planCode === "free" ? "free" : "pro";
+/** Returns effective plan code for API responses (launch|build|deploy|scale|scale_plus|free). */
+function authPlanFromEntitlement(planCode: string): EffectivePlanCode {
+  const normalized = resolveEntitlementPlanCode(planCode);
+  if (normalized === "launch" || normalized === "build" || normalized === "deploy" || normalized === "scale" || normalized === "scale_plus") {
+    return normalized;
+  }
+  if (normalized === "pro") return "build"; // legacy
+  return "free";
 }
 
 function normalizeUsageCaps(raw: unknown): UsageSnapshot | null {
@@ -577,16 +617,15 @@ function normalizeUsageCaps(raw: unknown): UsageSnapshot | null {
 }
 
 function resolveCapsByEntitlementPlan(planCode: string): UsageSnapshot {
-  const authPlan = authPlanFromEntitlement(resolveEntitlementPlanCode(planCode));
-  return capsByPlan[authPlan] ?? capsByPlan.free;
+  return capsByPlanCode(resolveEntitlementPlanCode(planCode));
 }
 
 async function resolveQuotaForWorkspace(
   auth: AuthContext,
   supabase: SupabaseClient,
 ): Promise<QuotaResolution> {
-  const fallbackCaps = capsByPlan[effectivePlan(auth.plan, auth.planStatus)] ?? capsByPlan.free;
-  const fallbackPlan = effectivePlan(auth.plan, auth.planStatus);
+  const fallbackCaps = capsByPlanCode("free");
+  const fallbackPlan: EffectivePlanCode = "free";
   const fallbackStatus = auth.planStatus ?? "free";
   const now = Date.now();
   try {
@@ -900,7 +939,7 @@ function capExceededResponse(
   rateHeaders: Record<string, string> | undefined,
   env: Env,
   jsonResponse: (data: unknown, status?: number, extraHeaders?: Record<string, string>) => Response,
-  effectivePlanOverride: AuthContext["plan"] = effectivePlan(auth.plan, auth.planStatus),
+  effectivePlanOverride: EffectivePlanCode = "free",
   planStatusOverride: AuthContext["planStatus"] = auth.planStatus ?? "free",
   logCtx?: { requestId?: string; route?: string; method?: string },
 ): Response {
@@ -1309,13 +1348,14 @@ export async function handleRequest(request: Request, env: Env): Promise<Respons
         shortHash,
         fetchPayUTransactionByTxnId,
         formatAmountStrict,
-        normalizeMoneyString,
         normalizeCurrency,
         transitionPayUTransactionStatus: transitionPayUTransactionStatus as BillingHandlerDeps["transitionPayUTransactionStatus"],
         buildPayURequestHashInput,
         computeSha512Hex,
         normalizePayUBaseUrl,
         resolveEntitlementPlanCode,
+        getAmountForPlan: resolvePayUAmountForPlan,
+        getProductInfoForPlan: resolveProductInfoForPlan,
         defaultSuccessPath: DEFAULT_SUCCESS_PATH,
         defaultCancelPath: DEFAULT_CANCEL_PATH,
         defaultProductInfo: DEFAULT_PAYU_PRODUCT_INFO,
@@ -2726,8 +2766,8 @@ const usageHandlersDefault = createUsageHandlers(defaultUsageHandlerDeps, defaul
 const defaultBillingHandlerDeps: BillingHandlerDeps = {
   jsonResponse: simpleJsonResponse,
   safeParseJson,
-  effectivePlan,
   normalizePlanStatus,
+  resolveQuotaForWorkspace,
   emitEventLog,
   redact,
   isPayUBillingConfigured,
@@ -2735,7 +2775,6 @@ const defaultBillingHandlerDeps: BillingHandlerDeps = {
   shortHash,
   fetchPayUTransactionByTxnId,
   formatAmountStrict,
-  normalizeMoneyString,
   normalizeCurrency,
   transitionPayUTransactionStatus: transitionPayUTransactionStatus as BillingHandlerDeps["transitionPayUTransactionStatus"],
   buildPayURequestHashInput,
@@ -2743,6 +2782,8 @@ const defaultBillingHandlerDeps: BillingHandlerDeps = {
   normalizePayUBaseUrl,
   emitProductEvent,
   resolveEntitlementPlanCode,
+  getAmountForPlan: resolvePayUAmountForPlan,
+  getProductInfoForPlan: resolveProductInfoForPlan,
   defaultSuccessPath: DEFAULT_SUCCESS_PATH,
   defaultCancelPath: DEFAULT_CANCEL_PATH,
   defaultProductInfo: DEFAULT_PAYU_PRODUCT_INFO,
@@ -3218,18 +3259,19 @@ async function reconcilePayUWebhook(
           outcome = "ignored_stale";
         } else {
           const planCode = resolveEntitlementPlanCode(txn.plan_code);
-          const plan = payuStatus === "success" ? authPlanFromEntitlement(planCode) : "free";
+          const effectivePlanCode = payuStatus === "success" ? authPlanFromEntitlement(planCode) : "free";
           const planStatus = payuStatus === "success" ? "active" : planStatusFromPayUStatus(payuStatus);
           const oldStatus = normalizePlanStatus(current?.plan_status);
+          const workspacePlanForDb: AuthContext["plan"] = payuStatus === "success" ? "pro" : "free";
           const updatePayload = {
             billing_provider: "payu",
             payu_txn_id: txnId,
             payu_payment_id: paymentId,
             payu_last_status: payuStatus,
-            payu_last_plan: plan,
+            payu_last_plan: workspacePlanForDb,
             payu_last_event_id: eventId,
             payu_last_event_created: eventCreated,
-            plan,
+            plan: workspacePlanForDb,
             plan_status: planStatus,
             current_period_end: paymentPeriodEndFromStatus(payuStatus),
             cancel_at_period_end: false,
@@ -3249,7 +3291,7 @@ async function reconcilePayUWebhook(
                 route: "/v1/billing/webhook",
                 method: "POST",
                 status: 200,
-                effectivePlan: plan,
+                effectivePlan: effectivePlanCode,
                 planStatus,
               },
             );

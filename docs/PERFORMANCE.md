@@ -34,7 +34,7 @@ Operational guidance for vector search latency, index tuning, and query caps.
 ## Abuse and cost containment
 
 - **Rate limiting:** Durable Object (RATE_LIMIT_DO); configurable max requests per window.
-- **Per-tenant caps:** Plan limits (free/pro/team) in `usage_daily`; `cap_exceeded` event when exceeded.
+- **Per-tenant caps:** Plan limits (Launch/Build/Deploy/Scale/Scale+) in `usage_daily`; `cap_exceeded` event when exceeded. See [Plans & Limits](README.md#plans--limits).
 - **Alerts:** 429 rate per tenant (operational KPI); anomaly alerts for 401/403 spikes, webhook failures — see ALERTS.md and OPERATIONS.md.
 
 ---

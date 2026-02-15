@@ -301,7 +301,7 @@ describe("product events", () => {
     PAYU_VERIFY_URL: "https://info.payu.in/merchant/postservice?form=2",
     PAYU_CURRENCY: "INR",
     PAYU_PRO_AMOUNT: "49.00",
-    PAYU_PRODUCT_INFO: "MemoryNode Platform Pro",
+    PAYU_PRODUCT_INFO: "MemoryNode Platform",
     PUBLIC_APP_URL: "https://app.example.com",
     EMBEDDINGS_MODE: "stub",
   } as Record<string, unknown>;
@@ -399,7 +399,7 @@ describe("product events", () => {
       mihpayid: "mih_upgrade_1",
       status: "success",
       amount: "49.00",
-      productinfo: "MemoryNode Platform Pro",
+      productinfo: "MemoryNode Platform",
       firstname: "MemoryNode",
       email: "ws1@example.com",
       udf1: "ws1",

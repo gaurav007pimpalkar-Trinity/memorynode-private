@@ -51,6 +51,7 @@ Follow this path depending on what you need:
 ### Strategy / best-in-market:
 
 - **`docs/BEST_IN_MARKET_PLAN.md`** — CEO/CTO plan: trust breakers (P0), API/config, Worker split, observability, retrieval cockpit, first 10 minutes. Execution order and go/no-go criteria.
+- **`docs/ARCHITECTURE_CEO.md`** — Non-technical architecture overview: end-to-end product flow, main components, and diagrams for founders and stakeholders.
 
 ### Reference / historical:
 
@@ -60,6 +61,30 @@ Follow this path depending on what you need:
 ## Billing (PayU)
 
 - Production billing is PayU-only. See `docs/BILLING_RUNBOOK.md` for webhook ops and `docs/PROD_SETUP_CHECKLIST.md` for PayU setup.
+
+## Plans & Limits
+
+**Launch is the paid 7-day trial replacement (no free tier).**
+
+| Plan    | Price (INR) | Period   | Limits (per day) |
+|---------|-------------|----------|-------------------|
+| Launch  | ₹299        | 7 days  | writes, reads, embed_tokens (see below) |
+| Build   | ₹499        | per month | Higher caps     |
+| Deploy  | ₹1,999      | per month | Higher caps     |
+| Scale   | ₹4,999      | per month | Higher caps     |
+| Scale+  | custom      | custom  | Custom            |
+
+**Limiter model (Phase 0):** `writes/day`, `reads/day`, `embed_tokens/day`. When `embed_tokens/day` is exceeded, ingest and search/context are blocked (hard gate). In the API, usage is tracked as writes, reads, and embeds (~200 tokens per embed).
+
+**Rate limiting:** Default **60 req/min** per API key. New keys: **15 req/min** for the first 24–48h.
+
+**Cost math (embedding):** Model `text-embedding-3-small`; **$0.02 / 1M tokens** (Batch $0.01/1M as future option). Assume ~200 tokens per embed. Examples: 600 embeds/day → ~3.6M tokens/month → ~$0.072/month; 8,000 → ~$0.96/month; 40,000 → ~$4.80/month; 200,000 → ~$24/month.
+
+**Base infra (early stage):** Cloudflare Workers ~$5–15, Supabase Pro $25, dashboard hosting $0 → **~$30–40 total**. Break-even (word cautiously): ~6 Build OR ~2 Deploy OR ~1 Scale.
+
+Exact limits per plan: `packages/shared/src/plans.ts`. API and dashboard read from this single source. PayU amounts can be overridden via env: `PAYU_LAUNCH_AMOUNT`, `PAYU_BUILD_AMOUNT`, `PAYU_DEPLOY_AMOUNT`, `PAYU_SCALE_AMOUNT` (see `apps/api/.dev.vars.template` and `docs/PROD_SETUP_CHECKLIST.md`).
+
+Internal DB fields may still store legacy values (`free`/`pro`) for backward compatibility. Externally we use `effective_plan` = plan_code (`launch`/`build`/`deploy`/`scale`/`scale_plus` or `free`).
 
 ## Canonical Ops Docs (Source of Truth)
 

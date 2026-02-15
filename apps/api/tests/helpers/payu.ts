@@ -119,7 +119,7 @@ export function buildTestWebhookPayload(
     mihpayid: "mih_test_001",
     status: "success",
     amount: "49.00",
-    productinfo: "MemoryNode Platform Pro",
+    productinfo: "MemoryNode Platform",
     firstname: "Test",
     email: "test@example.com",
     key: merchantKey,

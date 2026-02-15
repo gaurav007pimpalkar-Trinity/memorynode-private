@@ -50,7 +50,8 @@ PayU billing vars (required when billing/webhooks are enabled):
 - [ ] `PAYU_VERIFY_URL`
 - [ ] `PAYU_SUCCESS_PATH` (optional; default used if unset)
 - [ ] `PAYU_CANCEL_PATH` (optional; default used if unset)
-- [ ] `PAYU_PRO_AMOUNT` (optional)
+- [ ] `PAYU_PRO_AMOUNT` (optional fallback; default 499.00)
+- [ ] Per-plan overrides (optional): `PAYU_LAUNCH_AMOUNT`, `PAYU_BUILD_AMOUNT`, `PAYU_DEPLOY_AMOUNT`, `PAYU_SCALE_AMOUNT`
 - [ ] `PAYU_PRODUCT_INFO` (optional)
 - [ ] `PAYU_CURRENCY` (optional)
 
