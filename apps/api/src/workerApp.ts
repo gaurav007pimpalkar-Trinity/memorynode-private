@@ -113,6 +113,7 @@ interface SearchPayload {
   page?: number;
   page_size?: number;
   filters?: SearchFilters;
+  explain?: boolean;
 }
 
 interface NormalizedSearchParams {

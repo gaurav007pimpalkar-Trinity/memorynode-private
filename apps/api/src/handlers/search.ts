@@ -234,15 +234,15 @@ export function createSearchHandlers(
         return jsonResponse({ error: { code: "NOT_FOUND", message: "Query not found" } }, 404, rate.headers);
       }
       const params = (row.params ?? {}) as Record<string, unknown>;
-      const payload = {
-        user_id: params.user_id ?? "default",
-        query: row.query,
-        namespace: params.namespace,
-        top_k: params.top_k,
-        page: params.page ?? 1,
-        page_size: params.page_size,
-        filters: params.filters,
-        explain: params.explain,
+      const payload: SearchPayload = {
+        user_id: typeof params.user_id === "string" ? params.user_id : "default",
+        query: String(row.query ?? ""),
+        namespace: typeof params.namespace === "string" ? params.namespace : undefined,
+        top_k: typeof params.top_k === "number" ? params.top_k : undefined,
+        page: typeof params.page === "number" ? params.page : 1,
+        page_size: typeof params.page_size === "number" ? params.page_size : undefined,
+        filters: params.filters as SearchPayload["filters"],
+        explain: params.explain === true,
       };
       const capResponse = await d.checkCapsAndMaybeRespond(
         jsonResponse,
