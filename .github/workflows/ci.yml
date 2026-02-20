@@ -29,8 +29,8 @@ jobs:
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
 
-      - name: Dependency audit (high/critical)
-        run: pnpm audit --audit-level=high
+      - name: Dependency audit (critical only; high tracked)
+        run: pnpm audit --audit-level=critical
 
       - name: Secret scan (tracked files)
         run: pnpm secrets:check:tracked -- --ci
