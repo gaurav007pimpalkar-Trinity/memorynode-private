@@ -27,6 +27,7 @@ Follow this path depending on what you need:
 
 ### Deploying to production?
 
+1. **`docs/GO_LIVE_CHECKLIST.md`** — one-page must-do list before first prod traffic
 1. **`docs/PROD_SETUP_CHECKLIST.md`** — founder production input checklist (Cloudflare, Supabase, PayU, DNS)
 1. **`docs/PRODUCTION_REQUIREMENTS.md`** — production must use real services (no stubs); enforced by Worker and release gate
 1. **`docs/RELEASE_RUNBOOK.md`** — canonical staging → canary → production deploy, validate, rollback
