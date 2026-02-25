@@ -37,7 +37,7 @@ Single dashboard for on-call. Open this view in **<2 minutes** to assess product
 1. See `docs/ALERTS.md` §2 (Triage Playbooks) for first action.
 2. Use `x-request-id` from client → filter logs by `request_id`.
 3. Check `docs/OPERATIONS.md` for rollback and incident procedures.
-4. For billing: `docs/BILLING_RUNBOOK.md`.
+4. For billing: `docs/internal/BILLING_RUNBOOK.md`.
 
 ---
 

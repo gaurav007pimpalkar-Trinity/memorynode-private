@@ -130,7 +130,7 @@ Single dashboard for on-call. Open this view in **<2 minutes** to assess product
 
 **Health checks (run in order):** Same 11 checks as §3 table; paging thresholds: `docs/internal/ALERTS.md` (A1–E2).
 
-**If any check is RED:** 1) See `docs/internal/ALERTS.md` §2 (Triage Playbooks). 2) Use `x-request-id` from client → filter logs by `request_id`. 3) Check `docs/OPERATIONS.md` for rollback and incident procedures. 4) For billing: `docs/BILLING_RUNBOOK.md`.
+**If any check is RED:** 1) See `docs/internal/ALERTS.md` §2 (Triage Playbooks). 2) Use `x-request-id` from client → filter logs by `request_id`. 3) Check `docs/OPERATIONS.md` for rollback and incident procedures. 4) For billing: `docs/internal/BILLING_RUNBOOK.md`.
 
 **Dashboard definition (Grafana-style):** Row 1 — Request health (rate, 5xx %, p95/p99 latency). Row 2 — Search & DB (embed p95, search p95, db_rpc p95, db success rate). Row 3 — Webhooks (webhook_processed rate, deferred backlog, failure counts). All queries: Appendix below.
 

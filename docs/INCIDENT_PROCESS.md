@@ -46,7 +46,7 @@ How we detect, triage, communicate, and resolve incidents. Linked from status pa
 ## Communication
 
 - **Internal:** Slack/email to on-call and stakeholders.
-- **External:** Update status page (see `docs/STATUS_PAGE.md`). For S0/S1, post incident start and resolution.
+- **External:** Update status page (see `docs/internal/STATUS_PAGE.md`). For S0/S1, post incident start and resolution.
 
 ---
 

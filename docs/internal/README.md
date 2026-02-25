@@ -7,8 +7,8 @@
 - `packages/sdk` – lightweight TypeScript SDK.
 - `infra/sql` – SQL migrations and schema (apply in order).
 - `docs` – documentation.
-- `docs/RELEASE_RUNBOOK.md` – canonical staging/canary/prod release, validation, rollback, and kill switches.
-- `docs/PROD_READY.md` – final go/no-go checklist.
+- `docs/internal/RELEASE_RUNBOOK.md` – canonical staging/canary/prod release, validation, rollback, and kill switches.
+- `docs/internal/PROD_READY.md` – final go/no-go checklist.
 - `docs/internal/ALERTS.md` – lightweight monitoring + alert thresholds and Cloudflare setup notes.
 - `docs/external/BETA_ONBOARDING.md` – 10–15 minute beta onboarding guide (includes troubleshooting).
 - `docs/external/QUICKSTART.md` – 10-minute developer quickstart (envs, migrations, dev servers, curls).
@@ -24,13 +24,17 @@ Follow this path depending on what you need:
 1. **`docs/external/API_REFERENCE.md`** — endpoint reference (all routes, auth, billing, plans)
 1. **`docs/external/BETA_ONBOARDING.md`** — symptom → cause → fix playbook (§ Troubleshooting)
 
+### Solo founder / non-technical CTO?
+
+- **`docs/internal/OPERATIONAL_GUIDE.md`** — Single operational guide: how the system works, what healthy looks like, before/after release, when something seems off, minor vs major issues. No code; plain language.
+
 ### Deploying to production?
 
-1. **`docs/GO_LIVE_CHECKLIST.md`** — one-page must-do list before first prod traffic
+1. **`docs/internal/GO_LIVE_CHECKLIST.md`** — one-page must-do list before first prod traffic
 1. **`docs/PROD_SETUP_CHECKLIST.md`** — founder production input checklist (Cloudflare, Supabase, PayU, DNS)
 1. **`docs/PRODUCTION_REQUIREMENTS.md`** — production must use real services (no stubs); enforced by Worker and release gate
-1. **`docs/RELEASE_RUNBOOK.md`** — canonical staging → canary → production deploy, validate, rollback
-1. **`docs/PROD_READY.md`** — final go/no-go checklist and what-you-need-to-do handoff
+1. **`docs/internal/RELEASE_RUNBOOK.md`** — canonical staging → canary → production deploy, validate, rollback
+1. **`docs/internal/PROD_READY.md`** — final go/no-go checklist and what-you-need-to-do handoff
 
 ### Operating in production?
 
@@ -38,7 +42,7 @@ Follow this path depending on what you need:
 1. **`docs/internal/ALERTS.md`** — alert definitions mapped 1:1 to golden metrics, triage playbooks
 1. **`docs/OPERATIONS.md`** — incident checklist, rollback notes, operator procedures
 1. **`docs/SECURITY.md`** — secrets hygiene, PayU secret rotation, incident response
-1. **`docs/BILLING_RUNBOOK.md`** — PayU webhook ops, replay/reprocess, reconciliation
+1. **`docs/internal/BILLING_RUNBOOK.md`** — PayU webhook ops, replay/reprocess, reconciliation
 
 ### Testing?
 
@@ -57,7 +61,7 @@ Follow this path depending on what you need:
 
 ## Billing (PayU)
 
-- Production billing is PayU-only. See `docs/BILLING_RUNBOOK.md` for webhook ops and `docs/PROD_SETUP_CHECKLIST.md` for PayU setup.
+- Production billing is PayU-only. See `docs/internal/BILLING_RUNBOOK.md` for webhook ops and `docs/PROD_SETUP_CHECKLIST.md` for PayU setup.
 
 ## Plans & Limits
 
@@ -85,9 +89,9 @@ Internal DB fields may still store legacy values (`free`/`pro`) for backward com
 
 ## Canonical Ops Docs (Source of Truth)
 
-- `docs/RELEASE_RUNBOOK.md` – canonical staging/canary/production deploy, validate, rollback, kill switches.
-- `docs/PROD_READY.md` – canonical go/no-go checklist.
-- `docs/BILLING_RUNBOOK.md` – PayU webhook operations, replay/reprocess, reconciliation behavior.
+- `docs/internal/RELEASE_RUNBOOK.md` – canonical staging/canary/production deploy, validate, rollback, kill switches.
+- `docs/internal/PROD_READY.md` – canonical go/no-go checklist.
+- `docs/internal/BILLING_RUNBOOK.md` – PayU webhook operations, replay/reprocess, reconciliation behavior.
 - `docs/internal/OBSERVABILITY.md` – golden metrics, structured events, health checklist, SLOs.
 - `docs/internal/ALERTS.md` – alert definitions, thresholds, triage playbooks (maps 1:1 to OBSERVABILITY).
 - `docs/OPERATIONS.md` – incident checklist, rollback notes, and operator procedures.
@@ -104,7 +108,7 @@ Internal DB fields may still store legacy values (`free`/`pro`) for backward com
   - `pnpm secrets:check`
   - `pnpm secrets:check:tracked`
 - Rotation/incident runbook: `docs/SECURITY.md`
-- Billing webhook runbook: `docs/BILLING_RUNBOOK.md`
+- Billing webhook runbook: `docs/internal/BILLING_RUNBOOK.md`
 
 ## Analytics & Observability
 
@@ -339,7 +343,7 @@ See `infra/sql/verify_rls.sql` for an automated checklist.
 
 ## Release gate (merged from RELEASE_GATE.md)
 
-Canonical release process: `docs/RELEASE_RUNBOOK.md`.
+Canonical release process: `docs/internal/RELEASE_RUNBOOK.md`.
 
 Gate command:
 
@@ -374,7 +378,7 @@ pnpm release:gate:full
 
 ## Production deploy notes (merged from PRODUCTION_DEPLOY.md)
 
-Canonical deploy/rollback workflow: `docs/RELEASE_RUNBOOK.md`, `docs/PROD_READY.md`.
+Canonical deploy/rollback workflow: `docs/internal/RELEASE_RUNBOOK.md`, `docs/internal/PROD_READY.md`.
 
 ### Vars vs Secrets
 - Safe `[vars]` (checked into `apps/api/wrangler.toml`): `SUPABASE_URL`, `SUPABASE_MODE`, `EMBEDDINGS_MODE`, `ENVIRONMENT`, `RATE_LIMIT_MODE`, `ALLOWED_ORIGINS`, `PUBLIC_APP_URL`, `PAYU_BASE_URL`, `PAYU_VERIFY_URL`, optional `PAYU_SUCCESS_PATH`, `PAYU_CANCEL_PATH`, `PAYU_PRO_AMOUNT`, `PAYU_PRODUCT_INFO`, `PAYU_CURRENCY`.

@@ -3,7 +3,7 @@
 ## Prereqs
 - Node.js 20+, `corepack`, `wrangler` (Cloudflare), git.
 - Supabase project (URL + service role key).
-- PayU billing keys optional for local; not needed to ingest/search in stub mode. Billing uses PayU; see docs/BILLING_RUNBOOK.md.
+- PayU billing keys optional for local; not needed to ingest/search in stub mode. Billing uses PayU; see docs/internal/BILLING_RUNBOOK.md.
 
 ### pnpm setup (via Corepack)
 - Preferred:
@@ -43,7 +43,7 @@ ALLOWED_ORIGINS=http://127.0.0.1:4173
 EMBEDDINGS_MODE=stub
 PUBLIC_APP_URL=http://127.0.0.1:4173
 ```
-For production billing (PayU), also set: `PAYU_MERCHANT_KEY`, `PAYU_MERCHANT_SALT`, `PAYU_VERIFY_URL`, `PAYU_BASE_URL`, and optionally `PAYU_WEBHOOK_SECRET`. See docs/PROD_SETUP_CHECKLIST.md and docs/BILLING_RUNBOOK.md.
+For production billing (PayU), also set: `PAYU_MERCHANT_KEY`, `PAYU_MERCHANT_SALT`, `PAYU_VERIFY_URL`, `PAYU_BASE_URL`, and optionally `PAYU_WEBHOOK_SECRET`. See docs/PROD_SETUP_CHECKLIST.md and docs/internal/BILLING_RUNBOOK.md.
 
 ## 3) Apply migrations (canonical path, deterministic)
 Set DB connection and run the scripted migrator (this is the source of truth; do not run SQL files manually out-of-band):
@@ -129,9 +129,9 @@ More: see `docs/TROUBLESHOOTING_BETA.md` for the full symptom → fix playbook.
 | Goal | Doc |
 | --- | --- |
 | Full API reference | `docs/API_REFERENCE.md` |
-| Deploy to production | `docs/PROD_SETUP_CHECKLIST.md` → `docs/RELEASE_RUNBOOK.md` |
+| Deploy to production | `docs/PROD_SETUP_CHECKLIST.md` → `docs/internal/RELEASE_RUNBOOK.md` |
 | Monitor production | `docs/OBSERVABILITY.md` (health checklist) → `docs/ALERTS.md` (alert triage) |
-| PayU billing ops | `docs/BILLING_RUNBOOK.md` |
+| PayU billing ops | `docs/internal/BILLING_RUNBOOK.md` |
 | Secret rotation | `docs/SECURITY.md` |
 | Run tests | `pnpm test` (Vitest, 150+ tests; shared helpers in `apps/api/tests/helpers/`) |
 | Smoke test | `pnpm smoke` (macOS/Linux) or `pnpm smoke:ps` (Windows) |

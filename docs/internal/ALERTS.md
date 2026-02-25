@@ -62,7 +62,7 @@ Each alert ID maps to a first-action triage step.
 | **B3** (hot workspace) | Contact workspace owner if legitimate; consider temporary block if abuse. |
 | **C1** (embed slow) | Check OpenAI status page; verify `OPENAI_API_KEY` is valid; consider fallback or queue. |
 | **C2** (search slow) | Decompose: is it embed latency (C1) or DB latency (E1)? Fix the bottleneck. |
-| **D1** (webhook fail) | Verify `PAYU_MERCHANT_KEY`/`PAYU_MERCHANT_SALT` + endpoint; check `docs/BILLING_RUNBOOK.md` for replay. |
+| **D1** (webhook fail) | Verify `PAYU_MERCHANT_KEY`/`PAYU_MERCHANT_SALT` + endpoint; check `docs/internal/BILLING_RUNBOOK.md` for replay. |
 | **D2** (sig invalid) | Possible secret rotation needed or replay attack; verify PayU dashboard webhook config. See `docs/SECURITY.md`. |
 | **D3** (ws not found) | Check workspace provisioning pipeline; may need manual workspace mapping. |
 | **D4** (deferred backlog) | Run `POST /admin/webhooks/reprocess` to drain deferred queue; investigate root cause of missing workspace mappings. |
@@ -118,8 +118,8 @@ Each alert maps to the health checklist in `docs/internal/OBSERVABILITY.md` §3:
 
 ## 5) Related Runbooks
 
-- Billing ops, replay, reconciliation: `docs/BILLING_RUNBOOK.md`
+- Billing ops, replay, reconciliation: `docs/internal/BILLING_RUNBOOK.md`
 - Ops secrets + rollback: `docs/OPERATIONS.md`
 - Security + rotation: `docs/SECURITY.md`
 - Production deploy: `docs/internal/README.md` § Production deploy notes
-- Release runbook: `docs/RELEASE_RUNBOOK.md`
+- Release runbook: `docs/internal/RELEASE_RUNBOOK.md`

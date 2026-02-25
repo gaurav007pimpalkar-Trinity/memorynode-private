@@ -8,7 +8,7 @@ This document uses variable names only (no secret values).
 This checklist aligns with:
 - [ ] `apps/api/wrangler.toml`
 - [ ] `scripts/check_config.mjs`
-- [ ] `docs/RELEASE_RUNBOOK.md`
+- [ ] `docs/internal/RELEASE_RUNBOOK.md`
 - [ ] `docs/PRODUCTION_DEPLOY.md`
 - [ ] `docs/OPERATIONS.md`
 - [ ] `apps/dashboard/.env.example`
@@ -173,8 +173,8 @@ Recommended hostnames:
 - [ ] `api.memorynode.ai` -> Cloudflare Worker production route
 - [ ] `api-staging.memorynode.ai` -> Cloudflare Worker staging route
 - [ ] `api-canary.memorynode.ai` -> Cloudflare Worker canary route (recommended)
-- [ ] `app.memorynode.ai` -> dashboard hosting (see `docs/DASHBOARD_DEPLOY.md`; Vercel or Cloudflare Pages)
-- [ ] `status.memorynode.ai` -> status page (see `docs/STATUS_PAGE.md`); deploy via Vercel or Cloudflare Pages
+- [ ] `app.memorynode.ai` -> dashboard hosting (see `docs/internal/DASHBOARD_DEPLOY.md`; Vercel or Cloudflare Pages)
+- [ ] `status.memorynode.ai` -> status page (see `docs/internal/STATUS_PAGE.md`); deploy via Vercel or Cloudflare Pages
 
 Dashboard/API alignment:
 

@@ -1,8 +1,8 @@
 # Production Deploy Notes (Cloudflare Workers)
 
 Canonical deploy/rollback workflow:
-- `docs/RELEASE_RUNBOOK.md`
-- `docs/PROD_READY.md`
+- `docs/internal/RELEASE_RUNBOOK.md`
+- `docs/internal/PROD_READY.md`
 
 ## Vars vs Secrets
 - Safe `[vars]` (checked into `apps/api/wrangler.toml`): `SUPABASE_URL`, `SUPABASE_MODE`, `EMBEDDINGS_MODE`, `ENVIRONMENT`, `RATE_LIMIT_MODE`, `ALLOWED_ORIGINS`, `PUBLIC_APP_URL`, `PAYU_BASE_URL`, `PAYU_VERIFY_URL`, optional `PAYU_SUCCESS_PATH`, `PAYU_CANCEL_PATH`, `PAYU_PRO_AMOUNT`, `PAYU_PRODUCT_INFO`, `PAYU_CURRENCY`.

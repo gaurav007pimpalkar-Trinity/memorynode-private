@@ -106,7 +106,7 @@ Use template: § 7) Troubleshooting — Support Issue Template (below).
 | `429 rate_limited` | Per-key rate limit exceeded | Exponential backoff + jitter; reduce burst traffic; honor `Retry-After` |
 | Unexpected cross-workspace behavior | `workspace_id` mismatch in admin provisioning | Confirm key was created for intended `workspace_id` |
 | `500 DB_ERROR` / permission error text | Supabase/RLS/migration issue | Check DB migration status (`pnpm db:migrate`, `pnpm db:verify-rls`) and Supabase credentials |
-| PayU webhook failures | Invalid hash/secret, processing error, or missing workspace mapping | Validate `PAYU_MERCHANT_KEY` and `PAYU_MERCHANT_SALT`; inspect webhook logs; see docs/BILLING_RUNBOOK.md |
+| PayU webhook failures | Invalid hash/secret, processing error, or missing workspace mapping | Validate `PAYU_MERCHANT_KEY` and `PAYU_MERCHANT_SALT`; inspect webhook logs; see docs/internal/BILLING_RUNBOOK.md |
 
 ### Explicit checks
 

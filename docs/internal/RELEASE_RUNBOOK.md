@@ -237,7 +237,7 @@ BASE_URL=https://api.memorynode.ai API_KEY=mn_live_xxx pnpm release:validate
 
 ## 9) Dashboard Deploy
 
-Dashboard (`apps/dashboard`) — workspace, API keys, memories. See `docs/DASHBOARD_DEPLOY.md`.
+Dashboard (`apps/dashboard`) — workspace, API keys, memories. See `docs/internal/DASHBOARD_DEPLOY.md`.
 
 ```bash
 pnpm --filter @memorynode/dashboard build
@@ -246,7 +246,7 @@ pnpm --filter @memorynode/dashboard build
 
 ## 10) Status Page Deploy (optional)
 
-Status page (`apps/status`) shows operational status, SLO summary, and incident history. See `docs/STATUS_PAGE.md`.
+Status page (`apps/status`) shows operational status, SLO summary, and incident history. See `docs/internal/STATUS_PAGE.md`.
 
 ```bash
 pnpm --filter @memorynode/status build
@@ -255,4 +255,4 @@ pnpm --filter @memorynode/status build
 
 ## 11) Go/No-Go
 
-Use `docs/PROD_READY.md` as the release sign-off checklist.
+Use `docs/internal/PROD_READY.md` as the release sign-off checklist.

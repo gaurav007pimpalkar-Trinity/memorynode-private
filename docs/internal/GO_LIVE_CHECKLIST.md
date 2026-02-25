@@ -1,6 +1,6 @@
 # Go-Live Checklist (one page)
 
-Do these **before** first production traffic. Full details: [PROD_SETUP_CHECKLIST.md](PROD_SETUP_CHECKLIST.md), [PROD_READY.md](PROD_READY.md), [RELEASE_RUNBOOK.md](RELEASE_RUNBOOK.md).
+Do these **before** first production traffic. Full details: [PROD_SETUP_CHECKLIST.md](../PROD_SETUP_CHECKLIST.md), [PROD_READY.md](PROD_READY.md), [RELEASE_RUNBOOK.md](RELEASE_RUNBOOK.md).
 
 ---
 
@@ -39,4 +39,4 @@ Production vars: [ ] `ENVIRONMENT=production`, [ ] `EMBEDDINGS_MODE=openai`, [ ]
 
 ---
 
-**Rollback:** `wrangler rollback <VERSION_ID> --env production` → then re-validate. See [RELEASE_RUNBOOK.md](RELEASE_RUNBOOK.md) §7 and [OPERATIONS.md](OPERATIONS.md) §B.
+**Rollback:** `wrangler rollback <VERSION_ID> --env production` → then re-validate. See [RELEASE_RUNBOOK.md](RELEASE_RUNBOOK.md) §7 and [OPERATIONS.md](../OPERATIONS.md) §B.

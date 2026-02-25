@@ -79,7 +79,7 @@ Machine-readable spec
 - OpenAPI 3.0: `docs/external/openapi.yaml` (generated from Zod schemas in `apps/api/src/contracts/`).
 - To regenerate: `pnpm openapi:gen`. CI runs `pnpm openapi:check` to prevent drift.
 
-See `docs/external/QUICKSTART.md` for setup and `docs/RELEASE_RUNBOOK.md` for deployment steps.
+See `docs/external/QUICKSTART.md` for setup and `docs/internal/RELEASE_RUNBOOK.md` for deployment steps.
 
 ---
 

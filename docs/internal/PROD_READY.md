@@ -2,7 +2,7 @@
 
 Release is allowed only when every item below is green.
 
-**Production requirements (no stubs):** In production, Supabase, embeddings, and rate limiting must be real. See [docs/PRODUCTION_REQUIREMENTS.md](PRODUCTION_REQUIREMENTS.md) for what is forbidden (e.g. `EMBEDDINGS_MODE=stub`, `RATE_LIMIT_MODE=off`). The Worker and release gate enforce this.
+**Production requirements (no stubs):** In production, Supabase, embeddings, and rate limiting must be real. See [docs/PRODUCTION_REQUIREMENTS.md](../PRODUCTION_REQUIREMENTS.md) for what is forbidden (e.g. `EMBEDDINGS_MODE=stub`, `RATE_LIMIT_MODE=off`). The Worker and release gate enforce this.
 
 ## 1) CI and Quality
 - [ ] `pnpm release:gate` passed on the release commit.
@@ -53,7 +53,7 @@ Release is allowed only when every item below is green.
    Run `pnpm install` at repo root. If you added `@vitest/coverage-v8`, run `pnpm test:coverage` locally to enforce coverage thresholds; CI runs `pnpm test:coverage` (see `.github/workflows/ci.yml`).
 
 2. **Secrets and env**  
-   Ensure production Worker has all secrets set via `wrangler secret put` (see [PROD_SETUP_CHECKLIST.md](PROD_SETUP_CHECKLIST.md)). No stub modes in prod (see [PRODUCTION_REQUIREMENTS.md](PRODUCTION_REQUIREMENTS.md)).
+   Ensure production Worker has all secrets set via `wrangler secret put` (see [PROD_SETUP_CHECKLIST.md](../PROD_SETUP_CHECKLIST.md)). No stub modes in prod (see [PRODUCTION_REQUIREMENTS.md](../PRODUCTION_REQUIREMENTS.md)).
 
 3. **G5 live check**  
    Once the dashboard is deployed, run `G5_URL=<your-dashboard-url> pnpm ci:trust-gates` to confirm live security headers.

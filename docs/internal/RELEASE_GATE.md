@@ -1,7 +1,7 @@
 # Release Gate
 
 Canonical release process:
-- `docs/RELEASE_RUNBOOK.md`
+- `docs/internal/RELEASE_RUNBOOK.md`
 
 Gate command:
 

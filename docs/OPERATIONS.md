@@ -34,8 +34,8 @@ Details: `docs/INCIDENT_PROCESS.md` § Error Budget Policy.
 ## C) Incident Checklist
 - Rate limit DO failure: 500 errors mentioning `RATE_LIMIT_DO` missing; fix by ensuring wrangler binding exists per env and redeploy.
 - Supabase connectivity issues: 500s with DB errors; verify `SUPABASE_URL` and `SUPABASE_SERVICE_ROLE_KEY`; run `BASE_URL=... API_KEY=... pnpm release:validate` to confirm core API paths.
-- PayU webhook failures: look for `webhook_failed`, `billing_webhook_signature_invalid`, and `billing_webhook_workspace_not_found`; check `payu_webhook_events` and Cloudflare logs; replay or use `POST /admin/webhooks/reprocess` after fixing secrets (see docs/BILLING_RUNBOOK.md).
-- For billing-specific incident procedures, use `docs/BILLING_RUNBOOK.md`.
+- PayU webhook failures: look for `webhook_failed`, `billing_webhook_signature_invalid`, and `billing_webhook_workspace_not_found`; check `payu_webhook_events` and Cloudflare logs; replay or use `POST /admin/webhooks/reprocess` after fixing secrets (see docs/internal/BILLING_RUNBOOK.md).
+- For billing-specific incident procedures, use `docs/internal/BILLING_RUNBOOK.md`.
 
 ## C.1) 429 / 413 Handling
 - `429` rate-limit response shape:
