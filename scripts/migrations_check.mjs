@@ -9,8 +9,8 @@ import {
 } from "./lib/migrations_manifest.mjs";
 
 const DOCS_REQUIRE_MANIFEST = [
-  "docs/README.md",
-  "docs/QUICKSTART.md",
+  "docs/internal/README.md",
+  "docs/external/QUICKSTART.md",
 ];
 
 function failWithIssues(issues) {
