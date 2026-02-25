@@ -402,6 +402,52 @@ paths:
                 required:
                   - status
                   - version
+  /ready:
+    get:
+      summary: Readiness check
+      description: Checks DB connectivity. Returns 200 when DB is reachable, 503 otherwise. No auth required. Use for load
+        balancer or platform health checks.
+      tags:
+        - Health
+      responses:
+        "200":
+          description: Ready to serve traffic
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status:
+                    type: string
+                    enum:
+                      - ok
+                  db:
+                    type: string
+                    enum:
+                      - connected
+                required:
+                  - status
+                  - db
+        "503":
+          description: Not ready (e.g. DB unavailable)
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status:
+                    type: string
+                    enum:
+                      - degraded
+                  db:
+                    type: string
+                    enum:
+                      - unavailable
+                  message:
+                    type: string
+                required:
+                  - status
+                  - db
   /v1/memories:
     post:
       summary: Ingest a memory

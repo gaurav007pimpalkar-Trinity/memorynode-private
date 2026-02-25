@@ -1,6 +1,6 @@
 # MemoryNode Alerts
 
-Production alerting mapped 1:1 to the golden metrics in `docs/OBSERVABILITY.md`.
+Production alerting mapped 1:1 to the golden metrics in `docs/internal/OBSERVABILITY.md`.
 
 ---
 
@@ -90,7 +90,7 @@ Before production, verify alerts fire when thresholds are breached:
 1. **Staging traffic:** Generate traffic against staging API (e.g. `pnpm smoke:staging` or load test).
 2. **Inject failure:** Trigger a 5xx (e.g. invalid config) or latency spike; confirm A1 or A3 fires.
 3. **Validate destination:** Ensure alert reaches on-call channel (Slack, PagerDuty, etc.).
-4. **Triage runthrough:** Follow `docs/ALERTS.md` §2 for the fired alert; confirm playbook is actionable.
+4. **Triage runthrough:** Follow this document §2 for the fired alert; confirm playbook is actionable.
 
 Document test results in runbook or TRUST_CHANGELOG.
 
@@ -98,7 +98,7 @@ Document test results in runbook or TRUST_CHANGELOG.
 
 ## 4) Health View Cross-Reference
 
-Each alert maps to the health checklist in `docs/OBSERVABILITY.md` § 3:
+Each alert maps to the health checklist in `docs/internal/OBSERVABILITY.md` §3:
 
 | Health check # | Alert IDs |
 | --- | --- |
@@ -121,5 +121,5 @@ Each alert maps to the health checklist in `docs/OBSERVABILITY.md` § 3:
 - Billing ops, replay, reconciliation: `docs/BILLING_RUNBOOK.md`
 - Ops secrets + rollback: `docs/OPERATIONS.md`
 - Security + rotation: `docs/SECURITY.md`
-- Production deploy: `docs/PRODUCTION_DEPLOY.md`
+- Production deploy: `docs/internal/README.md` § Production deploy notes
 - Release runbook: `docs/RELEASE_RUNBOOK.md`

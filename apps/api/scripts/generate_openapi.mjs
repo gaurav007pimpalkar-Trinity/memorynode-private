@@ -280,6 +280,40 @@ registry.registerPath({
   },
 });
 
+// Readiness (deep: DB check; for LB/CF)
+registry.registerPath({
+  method: "get",
+  path: "/ready",
+  summary: "Readiness check",
+  description: "Checks DB connectivity. Returns 200 when DB is reachable, 503 otherwise. No auth required. Use for load balancer or platform health checks.",
+  tags: ["Health"],
+  responses: {
+    200: {
+      description: "Ready to serve traffic",
+      content: {
+        "application/json": {
+          schema: z.object({
+            status: z.literal("ok"),
+            db: z.literal("connected"),
+          }),
+        },
+      },
+    },
+    503: {
+      description: "Not ready (e.g. DB unavailable)",
+      content: {
+        "application/json": {
+          schema: z.object({
+            status: z.literal("degraded"),
+            db: z.literal("unavailable"),
+            message: z.string().optional(),
+          }),
+        },
+      },
+    },
+  },
+});
+
 // POST /v1/memories
 registry.registerPath({
   method: "post",

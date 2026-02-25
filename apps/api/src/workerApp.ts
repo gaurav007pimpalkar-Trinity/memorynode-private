@@ -1105,7 +1105,7 @@ function ensureRateLimitDo(env: Env): void {
 
 function isProductionStage(env: Env): boolean {
   const stage = (env.ENVIRONMENT ?? env.NODE_ENV ?? "").trim().toLowerCase();
-  return stage === "prod" || stage === "production";
+  return stage === "prod" || stage === "production" || stage === "staging";
 }
 
 function enforceRuntimeConfigGuards(env: Env): void {
@@ -1142,6 +1142,7 @@ function resolveBodyLimit(method: string, path: string, env: Env): number {
 /** Known paths and allowed methods (Phase 2: 405 for wrong method). Single source of truth per IMPROVEMENT_PLAN.md. */
 const KNOWN_PATH_ALLOWED_METHODS: Array<{ test: (path: string) => boolean; allow: string }> = [
   { test: (p) => p === "/healthz", allow: "GET" },
+  { test: (p) => p === "/ready", allow: "GET" },
   { test: (p) => p === "/v1/memories", allow: "GET, POST" },
   { test: (p) => /^\/v1\/memories\/[^/]+$/.test(p), allow: "GET, DELETE" },
   { test: (p) => p === "/v1/search", allow: "POST" },
@@ -1242,7 +1243,43 @@ export async function handleRequest(request: Request, env: Env): Promise<Respons
         return response;
       }
 
+      // Production/staging: dashboard routes require ALLOWED_ORIGINS before creating Supabase
+      if (url.pathname.startsWith("/v1/dashboard") && isProductionStage(env)) {
+        const dashboardAllowlist = parseAllowedOrigins(env.ALLOWED_ORIGINS);
+        if (!dashboardAllowlist || dashboardAllowlist.length === 0) {
+          response = jsonResponse(
+            {
+              error: {
+                code: "CONFIG_ERROR",
+                message: "ALLOWED_ORIGINS must be set in production for dashboard access",
+              },
+            },
+            503,
+          );
+          return response;
+        }
+      }
+
       supabase = createSupabaseClient(env);
+
+      // Deep readiness: DB connectivity (for LB/CF; no auth)
+      if (request.method === "GET" && url.pathname === "/ready") {
+        const { error } = await supabase.from("app_settings").select("id").limit(1).maybeSingle();
+        if (error) {
+          response = jsonResponse(
+            { status: "degraded", db: "unavailable", message: "Database check failed" },
+            503,
+            { "Cache-Control": "no-store" },
+          );
+          return response;
+        }
+        response = jsonResponse(
+          { status: "ok", db: "connected" },
+          200,
+          { "Cache-Control": "no-store" },
+        );
+        return response;
+      }
 
       // Dashboard session (Phase 0.2): create session from Supabase token, or logout
       if (request.method === "POST" && url.pathname === "/v1/dashboard/session") {
@@ -1477,7 +1514,7 @@ export { createSupabaseClient };
 
 /** Classify a URL pathname into a route group for golden-metrics aggregation. */
 function classifyRouteGroup(pathname: string): string {
-  if (pathname === "/healthz") return "health";
+  if (pathname === "/healthz" || pathname === "/ready") return "health";
   if (pathname === "/v1/memories" || /^\/v1\/memories\/[^/]+$/.test(pathname)) return "memories";
   if (pathname === "/v1/search" || pathname === "/v1/search/history" || pathname === "/v1/search/replay") return "search";
   if (pathname === "/v1/context") return "context";

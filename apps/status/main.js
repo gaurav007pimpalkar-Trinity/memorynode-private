@@ -1,4 +1,4 @@
-const API_BASE = "https://api.memorynode.ai";
+const API_BASE = import.meta.env?.VITE_API_BASE_URL || "https://api.memorynode.ai";
 
 async function checkHealth() {
   const badge = document.getElementById("api-status");

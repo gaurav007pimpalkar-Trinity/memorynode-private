@@ -16,7 +16,7 @@
 1) Identify last good git commit or wrangler version (from CI logs).
 2) Check out that commit locally (or CI) and run:  
    `DEPLOY_ENV=production DEPLOY_CONFIRM=memorynode-prod DRY_RUN=0 node scripts/deploy_prod.mjs`
-3) Confirm rollback: `curl -s https://<BASE_URL>/healthz` should show `status: "ok"` and `version/BUILD_VERSION` matching the rolled-back deploy.
+3) Confirm rollback: `curl -s https://<BASE_URL>/healthz` should show `status: "ok"` and `version/BUILD_VERSION` matching the rolled-back deploy. For readiness (DB up), use `GET /ready`: 200 `{ "status": "ok", "db": "connected" }` or 503 when DB is unavailable.
 4) If needed, revert DB changes manually (migrations are forward-only; prefer hotfix migration rather than reversal).
 
 ## B.1) Error Budget Policy

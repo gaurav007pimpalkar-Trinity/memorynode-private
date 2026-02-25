@@ -32,7 +32,7 @@ Production vars: [ ] `ENVIRONMENT=production`, [ ] `EMBEDDINGS_MODE=openai`, [ ]
 - [ ] **G5 live check:** `G5_URL=https://app.memorynode.ai pnpm ci:trust-gates` (confirms CSP and security headers on live URL).
 
 ## 6. Post go-live (same day)
-- [ ] `GET https://api.memorynode.ai/healthz` → `status: ok`, `x-request-id` present.
+- [ ] `GET https://api.memorynode.ai/healthz` → `status: ok`, `x-request-id` present. Optional: use `GET /ready` for LB readiness (returns 503 if DB unavailable).
 - [ ] Log sink + alerts: configure from [ALERTS.md](ALERTS.md); run 60s health checklist from [OBSERVABILITY.md](OBSERVABILITY.md) §3.
 - [ ] Billing: if enabled, send test PayU callback; confirm `webhook_verified` / `webhook_processed` in Worker logs.
 - [ ] (Recommended) Schedule dashboard session cleanup: `POST /admin/sessions/cleanup` (e.g. daily cron). See [OPERATIONS.md](OPERATIONS.md) §F.

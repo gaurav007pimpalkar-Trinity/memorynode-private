@@ -67,6 +67,30 @@ describe("config guard", () => {
     expect(String(json.error.message)).toContain("SUPABASE_MODE=stub");
   });
 
+  it("returns 503 when dashboard route is used in staging without ALLOWED_ORIGINS", async () => {
+    const req = new Request("http://localhost/v1/dashboard/session", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ access_token: "token", workspace_id: "ws1" }),
+    });
+    const env = {
+      SUPABASE_URL: "https://example.supabase.co",
+      SUPABASE_SERVICE_ROLE_KEY: "service_role",
+      OPENAI_API_KEY: "sk-test",
+      API_KEY_SALT: "salt",
+      MASTER_ADMIN_TOKEN: "admin",
+      RATE_LIMIT_DO: rateLimitBinding(),
+      ENVIRONMENT: "staging",
+      // ALLOWED_ORIGINS intentionally unset
+    } as unknown as Record<string, unknown>;
+
+    const res = await api.fetch(req, env);
+    expect(res.status).toBe(503);
+    const json = await res.json();
+    expect(json.error?.code).toBe("CONFIG_ERROR");
+    expect(String(json.error?.message)).toContain("ALLOWED_ORIGINS");
+  });
+
   it("rejects EMBEDDINGS_MODE=stub in prod alias stage", async () => {
     const req = new Request("http://localhost/healthz", { method: "GET" });
     const env = {

@@ -58,7 +58,7 @@ Billing
 - `POST /v1/billing/webhook` – PayU callback (raw body, hash verified with PAYU_MERCHANT_SALT/PAYU_MERCHANT_KEY).
 
 Plans & Limits
-- See [Plans & Limits](README.md#plans--limits) in docs. Plans: Launch ₹299/7d, Build ₹499/month, Deploy ₹1,999/month, Scale ₹4,999/month, Scale+ custom. Limits: writes/day, reads/day, embed_tokens/day (hard gate). Rate limit: 60 req/min (15 for new keys first 48h).
+- See Plans & Limits in docs (e.g. docs/internal/README.md § Plans & Limits). Plans: Launch ₹299/7d, Build ₹499/month, Deploy ₹1,999/month, Scale ₹4,999/month, Scale+ custom. Limits: writes/day, reads/day, embed_tokens/day (hard gate). Rate limit: 60 req/min (15 for new keys first 48h).
 - **Plan codes (internal vs external):** The DB `workspaces` table and legacy fields use `plan` values `free` / `pro` / `team` for compatibility. The **external contract** for quotas and display is **effective_plan** (e.g. `launch`, `build`, `deploy`, `scale`, `scale_plus`). Billing and entitlements resolve to these; always use `effective_plan` from API responses for limits and UI.
 
 Retrieval quality (Phase 5)
@@ -76,7 +76,23 @@ SDK
 - `addMemory`, `search`, `context`, `listMemories`, `getMemory`, `deleteMemory`, `exportMemories`, `importMemories`, `getUsageToday`, `createWorkspace`, `createApiKey`, `listApiKeys`, `revokeApiKey`.
 
 Machine-readable spec
-- OpenAPI 3.0: `docs/openapi.yaml` (generated from Zod schemas in `apps/api/src/contracts/`).
+- OpenAPI 3.0: `docs/external/openapi.yaml` (generated from Zod schemas in `apps/api/src/contracts/`).
 - To regenerate: `pnpm openapi:gen`. CI runs `pnpm openapi:check` to prevent drift.
 
-See `docs/QUICKSTART.md` for setup and `docs/RELEASE_RUNBOOK.md` for deployment steps.
+See `docs/external/QUICKSTART.md` for setup and `docs/RELEASE_RUNBOOK.md` for deployment steps.
+
+---
+
+## Retrieval cockpit — end-to-end demo (merged from RETRIEVAL_COCKPIT_DEMO.md)
+
+Phase 5: eval sets, replayable queries, explainability, embedding visibility.
+
+**1. Embedding model visibility:** `curl http://127.0.0.1:8787/healthz` — response includes `embedding_model`: `text-embedding-3-small` (OpenAI) or `stub` (local dev).
+
+**2. Explainability (“why this result”):** Add `explain: true` to search. Each result includes `_explain`: `rrf_score`, `match_sources` (["vector"], ["text"], or ["vector","text"]), `vector_score` (cosine 0–1), `text_score` (ts_rank), `rrf_score` (RRF combined).
+
+**3. Replayable queries:** Save: `POST /v1/search` with header `X-Save-History: true`. List: `GET /v1/search/history?limit=10`. Replay: `POST /v1/search/replay` body `{ "query_id": "<uuid-from-history>" }` — returns `{ previous, current }` to compare after adding memories or tuning.
+
+**4. Evaluation sets:** Create: `POST /v1/eval/sets` body `{ "name": "smoke-eval" }`. Add items: `POST /v1/eval/sets/$EVAL_SET_ID/items` body `{ "query": "...", "expected_memory_ids": ["mem-uuid-1", ...] }`. Run: `POST /v1/eval/run` body `{ "eval_set_id", "user_id", "namespace?" }` — returns `items` with precision_at_k, recall, and `summary.avg_precision_at_k`, `avg_recall`.
+
+**5. End-to-end flow:** Ingest memories (QUICKSTART §7) → search with `explain: true` → save with `X-Save-History: true` → add more memories → replay and compare previous vs current → create eval set, add items, run eval → iterate on chunking/embeddings/filters.

@@ -50,7 +50,7 @@ Release is allowed only when every item below is green.
 ## What you need to do (after code changes)
 
 1. **Install dependencies (if lockfile changed)**  
-   Run `pnpm install` at repo root. If you added `@vitest/coverage-v8`, run `pnpm test:coverage` locally to enforce coverage thresholds; CI currently runs `pnpm test` without coverage.
+   Run `pnpm install` at repo root. If you added `@vitest/coverage-v8`, run `pnpm test:coverage` locally to enforce coverage thresholds; CI runs `pnpm test:coverage` (see `.github/workflows/ci.yml`).
 
 2. **Secrets and env**  
    Ensure production Worker has all secrets set via `wrangler secret put` (see [PROD_SETUP_CHECKLIST.md](PROD_SETUP_CHECKLIST.md)). No stub modes in prod (see [PRODUCTION_REQUIREMENTS.md](PRODUCTION_REQUIREMENTS.md)).

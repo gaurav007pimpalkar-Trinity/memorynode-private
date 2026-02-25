@@ -35,3 +35,18 @@ describe("/healthz version stamp", () => {
     expect(json.stage).toBe("staging");
   });
 });
+
+describe("GET /ready (deep readiness)", () => {
+  it("returns 200 and db connected when DB is reachable (stub)", async () => {
+    const env = {
+      ...baseEnv,
+      SUPABASE_MODE: "stub",
+      ENVIRONMENT: "dev",
+    } as unknown as FetchEnv;
+    const res = await api.fetch(new Request("http://localhost/ready"), env);
+    const json = await res.json();
+    expect(res.status).toBe(200);
+    expect(json.status).toBe("ok");
+    expect(json.db).toBe("connected");
+  });
+});

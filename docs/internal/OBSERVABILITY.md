@@ -118,7 +118,21 @@ curl -sI https://api.memorynode.ai/healthz | grep -i x-request-id
 | 10 | No webhook backlog | `event_name="webhook_deferred"` | <5 deferred in last hour |
 | 11 | No signature issues | `event_name="billing_webhook_signature_invalid"` | 0 in last hour |
 
-**If any check is RED**: see `docs/ALERTS.md` for triage mapping.
+**If any check is RED**: see `docs/internal/ALERTS.md` for triage mapping.
+
+---
+
+## 3.1) Health view — "Is the API Healthy?" (<2 min) (merged from HEALTH_VIEW.md)
+
+Single dashboard for on-call. Open this view in **<2 minutes** to assess production health.
+
+**Quick access:** Log sink dashboard filtered to the queries below; or Cloudflare Workers & Pages → memorynode-api → Logs (saved filters from Appendix: Saved log queries); or `curl -s https://api.memorynode.ai/healthz | jq .`
+
+**Health checks (run in order):** Same 11 checks as §3 table; paging thresholds: `docs/internal/ALERTS.md` (A1–E2).
+
+**If any check is RED:** 1) See `docs/internal/ALERTS.md` §2 (Triage Playbooks). 2) Use `x-request-id` from client → filter logs by `request_id`. 3) Check `docs/OPERATIONS.md` for rollback and incident procedures. 4) For billing: `docs/BILLING_RUNBOOK.md`.
+
+**Dashboard definition (Grafana-style):** Row 1 — Request health (rate, 5xx %, p95/p99 latency). Row 2 — Search & DB (embed p95, search p95, db_rpc p95, db success rate). Row 3 — Webhooks (webhook_processed rate, deferred backlog, failure counts). All queries: Appendix below.
 
 ---
 
@@ -156,7 +170,7 @@ All SLOs use a **28-day rolling** window unless otherwise stated. Status page an
 4. **Trace a single request**: filter by `request_id="<value from x-request-id response header>"`.
 5. **Billing incidents**: filter for `event_name in ("webhook_received","webhook_verified","webhook_processed","webhook_replayed","webhook_failed")`.
 
-**Saved queries:** Every signal in §3.1 is defined in `docs/observability/saved_queries.md`. Health view: `docs/HEALTH_VIEW.md`.
+**Saved queries:** See Appendix: Saved log queries (below).
 
 ---
 
@@ -168,3 +182,51 @@ All SLOs use a **28-day rolling** window unless otherwise stated. Status page an
   - On `429`: respect `Retry-After`, then exponential backoff with jitter (`250ms`, `500ms`, `1s`, `2s`, …).
   - On `413`: do not retry unchanged payloads; split/chunk and retry with smaller bodies.
   - Always log `request_id` with UTC timestamp so incidents can be traced from Cloudflare logs.
+
+---
+
+## 7) Performance & tuning (merged from PERFORMANCE.md)
+
+**Vector search:** Backend pgvector (Supabase) with cosine distance; IVFFlat index on `memory_chunks.embedding`. Hybrid retrieval: vector + full-text (tsvector) with RRF. Embedding model: `text-embedding-3-small` (1536 dimensions) when `EMBEDDINGS_MODE=openai`.
+
+**Latency:** p95/p99 targets in §4. Health view tracks p99 per route_group; p99 for 5xx ("time to fail") for on-call. Signals: `search_request` (search_latency_ms, result_count); `db_rpc` (match_chunks_vector, match_chunks_text).
+
+**Index tuning:** IVFFlat lists default 100 (`memory_chunks_embedding_idx` in `infra/sql/001_init.sql`); for larger tables consider increasing (e.g. `sqrt(row_count)`) and reindexing. Full-text: GIN on `tsv` (tsvector); English stemming; `websearch_to_tsquery`. Reindex: after bulk imports or schema changes, `REINDEX INDEX CONCURRENTLY` if needed.
+
+**Query complexity caps:** top_k max 100 (MAX_TOPK in `apps/api/src/limits.js`); page_size max 50; SEARCH_MATCH_COUNT and MAX_FUSE_RESULTS cap fetch/fused output. Per-tenant: `usage_daily` plan limits; rate limiting per API key (RATE_LIMIT_MAX, RATE_LIMIT_WINDOW_MS).
+
+**Abuse and cost containment:** Rate limiting via RATE_LIMIT_DO; plan limits (Launch/Build/Deploy/Scale/Scale+) in `usage_daily`; `cap_exceeded` event when exceeded. Alerts: 429 per tenant, 401/403 spikes, webhook failures — see `docs/internal/ALERTS.md` and `docs/OPERATIONS.md`.
+
+---
+
+## Appendix: Saved log queries (merged from observability/saved_queries.md)
+
+Every signal in §3.1 is queryable via these definitions. Use with **Cloudflare Logpush** → your log sink or **Cloudflare Workers Logs** UI. **Goal:** Answer any signal in <5 minutes.
+
+### A. API signals
+
+**A1. p95/p99 latency per route (2xx/3xx):** Filter `event_name="request_completed"` AND `status>=200` AND `status<400`; aggregate `percentile(duration_ms, 95)` and `percentile(duration_ms, 99)` by `route_group`, `method`.
+
+**A2. p99 latency for 5xx:** Filter `event_name="request_completed"` AND `status>=500`; aggregate `percentile(duration_ms, 99)` by `route_group`.
+
+**A3. 5xx rate per route:** Filter `event_name="request_completed"` AND `status>=500`; count by `route_group` over 5 min. Optional: `api_5xx_rate_pct` = count(status>=500)/count(*)*100 by route_group.
+
+**A4. 4xx rate (optional):** Filter `event_name="request_completed"` AND status 400–499; count by `route_group`, `status`.
+
+**A5. Rate-limit (429) per tenant:** Filter `event_name="request_completed"` AND `error_code="rate_limited"`; count by `workspace_id_redacted` or total.
+
+**A6. Queue / backlog:** `webhook_deferred_count`, `webhook_reconciled_count`, deferred_backlog = deferred − reconciled in window.
+
+**A7. DB and search latency:** `db_rpc_latency_p95` from `event_name="db_rpc"` (percentile db_latency_ms by rpc); `search_latency_p95` from `event_name="search_request"`.
+
+### B. Billing (PayU) signals
+
+Webhook verify/process timings; dedup hit rate (webhook_received vs webhook_replayed); replay success; failure reasons (webhook_failed, signature_invalid, workspace_not_found).
+
+### C. Tenancy signals
+
+Top N by requests, by 429, cap_exceeded; spike_401_403_per_key; burst_failed_webhooks_per_workspace.
+
+### D. Health view — single dashboard
+
+Same 11 checks as §3.1; time range last 5–10 minutes. Index/facet on: `event_name`, `route_group`, `status`, `error_code`, `workspace_id_redacted`.
