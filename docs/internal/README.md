@@ -10,9 +10,9 @@
 - `docs/internal/RELEASE_RUNBOOK.md` – canonical staging/canary/prod release, validation, rollback, and kill switches.
 - `docs/internal/PROD_READY.md` – final go/no-go checklist.
 - `docs/internal/ALERTS.md` – lightweight monitoring + alert thresholds and Cloudflare setup notes.
-- `docs/external/BETA_ONBOARDING.md` – 10–15 minute beta onboarding guide (includes troubleshooting).
-- `docs/external/QUICKSTART.md` – 10-minute developer quickstart (envs, migrations, dev servers, curls).
-- `docs/external/API_REFERENCE.md` – endpoint reference (Worker API, admin, billing, plans).
+- `docs/external/README.md` – product overview (what it is, who for, capabilities).
+- `docs/external/QUICKSTART.md` – get value quickly (API key, store, search).
+- `docs/external/API_USAGE.md` – how to call the API and SDK (inputs, outputs, errors).
 
 ## Documentation Map (Reading Order)
 
@@ -20,9 +20,9 @@ Follow this path depending on what you need:
 
 ### New developer? Start here:
 
-1. **`docs/external/QUICKSTART.md`** — 10-minute setup: install, env vars, migrations, dev server, first curls
-1. **`docs/external/API_REFERENCE.md`** — endpoint reference (all routes, auth, billing, plans)
-1. **`docs/external/BETA_ONBOARDING.md`** — symptom → cause → fix playbook (§ Troubleshooting)
+1. **`docs/external/README.md`** — what the product is and what you can do
+1. **`docs/external/QUICKSTART.md`** — get from zero to first memory and search
+1. **`docs/external/API_USAGE.md`** — API and SDK usage (inputs, outputs, errors)
 
 ### Solo founder / non-technical CTO?
 
@@ -51,13 +51,11 @@ Follow this path depending on what you need:
 - Run `pnpm smoke` (or `pnpm smoke:ps` on Windows) for local E2E smoke
 - See "Local smoke test" and "E2E smoke" sections below for details
 
-### Strategy / architecture:
+### User-facing docs (external):
 
-- **`docs/external/ARCHITECTURE_CEO.md`** — Non-technical architecture overview: end-to-end product flow, main components, and diagrams for founders and stakeholders.
-
-### Reference:
-
-- `docs/external/BETA_ONBOARDING.md` — beta onboarding guide
+- **`docs/external/README.md`** — product overview for users and stakeholders
+- **`docs/external/QUICKSTART.md`** — quick path to first API use
+- **`docs/external/API_USAGE.md`** — API and SDK usage
 
 ## Billing (PayU)
 
@@ -125,10 +123,10 @@ cp .env.example .env && cp apps/api/.dev.vars.template apps/api/.dev.vars   # fi
 DATABASE_URL=postgres://... pnpm db:migrate
 pnpm dev:api   # terminal 1
 pnpm --filter @memorynode/dashboard dev   # terminal 2 → dashboard, create workspace + API key
-# curl ingest + search (see docs/external/QUICKSTART.md §7)
+# curl ingest + search (see docs/external/QUICKSTART.md)
 ```
 
-Full steps: `docs/external/QUICKSTART.md`. First-run flow: `docs/external/BETA_ONBOARDING.md` § First-run flow.
+Full steps: `docs/external/QUICKSTART.md` and `docs/external/API_USAGE.md`.
 
 ## Getting Started
 1) Install dependencies:
