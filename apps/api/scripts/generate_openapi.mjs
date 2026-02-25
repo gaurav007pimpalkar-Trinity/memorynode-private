@@ -1,9 +1,9 @@
 #!/usr/bin/env node
 /**
- * Generate docs/openapi.yaml from Zod schemas (Phase 5, Option A).
+ * Generate docs/external/openapi.yaml from Zod schemas (Phase 5, Option A).
  *
  * Usage:
- *   node apps/api/scripts/generate_openapi.mjs          # write docs/openapi.yaml
+ *   node apps/api/scripts/generate_openapi.mjs          # write docs/external/openapi.yaml
  *   node apps/api/scripts/generate_openapi.mjs --check   # exit 1 if file differs from generated
  */
 
@@ -28,7 +28,7 @@ const MAX_TOPK = 20;
 
 // ── Paths ───────────────────────────────────────────────────────────────────
 const __dirname = dirname(fileURLToPath(import.meta.url));
-const OPENAPI_PATH = resolve(__dirname, "../../../docs/openapi.yaml");
+const OPENAPI_PATH = resolve(__dirname, "../../../docs/external/openapi.yaml");
 
 // ── Registry ────────────────────────────────────────────────────────────────
 const registry = new OpenAPIRegistry();
@@ -670,7 +670,7 @@ if (isCheck) {
     process.exit(1);
   }
   if (existing === yamlOutput) {
-    console.log("docs/openapi.yaml is up to date.");
+    console.log("docs/external/openapi.yaml is up to date.");
     process.exit(0);
   } else {
     const existingLines = existing.split("\n");
@@ -679,7 +679,7 @@ if (isCheck) {
     for (let i = 0; i < maxLines; i++) {
       if (existingLines[i] !== generatedLines[i]) {
         console.error(
-          `docs/openapi.yaml is out of date (first diff at line ${i + 1}):`,
+          `docs/external/openapi.yaml is out of date (first diff at line ${i + 1}):`,
         );
         console.error(`  existing : ${existingLines[i] ?? "(EOF)"}`);
         console.error(`  generated: ${generatedLines[i] ?? "(EOF)"}`);
@@ -687,7 +687,7 @@ if (isCheck) {
       }
     }
     console.error(
-      '\nRun "pnpm openapi:gen" and commit the updated docs/openapi.yaml.',
+      '\nRun "pnpm openapi:gen" and commit the updated docs/external/openapi.yaml.',
     );
     process.exit(1);
   }
