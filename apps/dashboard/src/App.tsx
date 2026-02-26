@@ -681,7 +681,15 @@ function MemoryView({ userId }: { userId: string }) {
               <strong>{r.namespace}</strong>
               <span className="muted small">{new Date(r.created_at).toLocaleString()}</span>
             </div>
-            <div className="muted small">Score: {r.score ?? "n/a"}</div>
+            <div className="muted small">
+              Score: {r.score ?? "n/a"}
+              {r.memory_type != null && r.memory_type !== "" && (
+                <> · Type: <span className="badge">{r.memory_type}</span></>
+              )}
+              {r.source_memory_id != null && r.source_memory_id !== "" && (
+                <> · Source: <span className="muted">{r.source_memory_id.slice(0, 8)}…</span></>
+              )}
+            </div>
             <p>{r.text.slice(0, 240)}</p>
             <div className="muted small">{JSON.stringify(r.metadata)}</div>
           </div>
@@ -709,6 +717,12 @@ function MemoryView({ userId }: { userId: string }) {
           <div className="modal-card" onClick={(e) => e.stopPropagation()}>
             <h3>Memory {selected.id}</h3>
             <div className="muted small">Created {new Date(selected.created_at).toLocaleString()}</div>
+            {(selected.memory_type != null && selected.memory_type !== "") && (
+              <div className="muted small">Type: <span className="badge">{selected.memory_type}</span></div>
+            )}
+            {(selected.source_memory_id != null && selected.source_memory_id !== "") && (
+              <div className="muted small">Source memory: <code>{selected.source_memory_id}</code></div>
+            )}
             <pre className="code-block">{selected.text}</pre>
             <div className="muted small">Metadata: {JSON.stringify(selected.metadata)}</div>
             <button className="ghost" onClick={() => setSelected(null)}>

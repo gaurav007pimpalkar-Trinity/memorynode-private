@@ -1,0 +1,27 @@
+# Weekly memory-hygiene dry-run. Calls POST /admin/memory-hygiene with dry_run=true.
+# Required repo secrets: MEMORY_HYGIENE_ADMIN_TOKEN, MEMORY_HYGIENE_WORKSPACE_ID
+# Optional: MEMORY_HYGIENE_BASE_URL (default https://api.memorynode.ai)
+name: Memory hygiene (dry-run)
+
+on:
+  schedule:
+    - cron: "0 2 * * 1"  # Mondays 02:00 UTC
+  workflow_dispatch:      # Allow manual run
+
+jobs:
+  hygiene:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Memory hygiene dry-run
+        env:
+          TOKEN: ${{ secrets.MEMORY_HYGIENE_ADMIN_TOKEN }}
+          WORKSPACE_ID: ${{ secrets.MEMORY_HYGIENE_WORKSPACE_ID }}
+          BASE_URL: ${{ secrets.MEMORY_HYGIENE_BASE_URL }}
+        run: |
+          if [[ -z "$TOKEN" || -z "$WORKSPACE_ID" ]]; then
+            echo "Skipping: set MEMORY_HYGIENE_ADMIN_TOKEN and MEMORY_HYGIENE_WORKSPACE_ID in repo secrets to enable."
+            exit 0
+          fi
+          base="${BASE_URL:-https://api.memorynode.ai}"
+          url="${base%/}/admin/memory-hygiene?workspace_id=${WORKSPACE_ID}&dry_run=true&limit=200"
+          curl -sS -w "\nHTTP %{http_code}\n" -X POST -H "x-admin-token: $TOKEN" "$url" || exit 1

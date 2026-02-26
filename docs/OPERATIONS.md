@@ -88,6 +88,7 @@ The memory-hygiene endpoint finds memories whose chunks are very similar (by emb
 - **Auth:** `x-admin-token: <MASTER_ADMIN_TOKEN>` (same as other admin endpoints).
 - **Query params:** `workspace_id` (required, UUID), `similarity_threshold` (optional, 0.80–0.99, default 0.92), `limit` (optional, 1–500, default 200), `dry_run` (optional, default `true`).
 - **Recommendation:** Schedule a weekly cron with **dry_run=true** first to inspect reported pairs:
+  - **GitHub Actions:** `.github/workflows/memory-hygiene.yml` runs weekly (Mondays 02:00 UTC) and on `workflow_dispatch`. Set repo secrets: `MEMORY_HYGIENE_ADMIN_TOKEN`, `MEMORY_HYGIENE_WORKSPACE_ID`; optional `MEMORY_HYGIENE_BASE_URL` (default `https://api.memorynode.ai`). If secrets are unset, the job skips without failing.
   - Script: `WORKSPACE_ID=<uuid> MASTER_ADMIN_TOKEN=... ./scripts/memory_hygiene_dry_run.sh` (optional: `BASE_URL`, `SIMILARITY_THRESHOLD`, `LIMIT`).
   - Or curl: `curl -X POST -H "x-admin-token: $MASTER_ADMIN_TOKEN" "https://api.memorynode.ai/admin/memory-hygiene?workspace_id=<WORKSPACE_UUID>&dry_run=true"`
 - **Enabling non-dry runs:** After reviewing dry-run output and confirming which workspace(s) to run for, call the same URL with `dry_run=false` to persist `duplicate_of` marks. Prefer running during low traffic; the endpoint is rate-limited per admin token.

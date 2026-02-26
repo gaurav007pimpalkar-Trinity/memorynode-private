@@ -18,6 +18,8 @@ export type MemoryRow = {
   metadata: Record<string, unknown>;
   created_at: string;
   score?: number;
+  memory_type?: string | null;
+  source_memory_id?: string | null;
 };
 
 export type UsageRow = {
