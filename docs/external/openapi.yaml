@@ -21,6 +21,18 @@ components:
       name: x-admin-token
       description: Master admin token for control-plane endpoints.
   schemas:
+    MemoryInsertResponse:
+      type: object
+      properties:
+        memory_id:
+          type: string
+          example: mem_abc123
+        chunks:
+          type: integer
+          example: 3
+      required:
+        - memory_id
+        - chunks
     ErrorResponse:
       type: object
       properties:
@@ -51,21 +63,6 @@ components:
       required:
         - error
         - request_id
-    MemoryType:
-      type: string
-      enum:
-        - fact
-        - preference
-        - event
-        - note
-      description: Memory type tag for categorization.
-    SearchMode:
-      type: string
-      enum:
-        - hybrid
-        - vector
-        - keyword
-      description: 'Search strategy. "hybrid" (default) uses vector+keyword fusion, "vector" is semantic only, "keyword" is text-match only.'
     MemoryInsertPayload:
       type: object
       properties:
@@ -93,41 +90,9 @@ components:
           example:
             project: alpha
             priority: 1
-        memory_type:
-          $ref: "#/components/schemas/MemoryType"
-        extract:
-          type: boolean
-          description: When true, runs a lightweight LLM extraction to create child fact/preference memories. Best-effort; results are included in the response.
-          example: false
       required:
         - user_id
         - text
-    MemoryInsertResponse:
-      type: object
-      properties:
-        memory_id:
-          type: string
-          example: mem_abc123
-        chunks:
-          type: integer
-          example: 3
-        extraction:
-          type: object
-          description: Present only when extract=true was requested.
-          properties:
-            triggered:
-              type: boolean
-            children_created:
-              type: integer
-            skipped:
-              type: boolean
-              description: True when extraction was skipped (e.g. missing OPENAI_API_KEY).
-            error:
-              type: string
-              description: Present only on failure.
-      required:
-        - memory_id
-        - chunks
     SearchResultItem:
       type: object
       properties:
@@ -221,31 +186,6 @@ components:
             end_time:
               type: string
               example: 2025-12-31T23:59:59Z
-            memory_type:
-              description: Filter by memory type(s). Single value or array (OR semantics).
-              oneOf:
-                - $ref: "#/components/schemas/MemoryType"
-                - type: array
-                  items:
-                    $ref: "#/components/schemas/MemoryType"
-                  minItems: 1
-            filter_mode:
-              type: string
-              enum:
-                - and
-                - or
-              description: 'Metadata match mode. "and" (default) requires all pairs to match, "or" requires any.'
-              default: and
-        search_mode:
-          $ref: "#/components/schemas/SearchMode"
-        min_score:
-          type: number
-          minimum: 0
-          maximum: 1
-          description: Minimum relevance score (0–1). Results below this threshold are dropped. This is a ranking-derived score, not raw cosine similarity.
-        explain:
-          type: boolean
-          description: When true, includes RRF scoring details in each result.
       required:
         - user_id
         - query
@@ -272,22 +212,15 @@ components:
               - chunk_id
               - memory_id
               - chunk_index
-        context_blocks:
-          type: integer
-          description: Number of merged/deduped context blocks returned.
         page:
           type: integer
-          description: Page number from the underlying search (before merge/dedup).
         total:
           type: integer
-          description: Total search hits (before merge/dedup). May differ from context_blocks.
         has_more:
           type: boolean
-          description: Whether additional search pages exist (based on search result set, not context blocks).
       required:
         - context_text
         - citations
-        - context_blocks
         - page
         - total
         - has_more
@@ -593,12 +526,6 @@ paths:
           required: false
           name: end_time
           in: query
-        - schema:
-            $ref: "#/components/schemas/MemoryType"
-          required: false
-          name: memory_type
-          in: query
-          description: Filter by memory type (fact, preference, event, note).
       responses:
         "200":
           description: Paginated list of memories
@@ -947,98 +874,6 @@ paths:
       responses:
         "200":
           description: API key revoked
-        "401":
-          description: Unauthorized
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/ErrorResponse"
-  /admin/memory-hygiene:
-    post:
-      summary: Detect and mark near-duplicate memories (admin only)
-      description: >
-        Scans a workspace for near-duplicate memories via embedding cosine similarity.
-        In dry_run mode (default), only reports pairs. When dry_run=false, marks the
-        lower-priority duplicate with duplicate_of. Never auto-deletes.
-      tags:
-        - Admin
-      security:
-        - AdminToken: []
-      parameters:
-        - schema:
-            type: string
-            format: uuid
-          required: true
-          name: workspace_id
-          in: query
-          description: Target workspace UUID.
-        - schema:
-            type: number
-            minimum: 0.80
-            maximum: 0.99
-            default: 0.92
-          required: false
-          name: similarity_threshold
-          in: query
-          description: Cosine similarity threshold (0.80–0.99). Default 0.92.
-        - schema:
-            type: integer
-            minimum: 1
-            maximum: 500
-            default: 200
-          required: false
-          name: limit
-          in: query
-          description: Max duplicate pairs to return (1–500). Default 200.
-        - schema:
-            type: string
-            enum:
-              - "true"
-              - "false"
-            default: "true"
-          required: false
-          name: dry_run
-          in: query
-          description: 'When "true" (default), only reports pairs without marking duplicates.'
-      responses:
-        "200":
-          description: Hygiene results
-          content:
-            application/json:
-              schema:
-                type: object
-                properties:
-                  workspace_id:
-                    type: string
-                  duplicates_found:
-                    type: integer
-                  marked:
-                    type: integer
-                  dry_run:
-                    type: boolean
-                  similarity_threshold:
-                    type: number
-                  pairs:
-                    type: array
-                    items:
-                      type: object
-                      properties:
-                        memory_id_a:
-                          type: string
-                        memory_id_b:
-                          type: string
-                        similarity:
-                          type: number
-                        preview_a:
-                          type: string
-                        preview_b:
-                          type: string
-        "400":
-          description: Bad request (missing or invalid workspace_id)
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/ErrorResponse"
         "401":
           description: Unauthorized
           content:
