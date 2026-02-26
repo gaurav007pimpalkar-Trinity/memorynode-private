@@ -1,6 +1,10 @@
 /**
  * Memory CRUD handlers. Phase 4: Worker split (IMPROVEMENT_PLAN.md).
  * All dependencies injected via MemoryHandlerDeps to avoid circular dependency with index.
+ *
+ * Phase 6 additions:
+ * - memory_type column support on insert
+ * - Optional lightweight extraction (extract: true) that creates child memories
  */
 
 import type { SupabaseClient } from "@supabase/supabase-js";
@@ -9,6 +13,7 @@ import type { AuthContext } from "../auth.js";
 import { authenticate, rateLimit } from "../auth.js";
 import type { HandlerDeps } from "../router.js";
 import { MemoryInsertSchema, parseWithSchema } from "../contracts/index.js";
+import type { MemoryType } from "../contracts/index.js";
 
 export type { MemoryInsertPayload } from "../contracts/index.js";
 
@@ -19,6 +24,7 @@ export interface MemoryListParams {
   page_size: number;
   namespace?: string;
   user_id?: string;
+  memory_type?: string;
   filters: {
     metadata?: MetadataFilter;
     start_time?: string;
@@ -34,6 +40,8 @@ export interface ListOutcome {
     text: string;
     metadata: Record<string, unknown>;
     created_at: string;
+    memory_type?: string | null;
+    source_memory_id?: string | null;
   }[];
   total: number;
   page: number;
@@ -76,6 +84,175 @@ export interface MemoryHandlerDeps extends HandlerDeps {
 }
 
 const DEFAULT_NAMESPACE = "default";
+
+const EXTRACTION_PROMPT = `You are a memory extraction assistant. Given the user's text, extract distinct facts, preferences, and events as a JSON array.
+
+Each item must have:
+- "text": the extracted statement (concise, standalone, one sentence)
+- "memory_type": one of "fact", "preference", "event"
+
+Return ONLY a JSON array. If nothing can be extracted, return [].
+
+Examples:
+Input: "I love Thai food and I'm allergic to peanuts. Last Tuesday I visited Bangkok."
+Output: [{"text":"User loves Thai food","memory_type":"preference"},{"text":"User is allergic to peanuts","memory_type":"fact"},{"text":"User visited Bangkok last Tuesday","memory_type":"event"}]`;
+
+interface ExtractedItem {
+  text: string;
+  memory_type: MemoryType;
+}
+
+/**
+ * Call a cheap LLM to extract facts/preferences/events from text.
+ * Returns empty array on any failure (fail-silent contract).
+ */
+const MAX_EXTRACT_ITEMS = 10;
+const EXTRACT_TIMEOUT_MS = 15_000;
+
+async function extractItems(text: string, env: Env): Promise<ExtractedItem[]> {
+  if (!env.OPENAI_API_KEY) return [];
+  const controller = new AbortController();
+  const timeoutId = setTimeout(() => controller.abort(), EXTRACT_TIMEOUT_MS);
+  try {
+    const resp = await fetch("https://api.openai.com/v1/chat/completions", {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        authorization: `Bearer ${env.OPENAI_API_KEY}`,
+      },
+      signal: controller.signal,
+      body: JSON.stringify({
+        model: "gpt-4o-mini",
+        temperature: 0,
+        max_tokens: 1024,
+        messages: [
+          { role: "system", content: EXTRACTION_PROMPT },
+          { role: "user", content: text },
+        ],
+      }),
+    });
+    if (!resp.ok) return [];
+    const json = (await resp.json()) as {
+      choices?: { message?: { content?: string } }[];
+    };
+    const raw = json.choices?.[0]?.message?.content?.trim() ?? "";
+    const parsed = JSON.parse(raw);
+    if (!Array.isArray(parsed)) return [];
+    const valid: ExtractedItem[] = [];
+    for (const item of parsed) {
+      if (
+        typeof item === "object" && item &&
+        typeof item.text === "string" && item.text.length > 0 &&
+        typeof item.memory_type === "string" &&
+        // "note" excluded: notes are user-authored, not auto-extracted
+        ["fact", "preference", "event"].includes(item.memory_type)
+      ) {
+        valid.push({ text: item.text, memory_type: item.memory_type as MemoryType });
+      }
+      if (valid.length >= MAX_EXTRACT_ITEMS) break;
+    }
+    return valid;
+  } catch {
+    return [];
+  } finally {
+    clearTimeout(timeoutId);
+  }
+}
+
+/**
+ * Extract items from source text and store as child memories.
+ * Returns counts for observability. Failures are logged and emitted as product events.
+ * Child writes and embeds are accounted against usage.
+ */
+async function extractAndStore(
+  env: Env,
+  supabase: SupabaseClient,
+  d: MemoryHandlerDeps,
+  sourceMemoryId: string,
+  workspaceId: string,
+  userId: string,
+  namespace: string,
+  text: string,
+): Promise<{ children_created: number; skipped: boolean; error?: string }> {
+  if (!env.OPENAI_API_KEY) {
+    return { children_created: 0, skipped: true, error: "OPENAI_API_KEY not configured" };
+  }
+
+  let totalWrites = 0;
+  let totalEmbeds = 0;
+  try {
+    const items = await extractItems(text, env);
+    if (items.length === 0) return { children_created: 0, skipped: false };
+
+    for (const item of items) {
+      const chunks = d.chunkText(item.text);
+      const embeddings = await d.embedText(chunks, env);
+      totalEmbeds += chunks.length;
+
+      const { data: childInsert, error: childError } = await supabase
+        .from("memories")
+        .insert({
+          workspace_id: workspaceId,
+          user_id: userId,
+          namespace,
+          text: item.text,
+          metadata: { _extracted: true, _source_memory_id: sourceMemoryId },
+          memory_type: item.memory_type,
+          source_memory_id: sourceMemoryId,
+        })
+        .select("id")
+        .single();
+
+      if (childError || !childInsert) continue;
+
+      const childId = childInsert.id as string;
+      const chunkRows = chunks.map((chunk, idx) => ({
+        workspace_id: workspaceId,
+        memory_id: childId,
+        user_id: userId,
+        namespace,
+        chunk_index: idx,
+        chunk_text: chunk,
+        embedding: d.vectorToPgvectorString(embeddings[idx]),
+      }));
+
+      const { error: chunkInsertError } = await supabase.from("memory_chunks").insert(chunkRows);
+      if (chunkInsertError) {
+        console.error("[extraction] chunk insert failed, removing orphan memory", {
+          child_memory_id: childId,
+          source_memory_id: sourceMemoryId,
+          error: chunkInsertError.message,
+        });
+        await supabase.from("memories").delete().eq("id", childId).eq("workspace_id", workspaceId);
+        continue;
+      }
+
+      totalWrites++;
+    }
+
+    return { children_created: totalWrites, skipped: false };
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    console.error("[extraction] extractAndStore failed", {
+      source_memory_id: sourceMemoryId,
+      workspace_id: workspaceId,
+      error: msg,
+    });
+    return { children_created: totalWrites, skipped: false, error: msg };
+  } finally {
+    if (totalWrites > 0 || totalEmbeds > 0) {
+      try {
+        await d.bumpUsage(supabase, workspaceId, d.todayUtc(), {
+          writesDelta: totalWrites,
+          readsDelta: 0,
+          embedsDelta: totalEmbeds,
+        });
+      } catch {
+        /* best-effort usage accounting */
+      }
+    }
+  }
+}
 
 export function createMemoryHandlers(
   requestDeps: MemoryHandlerDeps,
@@ -144,7 +321,7 @@ export function createMemoryHandlers(
         );
       }
 
-      const { user_id, text, metadata, namespace } = parseResult.data;
+      const { user_id, text, metadata, namespace, memory_type, extract } = parseResult.data;
       const namespaceVal = namespace ?? DEFAULT_NAMESPACE;
 
       const chunks = d.chunkText(text);
@@ -172,6 +349,7 @@ export function createMemoryHandlers(
           namespace: namespaceVal,
           text,
           metadata: metadata ?? {},
+          ...(memory_type ? { memory_type } : {}),
         })
         .select("id")
         .single();
@@ -209,6 +387,29 @@ export function createMemoryHandlers(
         );
       }
 
+      let extractionResult: { children_created: number; skipped: boolean; error?: string } | undefined;
+      if (extract) {
+        extractionResult = await extractAndStore(env, supabase, d, memoryId, auth.workspaceId, user_id, namespaceVal, text);
+
+        void d.emitProductEvent(
+          supabase,
+          "extraction_completed",
+          {
+            workspaceId: auth.workspaceId,
+            requestId,
+            route: "/v1/memories",
+            method: "POST",
+            status: 200,
+          },
+          {
+            source_memory_id: memoryId,
+            children_created: extractionResult.children_created,
+            skipped: extractionResult.skipped,
+            error: extractionResult.error ?? null,
+          },
+        );
+      }
+
       void d.emitProductEvent(
         supabase,
         "first_ingest_success",
@@ -231,7 +432,17 @@ export function createMemoryHandlers(
         embedsDelta: chunkCount,
       });
 
-      return jsonResponse({ memory_id: memoryId, chunks: rows.length }, 200, rate.headers);
+      const response: Record<string, unknown> = { memory_id: memoryId, chunks: rows.length };
+      if (extractionResult) {
+        response.extraction = {
+          triggered: true,
+          children_created: extractionResult.children_created,
+          skipped: extractionResult.skipped,
+          ...(extractionResult.error ? { error: extractionResult.error } : {}),
+        };
+      }
+
+      return jsonResponse(response, 200, rate.headers);
     },
 
     async handleListMemories(request, env, supabase, url, auditCtx, deps?) {
@@ -278,7 +489,7 @@ export function createMemoryHandlers(
 
       const { data, error } = await supabase
         .from("memories")
-        .select("id, user_id, namespace, text, metadata, created_at")
+        .select("id, user_id, namespace, text, metadata, created_at, memory_type, source_memory_id")
         .eq("workspace_id", auth.workspaceId)
         .eq("id", memoryId)
         .maybeSingle();

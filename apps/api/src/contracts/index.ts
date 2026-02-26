@@ -5,7 +5,14 @@
 
 export { parseWithSchema, type ParseResult } from "./validate.js";
 export { MemoryInsertSchema, type MemoryInsertPayload } from "./memories.js";
-export { SearchPayloadSchema, type SearchPayload } from "./search.js";
+export {
+  SearchPayloadSchema,
+  type SearchPayload,
+  type MemoryType,
+  type SearchMode,
+  MEMORY_TYPES,
+  SEARCH_MODES,
+} from "./search.js";
 export {
   ImportPayloadSchema,
   ImportModeSchema,

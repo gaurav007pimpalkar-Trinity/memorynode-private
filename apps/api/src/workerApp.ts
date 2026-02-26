@@ -73,6 +73,8 @@ interface SearchFilters {
   metadata?: MetadataFilter;
   start_time?: string;
   end_time?: string;
+  memory_type?: string | string[];
+  filter_mode?: "and" | "or";
 }
 
 type PayUWebhookPayload = {
@@ -115,6 +117,8 @@ interface SearchPayload {
   page_size?: number;
   filters?: SearchFilters;
   explain?: boolean;
+  search_mode?: "hybrid" | "vector" | "keyword";
+  min_score?: number;
 }
 
 interface NormalizedSearchParams {
@@ -125,10 +129,14 @@ interface NormalizedSearchParams {
   page: number;
   page_size: number;
   explain?: boolean;
+  search_mode: "hybrid" | "vector" | "keyword";
+  min_score?: number;
   filters: {
     metadata?: MetadataFilter;
     start_time?: string;
     end_time?: string;
+    memory_types?: string[];
+    filter_mode: "and" | "or";
   };
 }
 
@@ -137,6 +145,7 @@ interface MemoryListParams {
   page_size: number;
   namespace?: string;
   user_id?: string;
+  memory_type?: string;
   filters: {
     metadata?: MetadataFilter;
     start_time?: string;
@@ -1160,6 +1169,7 @@ const KNOWN_PATH_ALLOWED_METHODS: Array<{ test: (path: string) => boolean; allow
   { test: (p) => p === "/v1/admin/billing/health", allow: "GET" },
   { test: (p) => p === "/admin/webhooks/reprocess", allow: "POST" },
   { test: (p) => p === "/admin/sessions/cleanup", allow: "POST" },
+  { test: (p) => p === "/admin/memory-hygiene", allow: "POST" },
   { test: (p) => p === "/v1/dashboard/session", allow: "POST" },
   { test: (p) => p === "/v1/dashboard/logout", allow: "POST" },
   { test: (p) => p === "/v1/search/history", allow: "GET" },
@@ -1780,12 +1790,54 @@ function createStubSupabase(env: Env) {
         }
         case "match_chunks_vector":
         case "match_chunks_text": {
-          const chunks = db.memory_chunks.filter(
+          const memoryTypes = params.p_memory_types as string[] | null;
+          const filterMode = (params.p_filter_mode as string) ?? "and";
+          const metaFilter = params.p_metadata as Record<string, unknown> | null;
+
+          let chunks = db.memory_chunks.filter(
             (c) =>
               c.workspace_id === params.p_workspace_id &&
               c.user_id === params.p_user_id &&
               c.namespace === params.p_namespace,
           );
+
+          if (memoryTypes && memoryTypes.length > 0) {
+            const memoryIdSet = new Set(
+              db.memories
+                .filter((m) =>
+                  m.workspace_id === params.p_workspace_id &&
+                  m.duplicate_of == null &&
+                  typeof m.memory_type === "string" &&
+                  memoryTypes.includes(m.memory_type as string),
+                )
+                .map((m) => m.id),
+            );
+            chunks = chunks.filter((c) => memoryIdSet.has(c.memory_id));
+          } else {
+            const nonDupIds = new Set(
+              db.memories
+                .filter((m) => m.workspace_id === params.p_workspace_id && m.duplicate_of == null)
+                .map((m) => m.id),
+            );
+            chunks = chunks.filter((c) => nonDupIds.has(c.memory_id));
+          }
+
+          if (metaFilter && Object.keys(metaFilter).length > 0) {
+            const matchingMemoryIds = new Set(
+              db.memories
+                .filter((m) => {
+                  if (m.workspace_id !== params.p_workspace_id) return false;
+                  const meta = (m.metadata ?? {}) as Record<string, unknown>;
+                  const entries = Object.entries(metaFilter);
+                  return filterMode === "or"
+                    ? entries.some(([k, v]) => meta[k] === v)
+                    : entries.every(([k, v]) => meta[k] === v);
+                })
+                .map((m) => m.id),
+            );
+            chunks = chunks.filter((c) => matchingMemoryIds.has(c.memory_id));
+          }
+
           const q = (params.p_query as string | undefined)?.toLowerCase() ?? "";
           const results = chunks
             .filter((c) => (c.chunk_text as string).toLowerCase().includes(q))
@@ -1866,6 +1918,17 @@ export function normalizeSearchPayload(payload: SearchPayload): NormalizedSearch
     throw createHttpError(400, "BAD_REQUEST", "start_time must be before or equal to end_time");
   }
 
+  const rawMemoryType = payload.filters?.memory_type;
+  const memory_types: string[] | undefined = rawMemoryType
+    ? (Array.isArray(rawMemoryType) ? rawMemoryType : [rawMemoryType])
+    : undefined;
+
+  const filter_mode = payload.filters?.filter_mode ?? "and";
+  const search_mode = payload.search_mode ?? "hybrid";
+  const min_score = payload.min_score != null && payload.min_score >= 0 && payload.min_score <= 1
+    ? payload.min_score
+    : undefined;
+
   return {
     user_id,
     query,
@@ -1874,10 +1937,14 @@ export function normalizeSearchPayload(payload: SearchPayload): NormalizedSearch
     page,
     page_size,
     explain: payload.explain === true,
+    search_mode,
+    min_score,
     filters: {
       metadata,
       start_time,
       end_time,
+      memory_types,
+      filter_mode,
     },
   };
 }
@@ -1909,11 +1976,17 @@ export function normalizeMemoryListParams(url: URL): MemoryListParams {
     throw createHttpError(400, "BAD_REQUEST", "start_time must be before or equal to end_time");
   }
 
+  const memory_type = url.searchParams.get("memory_type")?.trim() || undefined;
+  if (memory_type && !["fact", "preference", "event", "note"].includes(memory_type)) {
+    throw createHttpError(400, "BAD_REQUEST", "memory_type must be one of: fact, preference, event, note");
+  }
+
   return {
     page,
     page_size,
     namespace: namespace || undefined,
     user_id: user_id || undefined,
+    memory_type,
     filters: { metadata, start_time, end_time },
   };
 }
@@ -2334,6 +2407,8 @@ async function callMatchVector(
     metadata?: MetadataFilter;
     startTime?: string;
     endTime?: string;
+    memoryTypes?: string[];
+    filterMode?: string;
   },
 ): Promise<MatchResult[]> {
   const rpcStart = Date.now();
@@ -2346,6 +2421,8 @@ async function callMatchVector(
     p_metadata: args.metadata ?? null,
     p_start_time: args.startTime ?? null,
     p_end_time: args.endTime ?? null,
+    p_memory_types: args.memoryTypes ?? null,
+    p_filter_mode: args.filterMode ?? "and",
   });
   const dbLatency = Date.now() - rpcStart;
 
@@ -2379,6 +2456,8 @@ async function callMatchText(
     metadata?: MetadataFilter;
     startTime?: string;
     endTime?: string;
+    memoryTypes?: string[];
+    filterMode?: string;
   },
 ): Promise<MatchResult[]> {
   const rpcStart = Date.now();
@@ -2391,6 +2470,8 @@ async function callMatchText(
     p_metadata: args.metadata ?? null,
     p_start_time: args.startTime ?? null,
     p_end_time: args.endTime ?? null,
+    p_memory_types: args.memoryTypes ?? null,
+    p_filter_mode: args.filterMode ?? "and",
   });
   const dbLatency = Date.now() - rpcStart;
   if (error) {
@@ -2501,6 +2582,8 @@ type ListOutcome = {
     text: string;
     metadata: Record<string, unknown>;
     created_at: string;
+    memory_type?: string | null;
+    source_memory_id?: string | null;
   }[];
   total: number;
   page: number;
@@ -2532,42 +2615,50 @@ async function performSearch(
 ): Promise<SearchOutcome> {
   const searchStart = Date.now();
   const params = normalizeSearchPayload(payload);
-  const { user_id, query, namespace, top_k, page, page_size, explain, filters } = params;
+  const { user_id, query, namespace, top_k, page, page_size, explain, search_mode, min_score, filters } = params;
   const today = todayUtc();
 
   const desired = Math.min(MAX_FUSE_RESULTS, Math.max(top_k, page * page_size));
   const matchCount = Math.min(SEARCH_MATCH_COUNT, desired * 3);
 
-  const queryEmbedding = (await embedText([query], env))[0];
-  const embeddingVector = vectorToPgvectorString(queryEmbedding);
+  const needsVector = search_mode === "hybrid" || search_mode === "vector";
+  const needsKeyword = search_mode === "hybrid" || search_mode === "keyword";
+  const embedsDelta = needsVector ? 1 : 0;
 
-  const [vectorResults, textResults] = await Promise.all([
-    callMatchVector(supabase, {
-      workspaceId: auth.workspaceId,
-      userId: user_id,
-      namespace,
-      queryEmbedding: embeddingVector,
-      matchCount,
-      metadata: filters.metadata,
-      startTime: filters.start_time,
-      endTime: filters.end_time,
-    }),
-    callMatchText(supabase, {
-      workspaceId: auth.workspaceId,
-      userId: user_id,
-      namespace,
-      query,
-      matchCount,
-      metadata: filters.metadata,
-      startTime: filters.start_time,
-      endTime: filters.end_time,
-    }),
-  ]);
+  const sharedArgs = {
+    workspaceId: auth.workspaceId,
+    userId: user_id,
+    namespace,
+    matchCount,
+    metadata: filters.metadata,
+    startTime: filters.start_time,
+    endTime: filters.end_time,
+    memoryTypes: filters.memory_types,
+    filterMode: filters.filter_mode,
+  };
+
+  let vectorResults: MatchResult[] = [];
+  let textResults: MatchResult[] = [];
+
+  if (needsVector && needsKeyword) {
+    const queryEmbedding = (await embedText([query], env))[0];
+    const embeddingVector = vectorToPgvectorString(queryEmbedding);
+    [vectorResults, textResults] = await Promise.all([
+      callMatchVector(supabase, { ...sharedArgs, queryEmbedding: embeddingVector }),
+      callMatchText(supabase, { ...sharedArgs, query }),
+    ]);
+  } else if (needsVector) {
+    const queryEmbedding = (await embedText([query], env))[0];
+    const embeddingVector = vectorToPgvectorString(queryEmbedding);
+    vectorResults = await callMatchVector(supabase, { ...sharedArgs, queryEmbedding: embeddingVector });
+  } else {
+    textResults = await callMatchText(supabase, { ...sharedArgs, query });
+  }
 
   await bumpUsage(supabase, auth.workspaceId, today, {
     writesDelta: 0,
     readsDelta: 1,
-    embedsDelta: 1,
+    embedsDelta: embedsDelta,
   });
 
   const fused = reciprocalRankFusion(
@@ -2576,12 +2667,18 @@ async function performSearch(
     Math.min(matchCount, MAX_FUSE_RESULTS),
     !!explain,
   );
-  const final = finalizeResults(fused, page, page_size);
+
+  const scored = min_score != null
+    ? fused.filter((r) => r.score >= min_score)
+    : fused;
+
+  const final = finalizeResults(scored, page, page_size);
 
   const searchLatency = Date.now() - searchStart;
   logger.info({
     event: "search_request",
     search_latency_ms: searchLatency,
+    search_mode,
     result_count: final.total,
     page,
     page_size,
@@ -2601,16 +2698,18 @@ export async function performListMemories(
   params: MemoryListParams,
   supabase: SupabaseClient,
 ): Promise<ListOutcome> {
-  const { page, page_size, namespace, user_id, filters } = params;
+  const { page, page_size, namespace, user_id, memory_type, filters } = params;
   const offset = (page - 1) * page_size;
 
   let query = supabase
     .from("memories")
-    .select("id, user_id, namespace, text, metadata, created_at", { count: "exact" })
-    .eq("workspace_id", auth.workspaceId);
+    .select("id, user_id, namespace, text, metadata, created_at, memory_type, source_memory_id", { count: "exact" })
+    .eq("workspace_id", auth.workspaceId)
+    .is("duplicate_of", null);
 
   if (namespace) query = query.eq("namespace", namespace);
   if (user_id) query = query.eq("user_id", user_id);
+  if (memory_type) query = query.eq("memory_type", memory_type);
   if (filters.metadata) query = query.contains("metadata", filters.metadata);
   if (filters.start_time) query = query.gte("created_at", filters.start_time);
   if (filters.end_time) query = query.lte("created_at", filters.end_time);
@@ -2917,6 +3016,7 @@ export const handleBillingWebhook = webhookHandlersDefault.handleBillingWebhook;
 export const handleReprocessDeferredWebhooks = adminHandlersDefault.handleReprocessDeferredWebhooks;
 export const handleAdminBillingHealth = adminHandlersDefault.handleAdminBillingHealth;
 export const handleCleanupExpiredSessions = adminHandlersDefault.handleCleanupExpiredSessions;
+export const handleMemoryHygiene = adminHandlersDefault.handleMemoryHygiene;
 export const handleExport = exportHandlersDefault.handleExport;
 export const handleImport = importHandlersDefault.handleImport;
 export const handleCreateWorkspace = workspacesHandlersDefault.handleCreateWorkspace;

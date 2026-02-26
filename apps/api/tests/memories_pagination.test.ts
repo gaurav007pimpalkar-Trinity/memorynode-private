@@ -43,6 +43,10 @@ function makeSupabase(memories: MemoryRow[]) {
           data = data.filter((r) => (r as any)[col] === val);
           return builder;
         },
+        is: (col: string, val: null) => {
+          data = data.filter((r) => (r as any)[col] == null);
+          return builder;
+        },
         contains: (col: string, val: Record<string, unknown>) => {
           data = data.filter((r) => {
             const meta = (r as any)[col] ?? {};

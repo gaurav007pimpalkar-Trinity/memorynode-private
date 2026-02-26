@@ -151,6 +151,13 @@ export interface RouterHandlers {
     requestId: string,
     deps: HandlerDeps,
   ) => Promise<Response>;
+  handleMemoryHygiene: (
+    request: Request,
+    env: Env,
+    supabase: SupabaseClient,
+    requestId: string,
+    deps: HandlerDeps,
+  ) => Promise<Response>;
   handleExport: (
     request: Request,
     env: Env,
@@ -315,6 +322,10 @@ export async function route(
 
   if (request.method === "POST" && url.pathname === "/admin/sessions/cleanup") {
     return handlers.handleCleanupExpiredSessions(request, env, supabase, requestId, handlerDeps);
+  }
+
+  if (request.method === "POST" && url.pathname === "/admin/memory-hygiene") {
+    return handlers.handleMemoryHygiene(request, env, supabase, requestId, handlerDeps);
   }
 
   if (request.method === "GET" && url.pathname === "/v1/admin/billing/health") {

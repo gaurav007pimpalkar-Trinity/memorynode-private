@@ -118,11 +118,13 @@ export function createSearchHandlers(
         );
       }
 
+      const searchMode = parseResult.data.search_mode ?? "hybrid";
+      const embedsDelta = searchMode === "keyword" ? 0 : 1;
       const capResponse = await d.checkCapsAndMaybeRespond(
         jsonResponse,
         auth,
         supabase,
-        { writesDelta: 0, readsDelta: 1, embedsDelta: 1 },
+        { writesDelta: 0, readsDelta: 1, embedsDelta },
         rate.headers,
         env,
         { requestId, route: "/v1/search", method: "POST" },
@@ -146,6 +148,8 @@ export function createSearchHandlers(
               page_size: parseResult.data.page_size,
               filters: parseResult.data.filters,
               explain: parseResult.data.explain,
+              search_mode: parseResult.data.search_mode,
+              min_score: parseResult.data.min_score,
             },
             results_snapshot: {
               results: outcome.results,
@@ -234,6 +238,11 @@ export function createSearchHandlers(
         return jsonResponse({ error: { code: "NOT_FOUND", message: "Query not found" } }, 404, rate.headers);
       }
       const params = (row.params ?? {}) as Record<string, unknown>;
+      const replaySearchMode = typeof params.search_mode === "string" &&
+        ["hybrid", "vector", "keyword"].includes(params.search_mode)
+        ? (params.search_mode as "hybrid" | "vector" | "keyword")
+        : undefined;
+      const replayMinScore = typeof params.min_score === "number" ? params.min_score : undefined;
       const payload: SearchPayload = {
         user_id: typeof params.user_id === "string" ? params.user_id : "default",
         query: String(row.query ?? ""),
@@ -243,12 +252,15 @@ export function createSearchHandlers(
         page_size: typeof params.page_size === "number" ? params.page_size : undefined,
         filters: params.filters as SearchPayload["filters"],
         explain: params.explain === true,
+        search_mode: replaySearchMode,
+        min_score: replayMinScore,
       };
+      const replayEmbedsDelta = (replaySearchMode ?? "hybrid") === "keyword" ? 0 : 1;
       const capResponse = await d.checkCapsAndMaybeRespond(
         jsonResponse,
         auth,
         supabase,
-        { writesDelta: 0, readsDelta: 1, embedsDelta: 1 },
+        { writesDelta: 0, readsDelta: 1, embedsDelta: replayEmbedsDelta },
         rate.headers,
         env,
         { requestId, route: "/v1/search/replay", method: "POST" },

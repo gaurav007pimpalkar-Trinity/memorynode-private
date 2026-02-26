@@ -1,6 +1,12 @@
 /**
  * Context handler (search-derived context_text + citations). Phase 4: Worker split (IMPROVEMENT_PLAN.md).
  * Uses same deps as search (performSearch, caps, events). Dependencies injected via ContextHandlerDeps.
+ *
+ * Smart context assembly:
+ * 1. Merge adjacent chunks from the same memory (consecutive chunk_index values).
+ * 2. Deduplicate overlapping text (substring containment and word-set Jaccard).
+ * 3. Preserve citations and memory IDs.
+ * Endpoint shape is unchanged — context_text + citations.
  */
 
 import type { SupabaseClient } from "@supabase/supabase-js";
@@ -11,6 +17,139 @@ import type { SearchHandlerDeps } from "./search.js";
 import { SearchPayloadSchema, parseWithSchema } from "../contracts/index.js";
 
 export type ContextHandlerDeps = SearchHandlerDeps;
+
+interface SearchResultItem {
+  chunk_id: string;
+  memory_id: string;
+  chunk_index: number;
+  text: string;
+  score: number;
+}
+
+interface MergedBlock {
+  text: string;
+  chunk_ids: string[];
+  memory_ids: string[];
+  chunk_indices: number[];
+}
+
+const JACCARD_DEDUP_THRESHOLD = 0.75;
+
+function wordSet(text: string): Set<string> {
+  return new Set(text.toLowerCase().replace(/[^\w\s]/g, "").split(/\s+/).filter(Boolean));
+}
+
+function jaccardSimilarity(a: Set<string>, b: Set<string>): number {
+  if (a.size === 0 && b.size === 0) return 1;
+  let intersection = 0;
+  for (const w of a) {
+    if (b.has(w)) intersection++;
+  }
+  return intersection / (a.size + b.size - intersection);
+}
+
+function isSubstringOf(shorter: string, longer: string): boolean {
+  const a = shorter.trim().toLowerCase();
+  const b = longer.trim().toLowerCase();
+  return b.includes(a);
+}
+
+/**
+ * Merge adjacent chunks from the same memory, then deduplicate overlapping blocks.
+ * Preserves all chunk_ids and memory_ids for citation.
+ */
+function assembleSmartContext(results: SearchResultItem[]): MergedBlock[] {
+  if (results.length === 0) return [];
+
+  const grouped = new Map<string, SearchResultItem[]>();
+  for (const r of results) {
+    const list = grouped.get(r.memory_id) ?? [];
+    list.push(r);
+    grouped.set(r.memory_id, list);
+  }
+
+  const merged: MergedBlock[] = [];
+
+  for (const [, items] of grouped) {
+    items.sort((a, b) => a.chunk_index - b.chunk_index);
+
+    let block: MergedBlock = {
+      text: items[0].text,
+      chunk_ids: [items[0].chunk_id],
+      memory_ids: [items[0].memory_id],
+      chunk_indices: [items[0].chunk_index],
+    };
+
+    for (let i = 1; i < items.length; i++) {
+      const prev = items[i - 1];
+      const cur = items[i];
+      if (cur.chunk_index === prev.chunk_index + 1) {
+        block.text = block.text + "\n" + cur.text;
+        block.chunk_ids.push(cur.chunk_id);
+        if (!block.memory_ids.includes(cur.memory_id)) {
+          block.memory_ids.push(cur.memory_id);
+        }
+        block.chunk_indices.push(cur.chunk_index);
+      } else {
+        merged.push(block);
+        block = {
+          text: cur.text,
+          chunk_ids: [cur.chunk_id],
+          memory_ids: [cur.memory_id],
+          chunk_indices: [cur.chunk_index],
+        };
+      }
+    }
+    merged.push(block);
+  }
+
+  merged.sort((a, b) => {
+    const scoreA = results.findIndex((r) => r.chunk_id === a.chunk_ids[0]);
+    const scoreB = results.findIndex((r) => r.chunk_id === b.chunk_ids[0]);
+    return scoreA - scoreB;
+  });
+
+  const deduped: MergedBlock[] = [];
+  const wordSets: Set<string>[] = [];
+
+  for (const block of merged) {
+    if (!block.text.trim()) {
+      deduped.push(block);
+      wordSets.push(new Set());
+      continue;
+    }
+
+    let isDuplicate = false;
+    const blockWords = wordSet(block.text);
+
+    for (let i = 0; i < deduped.length; i++) {
+      if (!deduped[i].text.trim()) continue;
+      if (isSubstringOf(block.text, deduped[i].text) || isSubstringOf(deduped[i].text, block.text)) {
+        if (block.text.length > deduped[i].text.length) {
+          deduped[i] = block;
+          wordSets[i] = blockWords;
+        }
+        isDuplicate = true;
+        break;
+      }
+      if (jaccardSimilarity(blockWords, wordSets[i]) >= JACCARD_DEDUP_THRESHOLD) {
+        if (block.text.length > deduped[i].text.length) {
+          deduped[i] = block;
+          wordSets[i] = blockWords;
+        }
+        isDuplicate = true;
+        break;
+      }
+    }
+
+    if (!isDuplicate) {
+      deduped.push(block);
+      wordSets.push(blockWords);
+    }
+  }
+
+  return deduped;
+}
 
 export function createContextHandlers(
   requestDeps: ContextHandlerDeps,
@@ -53,11 +192,13 @@ export function createContextHandlers(
         );
       }
 
+      const searchMode = parseResult.data.search_mode ?? "hybrid";
+      const embedsDelta = searchMode === "keyword" ? 0 : 1;
       const capResponse = await d.checkCapsAndMaybeRespond(
         jsonResponse,
         auth,
         supabase,
-        { writesDelta: 0, readsDelta: 1, embedsDelta: 1 },
+        { writesDelta: 0, readsDelta: 1, embedsDelta },
         rate.headers,
         env,
         { requestId, route: "/v1/context", method: "POST" },
@@ -65,17 +206,24 @@ export function createContextHandlers(
       if (capResponse) return capResponse;
 
       const outcome = await d.performSearch(auth, parseResult.data, env, supabase);
-      const results = outcome.results;
+      const blocks = assembleSmartContext(outcome.results);
+
       const lines: string[] = [];
-      const citations = results.map((res, idx) => {
-        lines.push(`[-${idx + 1}-] ${res.text}`);
-        return {
-          i: idx + 1,
-          chunk_id: res.chunk_id,
-          memory_id: res.memory_id,
-          chunk_index: res.chunk_index,
-        };
-      });
+      const citations: { i: number; chunk_id: string; memory_id: string; chunk_index: number }[] = [];
+
+      let citationIdx = 1;
+      for (const block of blocks) {
+        lines.push(`[-${citationIdx}-] ${block.text}`);
+        for (let j = 0; j < block.chunk_ids.length; j++) {
+          citations.push({
+            i: citationIdx,
+            chunk_id: block.chunk_ids[j],
+            memory_id: block.memory_ids[Math.min(j, block.memory_ids.length - 1)],
+            chunk_index: block.chunk_indices[j],
+          });
+        }
+        citationIdx++;
+      }
 
       void d.emitProductEvent(
         supabase,
@@ -97,6 +245,8 @@ export function createContextHandlers(
         {
           context_text: lines.join("\n\n"),
           citations,
+          context_blocks: blocks.length,
+          /** total/has_more reflect the underlying search result set before merge/dedup. */
           page: outcome.page,
           page_size: outcome.page_size,
           total: outcome.total,

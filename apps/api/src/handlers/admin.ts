@@ -52,6 +52,13 @@ export function createAdminHandlers(
     requestId: string,
     deps?: HandlerDeps,
   ) => Promise<Response>;
+  handleMemoryHygiene: (
+    request: Request,
+    env: Env,
+    supabase: SupabaseClient,
+    requestId: string,
+    deps?: HandlerDeps,
+  ) => Promise<Response>;
 } {
   return {
     async handleCleanupExpiredSessions(request, env, supabase, requestId = "", deps?) {
@@ -301,6 +308,129 @@ export function createAdminHandlers(
           db_connectivity: dbConnectivity,
           payu_webhook_events: webhookSummary,
           payu_transactions: transactionSummary,
+        },
+        200,
+        rate.headers,
+      );
+    },
+
+    /**
+     * Memory hygiene: detect near-duplicate memories via embedding similarity.
+     * Marks lower-priority duplicate with duplicate_of; never auto-deletes.
+     * Designed to be triggered weekly via cron or manual admin call.
+     *
+     * POST /admin/memory-hygiene
+     * Query params: workspace_id (required), similarity_threshold (0.80-0.99, default 0.92), limit (1-500, default 200), dry_run (true/false, default true)
+     */
+    async handleMemoryHygiene(request, env, supabase, requestId = "", deps?) {
+      const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+      const d = (deps ?? defaultDeps) as AdminHandlerDeps;
+      const { jsonResponse } = d;
+      const { token } = await d.requireAdmin(request, env);
+      const rate = await d.rateLimit(`admin:hygiene:${token}`, env);
+      if (!rate.allowed) {
+        return jsonResponse(
+          { error: { code: "rate_limited", message: "Rate limit exceeded" } },
+          429,
+          rate.headers,
+        );
+      }
+
+      const url = new URL(request.url);
+      const workspaceId = url.searchParams.get("workspace_id")?.trim();
+      if (!workspaceId) {
+        return jsonResponse(
+          { error: { code: "BAD_REQUEST", message: "workspace_id query parameter is required" } },
+          400,
+          rate.headers,
+        );
+      }
+      if (!UUID_RE.test(workspaceId)) {
+        return jsonResponse(
+          { error: { code: "BAD_REQUEST", message: "workspace_id must be a valid UUID" } },
+          400,
+          rate.headers,
+        );
+      }
+
+      const rawThreshold = Number(url.searchParams.get("similarity_threshold") ?? 0.92);
+      const similarityThreshold = Number.isFinite(rawThreshold) && rawThreshold >= 0.80 && rawThreshold <= 0.99
+        ? rawThreshold
+        : 0.92;
+
+      const rawLimit = Number(url.searchParams.get("limit") ?? 200);
+      const limit = Number.isFinite(rawLimit) ? Math.max(1, Math.min(500, Math.floor(rawLimit))) : 200;
+
+      const dryRun = url.searchParams.get("dry_run")?.toLowerCase() !== "false";
+
+      d.emitEventLog("memory_hygiene_started", {
+        route: "/admin/memory-hygiene",
+        request_id: requestId || null,
+        workspace_id: workspaceId,
+        similarity_threshold: similarityThreshold,
+        limit,
+        dry_run: dryRun,
+      });
+
+      const { data: pairs, error: rpcError } = await supabase.rpc("find_near_duplicate_memories", {
+        p_workspace_id: workspaceId,
+        p_similarity_threshold: similarityThreshold,
+        p_limit: limit,
+      });
+
+      if (rpcError) {
+        return jsonResponse(
+          { error: { code: "DB_ERROR", message: rpcError.message ?? "Duplicate detection RPC failed" } },
+          500,
+          rate.headers,
+        );
+      }
+
+      const duplicatePairs = (pairs ?? []) as Array<{
+        memory_id_a: string;
+        memory_id_b: string;
+        similarity: number;
+        chunk_text_a: string;
+        chunk_text_b: string;
+      }>;
+
+      let marked = 0;
+      if (!dryRun) {
+        for (const pair of duplicatePairs) {
+          const { error: updateErr } = await supabase
+            .from("memories")
+            .update({ duplicate_of: pair.memory_id_a })
+            .eq("id", pair.memory_id_b)
+            .eq("workspace_id", workspaceId)
+            .is("duplicate_of", null);
+
+          if (!updateErr) marked++;
+        }
+      }
+
+      d.emitEventLog("memory_hygiene_completed", {
+        route: "/admin/memory-hygiene",
+        request_id: requestId || null,
+        workspace_id: workspaceId,
+        duplicates_found: duplicatePairs.length,
+        marked,
+        dry_run: dryRun,
+      });
+
+      return jsonResponse(
+        {
+          workspace_id: workspaceId,
+          duplicates_found: duplicatePairs.length,
+          marked,
+          dry_run: dryRun,
+          similarity_threshold: similarityThreshold,
+          pairs: duplicatePairs.map((p) => ({
+            memory_id_a: p.memory_id_a,
+            memory_id_b: p.memory_id_b,
+            similarity: Math.round(p.similarity * 1000) / 1000,
+            preview_a: p.chunk_text_a?.slice(0, 120) ?? "",
+            preview_b: p.chunk_text_b?.slice(0, 120) ?? "",
+          })),
         },
         200,
         rate.headers,

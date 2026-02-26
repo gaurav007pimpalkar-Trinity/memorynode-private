@@ -11,11 +11,21 @@ export interface HealthResponse {
   status: "ok";
 }
 
+/** Recognized memory type tags for categorization. */
+export type MemoryType = "fact" | "preference" | "event" | "note";
+
+/** Search strategy selector. "hybrid" (default) uses vector+keyword fusion. */
+export type SearchMode = "hybrid" | "vector" | "keyword";
+
 export interface AddMemoryRequest {
   userId: string;
   namespace?: string;
   text: string;
   metadata?: Record<string, unknown>;
+  /** Optional type tag for categorization. */
+  memory_type?: MemoryType;
+  /** When true, runs a lightweight LLM extraction to create child fact/preference memories. */
+  extract?: boolean;
 }
 
 export interface AddMemoryResponse {
@@ -34,7 +44,15 @@ export interface SearchRequest {
     metadata?: Record<string, string | number | boolean>;
     start_time?: string;
     end_time?: string;
+    /** Filter by memory type(s). Single value or array (OR semantics). */
+    memory_type?: MemoryType | MemoryType[];
+    /** Metadata match mode: "and" (default) requires all pairs, "or" requires any. */
+    filter_mode?: "and" | "or";
   };
+  /** Search strategy: "hybrid" (default), "vector", or "keyword". */
+  search_mode?: SearchMode;
+  /** Minimum relevance score (0–1). Results below this threshold are dropped. This is a ranking-derived score, not a raw cosine similarity. */
+  min_score?: number;
 }
 
 export interface SearchResult {
@@ -75,6 +93,8 @@ export interface MemoryRecord {
   text: string;
   metadata: Record<string, unknown>;
   created_at: string;
+  memory_type?: MemoryType | null;
+  source_memory_id?: MemoryId | null;
 }
 
 export interface ListMemoriesResponse {
