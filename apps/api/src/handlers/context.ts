@@ -18,7 +18,7 @@ import { SearchPayloadSchema, parseWithSchema } from "../contracts/index.js";
 
 export type ContextHandlerDeps = SearchHandlerDeps;
 
-interface SearchResultItem {
+export interface SearchResultItem {
   chunk_id: string;
   memory_id: string;
   chunk_index: number;
@@ -26,20 +26,20 @@ interface SearchResultItem {
   score: number;
 }
 
-interface MergedBlock {
+export interface MergedBlock {
   text: string;
   chunk_ids: string[];
   memory_ids: string[];
   chunk_indices: number[];
 }
 
-const JACCARD_DEDUP_THRESHOLD = 0.75;
+export const JACCARD_DEDUP_THRESHOLD = 0.75;
 
-function wordSet(text: string): Set<string> {
+export function wordSet(text: string): Set<string> {
   return new Set(text.toLowerCase().replace(/[^\w\s]/g, "").split(/\s+/).filter(Boolean));
 }
 
-function jaccardSimilarity(a: Set<string>, b: Set<string>): number {
+export function jaccardSimilarity(a: Set<string>, b: Set<string>): number {
   if (a.size === 0 && b.size === 0) return 1;
   let intersection = 0;
   for (const w of a) {
@@ -48,7 +48,7 @@ function jaccardSimilarity(a: Set<string>, b: Set<string>): number {
   return intersection / (a.size + b.size - intersection);
 }
 
-function isSubstringOf(shorter: string, longer: string): boolean {
+export function isSubstringOf(shorter: string, longer: string): boolean {
   const a = shorter.trim().toLowerCase();
   const b = longer.trim().toLowerCase();
   return b.includes(a);
@@ -58,7 +58,7 @@ function isSubstringOf(shorter: string, longer: string): boolean {
  * Merge adjacent chunks from the same memory, then deduplicate overlapping blocks.
  * Preserves all chunk_ids and memory_ids for citation.
  */
-function assembleSmartContext(results: SearchResultItem[]): MergedBlock[] {
+export function assembleSmartContext(results: SearchResultItem[]): MergedBlock[] {
   if (results.length === 0) return [];
 
   const grouped = new Map<string, SearchResultItem[]>();

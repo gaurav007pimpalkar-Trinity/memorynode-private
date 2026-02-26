@@ -47,6 +47,43 @@ describe("normalizeSearchPayload", () => {
       }),
     ).toThrow();
   });
+
+  it("normalizes search_mode and min_score", () => {
+    const norm = normalizeSearchPayload({
+      user_id: "u1",
+      query: "test",
+      search_mode: "keyword",
+      min_score: 0.5,
+    });
+    expect(norm.search_mode).toBe("keyword");
+    expect(norm.min_score).toBe(0.5);
+  });
+
+  it("defaults search_mode to hybrid", () => {
+    const norm = normalizeSearchPayload({ user_id: "u1", query: "test" });
+    expect(norm.search_mode).toBe("hybrid");
+    expect(norm.min_score).toBeUndefined();
+  });
+
+  it("normalizes memory_type filter as array", () => {
+    const norm = normalizeSearchPayload({
+      user_id: "u1",
+      query: "test",
+      filters: { memory_type: "fact" },
+    });
+    expect(norm.filters.memory_types).toEqual(["fact"]);
+    expect(norm.filters.filter_mode).toBe("and");
+  });
+
+  it("passes through memory_type array and filter_mode", () => {
+    const norm = normalizeSearchPayload({
+      user_id: "u1",
+      query: "test",
+      filters: { memory_type: ["fact", "preference"], filter_mode: "or" },
+    });
+    expect(norm.filters.memory_types).toEqual(["fact", "preference"]);
+    expect(norm.filters.filter_mode).toBe("or");
+  });
 });
 
 describe("chunkText paragraph aware", () => {

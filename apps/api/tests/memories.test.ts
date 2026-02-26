@@ -28,6 +28,25 @@ describe("normalizeMemoryListParams", () => {
     const url = new URL("http://localhost/v1/memories?metadata=notjson");
     expect(() => normalizeMemoryListParams(url)).toThrow();
   });
+
+  it("parses valid memory_type filter", () => {
+    const url = new URL("http://localhost/v1/memories?memory_type=fact");
+    const params = normalizeMemoryListParams(url);
+    expect(params.memory_type).toBe("fact");
+  });
+
+  it("rejects invalid memory_type", () => {
+    const url = new URL("http://localhost/v1/memories?memory_type=invalid");
+    expect(() => normalizeMemoryListParams(url)).toThrow("memory_type must be one of");
+  });
+
+  it("accepts all valid memory_type values", () => {
+    for (const mt of ["fact", "preference", "event", "note"]) {
+      const url = new URL(`http://localhost/v1/memories?memory_type=${mt}`);
+      const params = normalizeMemoryListParams(url);
+      expect(params.memory_type).toBe(mt);
+    }
+  });
 });
 
 class FakeDeleteBuilder {
