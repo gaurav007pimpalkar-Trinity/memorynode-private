@@ -38,7 +38,7 @@ curl -X POST "https://api.memorynode.ai/v1/search" \
   -d '{"user_id":"user-123","namespace":"myapp","query":"theme preference","top_k":5}'
 ```
 
-**Context** (for prompts) — POST to `/v1/context` with the same fields. The response includes `context_text` and `citations` ready to use in your AI prompt.
+**Context** (for prompts) — POST to `/v1/context` with the same fields. The response includes `context_text` and `citations` ready to use in your AI prompt. You can optionally tag memories with `memory_type` (fact, preference, event, note), use `search_mode` (hybrid, vector, keyword), and filter by `memory_type` in search/context — see [API usage](./API_USAGE.md).
 
 ## 4. If something goes wrong
 

@@ -79,3 +79,15 @@ Expired rows in `dashboard_sessions` are not deleted automatically. To prevent u
 - **Behavior:** Deletes rows where `expires_at < now()`; returns `{ "ok": true, "deleted": <number> }`. Rate-limited (same as other admin endpoints); call at most once per minute.
 - **Recommendation:** Run from an external cron (e.g. daily):  
   `curl -X POST -H "Authorization: Bearer $MASTER_ADMIN_TOKEN" https://api.memorynode.ai/admin/sessions/cleanup`
+
+## G) Memory hygiene (near-duplicate detection)
+
+The memory-hygiene endpoint finds memories whose chunks are very similar (by embedding) and marks the lower-priority one as a duplicate. It does **not** delete rows; it sets `duplicate_of` on the duplicate.
+
+- **Endpoint:** `POST /admin/memory-hygiene`
+- **Auth:** `x-admin-token: <MASTER_ADMIN_TOKEN>` (same as other admin endpoints).
+- **Query params:** `workspace_id` (required, UUID), `similarity_threshold` (optional, 0.80–0.99, default 0.92), `limit` (optional, 1–500, default 200), `dry_run` (optional, default `true`).
+- **Recommendation:** Schedule a weekly cron with **dry_run=true** first to inspect reported pairs:
+  - Script: `WORKSPACE_ID=<uuid> MASTER_ADMIN_TOKEN=... ./scripts/memory_hygiene_dry_run.sh` (optional: `BASE_URL`, `SIMILARITY_THRESHOLD`, `LIMIT`).
+  - Or curl: `curl -X POST -H "x-admin-token: $MASTER_ADMIN_TOKEN" "https://api.memorynode.ai/admin/memory-hygiene?workspace_id=<WORKSPACE_UUID>&dry_run=true"`
+- **Enabling non-dry runs:** After reviewing dry-run output and confirming which workspace(s) to run for, call the same URL with `dry_run=false` to persist `duplicate_of` marks. Prefer running during low traffic; the endpoint is rate-limited per admin token.

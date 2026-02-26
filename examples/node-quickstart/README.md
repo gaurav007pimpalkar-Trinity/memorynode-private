@@ -35,3 +35,7 @@ node examples/node-quickstart/index.mjs
 - `SEARCH` section with at least one result
 - `CONTEXT` section with `context_text` and citations
 - final `PASS` line
+
+## Optional: Phase 6 options
+
+With the same env vars, run `node examples/node-quickstart/phase6-options.mjs` to try `memory_type`, `extract`, `search_mode`, and `filters.memory_type`. See [API usage](../../docs/external/API_USAGE.md) for full options.

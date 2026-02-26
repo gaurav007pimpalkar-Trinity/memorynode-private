@@ -18,6 +18,7 @@ import type {
   SearchResponse,
   UsageTodayResponse,
 } from "@memorynode/shared";
+import type { MemoryType, SearchMode } from "@memorynode/shared";
 
 export interface MemoryNodeClientOptions {
   baseUrl?: string;
@@ -35,6 +36,14 @@ export interface SearchOptions {
   metadata?: Record<string, string | number | boolean>;
   startTime?: string;
   endTime?: string;
+  /** Filter by memory type(s). Single value or array (OR semantics). */
+  memoryType?: MemoryType | MemoryType[];
+  /** Metadata match mode: "and" (default) or "or". */
+  filterMode?: "and" | "or";
+  /** Search strategy: "hybrid" (default), "vector", or "keyword". */
+  searchMode?: SearchMode;
+  /** Minimum relevance score (0–1). Results below are dropped. */
+  minScore?: number;
 }
 
 export interface ListMemoriesOptions {
@@ -42,6 +51,8 @@ export interface ListMemoriesOptions {
   pageSize?: number;
   namespace?: string;
   userId?: string;
+  /** Filter by memory type: fact, preference, event, or note. */
+  memoryType?: MemoryType;
   metadata?: Record<string, string | number | boolean>;
   startTime?: string;
   endTime?: string;
@@ -97,15 +108,15 @@ export class MemoryNodeClient {
   }
 
   async addMemory(input: AddMemoryRequest): Promise<AddMemoryResponse> {
-    return this.request<AddMemoryResponse>("/v1/memories", {
-      method: "POST",
-      body: {
-        user_id: input.userId,
-        namespace: input.namespace,
-        text: input.text,
-        metadata: input.metadata,
-      },
-    });
+    const body: Record<string, unknown> = {
+      user_id: input.userId,
+      namespace: input.namespace,
+      text: input.text,
+      metadata: input.metadata,
+    };
+    if (input.memory_type) body.memory_type = input.memory_type;
+    if (input.extract === true) body.extract = true;
+    return this.request<AddMemoryResponse>("/v1/memories", { method: "POST", body });
   }
 
   async search(input: SearchOptions): Promise<SearchResponse> {
@@ -130,6 +141,7 @@ export class MemoryNodeClient {
     if (pageSize) url.searchParams.set("page_size", String(pageSize));
     if (options.namespace) url.searchParams.set("namespace", options.namespace);
     if (options.userId) url.searchParams.set("user_id", options.userId);
+    if (options.memoryType) url.searchParams.set("memory_type", options.memoryType);
     if (options.startTime) url.searchParams.set("start_time", options.startTime);
     if (options.endTime) url.searchParams.set("end_time", options.endTime);
     if (options.metadata) url.searchParams.set("metadata", JSON.stringify(options.metadata));
@@ -218,6 +230,12 @@ export class MemoryNodeClient {
   }
 
   private toWireSearch(input: SearchOptions): SearchRequest {
+    const hasFilters =
+      input.metadata ||
+      input.startTime ||
+      input.endTime ||
+      input.memoryType !== undefined ||
+      input.filterMode;
     return {
       user_id: input.userId,
       namespace: input.namespace,
@@ -225,11 +243,15 @@ export class MemoryNodeClient {
       top_k: input.topK,
       page: input.page,
       page_size: input.pageSize,
-      filters: input.metadata || input.startTime || input.endTime
+      search_mode: input.searchMode,
+      min_score: input.minScore,
+      filters: hasFilters
         ? {
             metadata: input.metadata,
             start_time: input.startTime,
             end_time: input.endTime,
+            memory_type: input.memoryType,
+            filter_mode: input.filterMode,
           }
         : undefined,
     };
