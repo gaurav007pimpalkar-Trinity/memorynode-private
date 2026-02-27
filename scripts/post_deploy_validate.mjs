@@ -3,7 +3,7 @@
  * Post-deploy environment validation.
  *
  * Inputs:
- *   BASE_URL (or STAGING_BASE_URL / PROD_BASE_URL / CANARY_BASE_URL with TARGET_ENV)
+ *   BASE_URL (or STAGING_BASE_URL / PROD_BASE_URL with TARGET_ENV)
  *   API_KEY (or MEMORYNODE_API_KEY) OR MASTER_ADMIN_TOKEN / ADMIN_TOKEN
  *   Optional WORKSPACE_ID (used when creating API key from admin token)
  *
@@ -29,8 +29,6 @@ function targetPrefixes(target) {
     case "production":
     case "prod":
       return ["PROD", "PRODUCTION"];
-    case "canary":
-      return ["CANARY"];
     default:
       return [];
   }

@@ -1,5 +1,5 @@
 /**
- * Usage caps and rate limits. Plan limits come from @memorynode/shared (single source of truth).
+ * Usage caps and rate limits. Plan limits come from @memorynodeai/shared (single source of truth).
  * Enforcement still uses embeds count; embed_tokens/day is documented and exposed for future hard gate.
  */
 
@@ -8,7 +8,7 @@ import {
   RATE_LIMIT_RPM_DEFAULT,
   RATE_LIMIT_RPM_NEW_KEY,
   type UsageCaps as SharedUsageCaps,
-} from "@memorynode/shared";
+} from "@memorynodeai/shared";
 
 export type UsageCaps = SharedUsageCaps;
 

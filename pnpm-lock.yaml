@@ -50,7 +50,7 @@ importers:
 
   apps/api:
     dependencies:
-      '@memorynode/shared':
+      '@memorynodeai/shared':
         specifier: workspace:^
         version: link:../../packages/shared
       '@supabase/supabase-js':
@@ -103,8 +103,8 @@ importers:
 
   packages/sdk:
     dependencies:
-      '@memorynode/shared':
-        specifier: workspace:*
+      '@memorynodeai/shared':
+        specifier: workspace:^
         version: link:../shared
 
   packages/shared: {}

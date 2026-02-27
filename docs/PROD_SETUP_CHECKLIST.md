@@ -22,7 +22,6 @@ This checklist aligns with:
 - [ ] Confirm Worker name and env blocks exist in `apps/api/wrangler.toml`:
   - [ ] `memorynode-api` (default)
   - [ ] `env.staging`
-  - [ ] `env.canary`
   - [ ] `env.production`
 - [ ] Confirm Durable Object binding exists in each env:
   - [ ] `RATE_LIMIT_DO` bound to class `RateLimitDO`
@@ -84,7 +83,6 @@ Notes:
 ### A4. Recommended production routes/domains
 
 - [ ] API route: `api.memorynode.ai/*` -> Worker `memorynode-api` (production env)
-- [ ] Canary route (recommended): `api-canary.memorynode.ai/*` -> Worker canary env
 - [ ] Staging route: `api-staging.memorynode.ai/*` -> Worker staging env
 
 ## B) Supabase (production) setup
@@ -172,7 +170,6 @@ Recommended hostnames:
 
 - [ ] `api.memorynode.ai` -> Cloudflare Worker production route
 - [ ] `api-staging.memorynode.ai` -> Cloudflare Worker staging route
-- [ ] `api-canary.memorynode.ai` -> Cloudflare Worker canary route (recommended)
 - [ ] `app.memorynode.ai` -> dashboard hosting (see `docs/internal/DASHBOARD_DEPLOY.md`; Vercel or Cloudflare Pages)
 - [ ] `status.memorynode.ai` -> status page (see `docs/internal/STATUS_PAGE.md`); deploy via Vercel or Cloudflare Pages
 
@@ -198,13 +195,6 @@ DATABASE_URL=<staging-db-url> pnpm db:verify-schema
 DATABASE_URL=<staging-db-url> pnpm db:verify-rls
 pnpm deploy:staging
 TARGET_ENV=staging STAGING_BASE_URL=https://api-staging.memorynode.ai API_KEY=<staging-api-key> pnpm release:staging:validate
-```
-
-1. [ ] Canary deploy + validate:
-
-```bash
-pnpm deploy:canary
-TARGET_ENV=canary CANARY_BASE_URL=https://api-canary.memorynode.ai API_KEY=<canary-api-key> pnpm release:canary:validate
 ```
 
 1. [ ] Production DB + deploy + validate:

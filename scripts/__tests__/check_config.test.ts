@@ -104,26 +104,6 @@ describe("check_config", () => {
     expect(result.output).toContain("EMBEDDINGS_MODE=openai");
   });
 
-  it("passes in canary when billing is explicitly disabled", () => {
-    const result = runCheckConfig({
-      ...STRICT_BASE,
-      CHECK_ENV: "canary",
-      EMBEDDINGS_MODE: "stub",
-      OPENAI_API_KEY: undefined,
-      BILLING_WEBHOOKS_ENABLED: "0",
-      PAYU_MERCHANT_KEY: undefined,
-      PAYU_MERCHANT_SALT: undefined,
-      PAYU_WEBHOOK_SECRET: undefined,
-      PAYU_BASE_URL: undefined,
-      PAYU_VERIFY_URL: undefined,
-      PUBLIC_APP_URL: undefined,
-      PAYU_SUCCESS_PATH: undefined,
-      PAYU_CANCEL_PATH: undefined,
-    });
-    expect(result.status).toBe(0);
-    expect(result.output).toContain("Billing checks skipped");
-  });
-
   it("fails in production when billing is enabled but PayU vars are missing", () => {
     const result = runCheckConfig({
       ...STRICT_BASE,

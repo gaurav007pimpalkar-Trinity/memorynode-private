@@ -1,9 +1,13 @@
 {
-  "name": "@memorynode/sdk",
+  "name": "@memorynodeai/sdk",
   "version": "0.1.0",
+  "license": "MIT",
   "type": "module",
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
+  "files": [
+    "dist"
+  ],
   "scripts": {
     "lint": "eslint src tests",
     "typecheck": "tsc -b",
@@ -11,6 +15,6 @@
     "build": "tsc -b"
   },
   "dependencies": {
-    "@memorynode/shared": "workspace:*"
+    "@memorynodeai/shared": "workspace:^"
   }
 }

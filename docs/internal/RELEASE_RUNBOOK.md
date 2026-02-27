@@ -5,7 +5,7 @@ This is the single source of truth for staging and production releases.
 ## 1) Prerequisites
 
 ### Access
-- Cloudflare: permission to deploy Workers and edit Worker vars/secrets for `staging`, `canary`, and `production`.
+- Cloudflare: permission to deploy Workers and edit Worker vars/secrets for `staging` and `production`.
 - Supabase/Postgres: permission to run migrations on staging and production DBs.
 - PayU: permission to view merchant dashboard and verify API for webhook/callback troubleshooting.
 
@@ -132,26 +132,7 @@ Environment shortcut:
 TARGET_ENV=staging STAGING_BASE_URL=https://api-staging.memorynode.ai API_KEY=mn_live_xxx pnpm release:staging:validate
 ```
 
-## 5) Canary Strategy (Option A: dedicated canary env)
-
-Deploy canary:
-
-```bash
-pnpm deploy:canary
-```
-
-Validate canary:
-
-```bash
-TARGET_ENV=canary CANARY_BASE_URL=https://api-canary.memorynode.ai API_KEY=mn_live_xxx pnpm release:canary:validate
-```
-
-Canary usage:
-- Route only internal traffic to canary URL.
-- Hold canary for at least one observation window.
-- Promote to production only after canary validation is green and logs are clean.
-
-## 6) Deploy Production
+## 5) Deploy Production
 
 Bash:
 
@@ -187,7 +168,7 @@ Environment shortcut:
 TARGET_ENV=production PROD_BASE_URL=https://api.memorynode.ai API_KEY=mn_live_xxx pnpm release:prod:validate
 ```
 
-## 7) Rollback (executable)
+## 6) Rollback (executable)
 
 List production deployments:
 
@@ -217,7 +198,7 @@ DATABASE_URL=postgres://... pnpm db:migrate
 DATABASE_URL=postgres://... pnpm db:verify-schema
 ```
 
-## 8) Kill Switches
+## 7) Kill Switches
 
 Use these to reduce blast radius during incidents:
 - Disable reconciliation fetches:
@@ -235,7 +216,7 @@ pnpm --filter @memorynode/api deploy:production
 BASE_URL=https://api.memorynode.ai API_KEY=mn_live_xxx pnpm release:validate
 ```
 
-## 9) Dashboard Deploy
+## 8) Dashboard Deploy
 
 Dashboard (`apps/dashboard`) — workspace, API keys, memories. See `docs/internal/DASHBOARD_DEPLOY.md`.
 
@@ -244,7 +225,7 @@ pnpm --filter @memorynode/dashboard build
 # Deploy apps/dashboard/dist to Vercel or Cloudflare Pages (app.memorynode.ai)
 ```
 
-## 10) Status Page Deploy (optional)
+## 9) Status Page Deploy (optional)
 
 Status page (`apps/status`) shows operational status, SLO summary, and incident history. See `docs/internal/STATUS_PAGE.md`.
 
@@ -253,6 +234,6 @@ pnpm --filter @memorynode/status build
 # Deploy apps/status/dist to Vercel or Cloudflare Pages (status.memorynode.ai)
 ```
 
-## 11) Go/No-Go
+## 10) Go/No-Go
 
 Use `docs/internal/PROD_READY.md` as the release sign-off checklist.

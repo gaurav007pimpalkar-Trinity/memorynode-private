@@ -17,8 +17,8 @@ import type {
   SearchRequest,
   SearchResponse,
   UsageTodayResponse,
-} from "@memorynode/shared";
-import type { MemoryType, SearchMode } from "@memorynode/shared";
+} from "@memorynodeai/shared";
+import type { MemoryType, SearchMode } from "@memorynodeai/shared";
 
 export interface MemoryNodeClientOptions {
   baseUrl?: string;

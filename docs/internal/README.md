@@ -7,7 +7,7 @@
 - `packages/sdk` – lightweight TypeScript SDK.
 - `infra/sql` – SQL migrations and schema (apply in order).
 - `docs` – documentation.
-- `docs/internal/RELEASE_RUNBOOK.md` – canonical staging/canary/prod release, validation, rollback, and kill switches.
+- `docs/internal/RELEASE_RUNBOOK.md` – canonical staging/prod release, validation, rollback, and kill switches.
 - `docs/internal/PROD_READY.md` – final go/no-go checklist.
 - `docs/internal/ALERTS.md` – lightweight monitoring + alert thresholds and Cloudflare setup notes.
 - `docs/external/README.md` – product overview (what it is, who for, capabilities).
@@ -33,7 +33,7 @@ Follow this path depending on what you need:
 1. **`docs/internal/GO_LIVE_CHECKLIST.md`** — one-page must-do list before first prod traffic
 1. **`docs/PROD_SETUP_CHECKLIST.md`** — founder production input checklist (Cloudflare, Supabase, PayU, DNS)
 1. **`docs/PRODUCTION_REQUIREMENTS.md`** — production must use real services (no stubs); enforced by Worker and release gate
-1. **`docs/internal/RELEASE_RUNBOOK.md`** — canonical staging → canary → production deploy, validate, rollback
+1. **`docs/internal/RELEASE_RUNBOOK.md`** — canonical staging → production deploy, validate, rollback
 1. **`docs/internal/PROD_READY.md`** — final go/no-go checklist and what-you-need-to-do handoff
 
 ### Operating in production?
@@ -87,7 +87,7 @@ Internal DB fields may still store legacy values (`free`/`pro`) for backward com
 
 ## Canonical Ops Docs (Source of Truth)
 
-- `docs/internal/RELEASE_RUNBOOK.md` – canonical staging/canary/production deploy, validate, rollback, kill switches.
+- `docs/internal/RELEASE_RUNBOOK.md` – canonical staging/production deploy, validate, rollback, kill switches.
 - `docs/internal/PROD_READY.md` – canonical go/no-go checklist.
 - `docs/internal/BILLING_RUNBOOK.md` – PayU webhook operations, replay/reprocess, reconciliation behavior.
 - `docs/internal/OBSERVABILITY.md` – golden metrics, structured events, health checklist, SLOs.

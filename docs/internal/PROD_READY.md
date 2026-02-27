@@ -24,7 +24,6 @@ Release is allowed only when every item below is green.
 ## 4) Release Validation
 - [ ] Staging deploy completed (`pnpm deploy:staging`).
 - [ ] Staging validation passed (`BASE_URL=... API_KEY=... pnpm release:validate`).
-- [ ] Canary validation passed (`pnpm deploy:canary` + `pnpm release:canary:validate`) or low-risk prod path approved.
 - [ ] Production validation passed (`BASE_URL=... API_KEY=... pnpm release:validate`).
 
 ## 5) Abuse and Billing Reliability

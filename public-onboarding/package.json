@@ -1,0 +1,16 @@
+{
+  "name": "memorynode-quickstart",
+  "version": "1.0.0",
+  "description": "Minimal quickstart for MemoryNode — add and search memories with the official SDK.",
+  "private": false,
+  "type": "module",
+  "scripts": {
+    "start": "node index.mjs"
+  },
+  "dependencies": {
+    "@memorynodeai/sdk": "^0.1.0"
+  },
+  "engines": {
+    "node": ">=18"
+  }
+}

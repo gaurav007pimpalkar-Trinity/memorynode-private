@@ -3,13 +3,13 @@
  * Release/runtime config guard.
  * - Reads env vars from process.env
  * - Stage resolution: CHECK_ENV takes precedence, then DEPLOY_ENV, then ENVIRONMENT/NODE_ENV.
- * - Enforces strict requirements for staging/canary/production so release:gate fails early.
+ * - Enforces strict requirements for staging/production so release:gate fails early.
  * - Does not print secret values.
  */
 
 const env = process.env;
 
-const STRICT_STAGES = new Set(["staging", "canary", "production"]);
+const STRICT_STAGES = new Set(["staging", "production"]);
 const FALSE_VALUES = new Set(["0", "false", "no", "off"]);
 const placeholderPattern = /(changeme|replace_me|placeholder|xxxxx|<[^>]+>|your_[a-z0-9_]+|^tbd$|^todo$)/i;
 
@@ -17,7 +17,6 @@ function normalizeStage(raw) {
   const value = `${raw || ""}`.trim().toLowerCase();
   if (value === "prod" || value === "production") return "production";
   if (value === "staging") return "staging";
-  if (value === "canary") return "canary";
   if (value === "dev" || value === "development" || value === "local" || value === "test") return "development";
   return "";
 }
@@ -178,7 +177,7 @@ if (strictStage) {
   }
 } else {
   notes.push(
-    `[${stage}] Non-strict mode: set CHECK_ENV=staging|canary|production to enforce release-grade requirements.`,
+    `[${stage}] Non-strict mode: set CHECK_ENV=staging|production to enforce release-grade requirements.`,
   );
 }
 

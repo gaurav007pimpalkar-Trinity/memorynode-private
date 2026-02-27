@@ -23,9 +23,8 @@ Production vars: [ ] `ENVIRONMENT=production`, [ ] `EMBEDDINGS_MODE=openai`, [ ]
 
 ## 4. Deploy & validate (order matters)
 1. [ ] Staging: `pnpm deploy:staging` then `TARGET_ENV=staging STAGING_BASE_URL=... API_KEY=... pnpm release:staging:validate`
-2. [ ] (Optional) Canary: `pnpm deploy:canary` then canary validate.
-3. [ ] Production: `DEPLOY_ENV=production DEPLOY_CONFIRM=memorynode-prod pnpm deploy:prod`
-4. [ ] Production validate: `TARGET_ENV=production PROD_BASE_URL=https://api.memorynode.ai API_KEY=... pnpm release:prod:validate`
+2. [ ] Production: `DEPLOY_ENV=production DEPLOY_CONFIRM=memorynode-prod pnpm deploy:prod`
+3. [ ] Production validate: `TARGET_ENV=production PROD_BASE_URL=https://api.memorynode.ai API_KEY=... pnpm release:prod:validate`
 
 ## 5. Dashboard & security (before prod traffic)
 - [ ] Dashboard deployed (e.g. `app.memorynode.ai`).

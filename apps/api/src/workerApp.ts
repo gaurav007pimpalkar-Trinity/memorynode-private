@@ -8,7 +8,7 @@ import {
   MAX_TOPK,
   type UsageSnapshot,
 } from "./limits.js";
-import { getPlan } from "@memorynode/shared";
+import { getPlan } from "@memorynodeai/shared";
 import type { Env } from "./env.js";
 import { logger, redact } from "./logger.js";
 import { route, type HandlerDeps } from "./router.js";
