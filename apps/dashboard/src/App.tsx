@@ -231,6 +231,14 @@ export function App(): JSX.Element {
           <div className="muted small">Signed in as {userEmail}</div>
         </div>
         <div className="top-actions">
+          <a
+            href="https://github.com/gaurav007pimpalkar-Trinity/memorynode"
+            target="_blank"
+            rel="noopener noreferrer"
+            className="muted small"
+          >
+            Get started with the MemoryNode SDK
+          </a>
           <span className="muted small">Session active</span>
           <button className="ghost" onClick={async () => { await dashboardLogout(); await supabase.auth.signOut(); }}>
             Sign out

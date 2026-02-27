@@ -30,7 +30,7 @@ async function main() {
     text,
     metadata: { source: "memorynode-quickstart" },
   });
-  console.log("Added memory:", added?.id ?? "(see response above)");
+  console.log("Added memory:", added?.memory_id ?? "(see response above)");
 
   // Search for that memory
   const results = await client.search({

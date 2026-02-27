@@ -32,7 +32,7 @@ You use the **API** (with an API key) or the **TypeScript SDK**. The **dashboard
 
 ## How to get started
 
-Get from zero to your first stored and retrieved memory in a few minutes: **[Quickstart](./QUICKSTART.md)**.
+Get from zero to your first stored and retrieved memory in a few minutes: **[Quickstart](./QUICKSTART.md)**. SDK and source: **[MemoryNode SDK](https://github.com/gaurav007pimpalkar-Trinity/memorynode)**.
 
 ---
 
