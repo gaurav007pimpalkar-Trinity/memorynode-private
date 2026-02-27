@@ -20,6 +20,9 @@ import type {
 } from "@memorynodeai/shared";
 import type { MemoryType, SearchMode } from "@memorynodeai/shared";
 
+/** Re-export for consumers who want to type API errors without importing from @memorynodeai/shared. */
+export type { ApiError };
+
 export interface MemoryNodeClientOptions {
   baseUrl?: string;
   apiKey?: string;
@@ -59,6 +62,20 @@ export interface ListMemoriesOptions {
 }
 
 const DEFAULT_BASE_URL = "http://127.0.0.1:8787";
+
+/** Thrown when the API returns an error or when the client is misconfigured (e.g. missing API key). */
+export class MemoryNodeApiError extends Error implements ApiError {
+  readonly code: string;
+  readonly status?: number;
+
+  constructor(code: string, message: string, status?: number) {
+    super(message);
+    this.name = "MemoryNodeApiError";
+    this.code = code;
+    this.status = status;
+    Object.setPrototypeOf(this, MemoryNodeApiError.prototype);
+  }
+}
 
 export class MemoryNodeClient {
   private readonly baseUrl: string;
@@ -195,6 +212,11 @@ export class MemoryNodeClient {
   }
 
   private async request<T>(path: string, init: { method: string; body?: unknown; adminToken?: string }): Promise<T> {
+    const isPublicHealth = path === "/healthz" || path.startsWith("/healthz?");
+    if (!init.adminToken && this.apiKey === undefined && !isPublicHealth) {
+      throw new MemoryNodeApiError("MISSING_API_KEY", "API key is required for this request. Pass apiKey in constructor or use adminToken for admin endpoints.", undefined);
+    }
+
     const response = await fetch(new URL(path, this.baseUrl).toString(), {
       method: init.method,
       headers: this.buildHeaders(init.adminToken),
@@ -212,21 +234,20 @@ export class MemoryNodeClient {
     return (await response.json()) as T;
   }
 
-  private async toApiError(response: Response): Promise<ApiError & Error> {
-    let parsed: Partial<ApiError> = {};
+  private async toApiError(response: Response): Promise<MemoryNodeApiError> {
+    let body: { error?: { code?: string; message?: string } } = {};
     try {
-      parsed = (await response.json()) as Partial<ApiError>;
+      body = (await response.json()) as typeof body;
     } catch {
-      parsed = {};
+      // non-JSON or empty body
     }
 
-    const apiError: ApiError = {
-      code: parsed.code ?? "HTTP_ERROR",
-      message: parsed.message ?? response.statusText,
-      status: parsed.status ?? response.status,
-    };
+    const err = body?.error;
+    const code = typeof err?.code === "string" ? err.code : "HTTP_ERROR";
+    const message = typeof err?.message === "string" ? err.message : response.statusText;
+    const status = response.status;
 
-    return Object.assign(new Error(apiError.message), apiError);
+    return new MemoryNodeApiError(code, message, status);
   }
 
   private toWireSearch(input: SearchOptions): SearchRequest {

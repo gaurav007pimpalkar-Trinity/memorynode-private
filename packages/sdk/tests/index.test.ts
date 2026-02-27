@@ -97,4 +97,48 @@ describe("MemoryNodeClient request mapping", () => {
     const headers = (init as RequestInit).headers as Record<string, string>;
     expect(headers.accept).toBe("application/zip");
   });
+
+  it("parses API error shape { error: { code, message } } and throws MemoryNodeApiError", async () => {
+    fetchMock.mockReturnValue(
+      Promise.resolve({
+        ok: false,
+        status: 429,
+        statusText: "Too Many Requests",
+        json: async () => ({ error: { code: "rate_limited", message: "Rate limit exceeded" } }),
+      } as Response),
+    );
+
+    const client = new MemoryNodeClient({ apiKey: "test-key" });
+    const { MemoryNodeApiError } = await import("../src/index.js");
+
+    try {
+      await client.search({ userId: "u1", query: "x" });
+      expect.fail("should have thrown");
+    } catch (e) {
+      expect(e).toBeInstanceOf(MemoryNodeApiError);
+      expect((e as InstanceType<typeof MemoryNodeApiError>).code).toBe("rate_limited");
+      expect((e as InstanceType<typeof MemoryNodeApiError>).message).toBe("Rate limit exceeded");
+      expect((e as InstanceType<typeof MemoryNodeApiError>).status).toBe(429);
+    }
+  });
+
+  it("throws MISSING_API_KEY when no apiKey and calling protected endpoint", async () => {
+    const client = new MemoryNodeClient({ baseUrl: "https://api.example.com" });
+    const { MemoryNodeApiError } = await import("../src/index.js");
+
+    try {
+      await client.addMemory({ userId: "u1", text: "x" });
+      expect.fail("should have thrown");
+    } catch (e) {
+      expect(e).toBeInstanceOf(MemoryNodeApiError);
+      expect((e as InstanceType<typeof MemoryNodeApiError>).code).toBe("MISSING_API_KEY");
+    }
+  });
+
+  it("allows health() without apiKey", async () => {
+    fetchMock.mockReturnValue(okResponse({ status: "ok" }));
+    const client = new MemoryNodeClient();
+    await client.health();
+    expect(fetchMock).toHaveBeenCalled();
+  });
 });
