@@ -1193,6 +1193,21 @@ function getMethodNotAllowedForKnownPath(pathname: string, method: string): stri
 }
 
 export async function handleRequest(request: Request, env: Env): Promise<Response> {
+    const url = new URL(request.url);
+    const pathname = url.pathname.replace(/\/$/, "") || "/";
+    if (pathname === "/healthz") {
+      return new Response(JSON.stringify({ status: "ok" }), {
+        status: 200,
+        headers: { "content-type": "application/json" },
+      });
+    }
+    if (pathname === "/ready") {
+      return new Response(JSON.stringify({ status: "ready" }), {
+        status: 200,
+        headers: { "content-type": "application/json" },
+      });
+    }
+
     const started = Date.now();
     const requestId = resolveRequestId(request);
     setRequestIdForRequest(requestId);
@@ -1202,7 +1217,6 @@ export async function handleRequest(request: Request, env: Env): Promise<Respons
     const originAllowed = isOriginAllowed(origin, allowlist);
     const cors = makeCorsHeaders(origin, allowlist, request.headers);
     setCorsHeadersForRequest(cors);
-    const url = new URL(request.url);
     setSecurityHeadersForRequest(url.pathname);
     let supabase: SupabaseClient | null = null;
     const auditCtx: { workspaceId?: string; apiKeyId?: string } = {};
