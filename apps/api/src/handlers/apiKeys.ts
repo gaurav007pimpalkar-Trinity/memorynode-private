@@ -94,8 +94,19 @@ export function createApiKeysHandlers(
         .single();
 
       if (error || !data) {
+        const rawMessage = error?.message ?? "Failed to create api key";
+        const hint =
+          rawMessage.toLowerCase().includes("api key") || rawMessage.toLowerCase().includes("invalid")
+            ? " Check Worker env: SUPABASE_SERVICE_ROLE_KEY must be the service_role key (not anon). SUPABASE_URL must match the same project."
+            : "";
         return jsonResponse(
-          { error: { code: "DB_ERROR", message: error?.message ?? "Failed to create api key" } },
+          {
+            error: {
+              code: "DB_ERROR",
+              message: rawMessage + hint,
+              ...(error?.code && { details: { supabase_code: error.code } }),
+            },
+          },
           500,
           rate.headers,
         );

@@ -85,7 +85,10 @@ export async function deleteDashboardSession(
   await supabase.from("dashboard_sessions").delete().eq("id", sessionId);
 }
 
-/** Verify Supabase user JWT and return user id. Uses Auth API Get User. */
+const AUTH_VERIFY_MAX_RETRIES = 2;
+const AUTH_VERIFY_RETRY_DELAYS_MS = [500, 1000];
+
+/** Verify Supabase user JWT and return user id. Uses Auth API Get User. Retries on 5xx/429 or network error. */
 export async function verifySupabaseAccessToken(
   accessToken: string,
   env: Env,
@@ -98,11 +101,25 @@ export async function verifySupabaseAccessToken(
   if (env.SUPABASE_ANON_KEY) {
     headers.apikey = env.SUPABASE_ANON_KEY;
   }
-  const res = await fetch(url, { method: "GET", headers });
-  if (!res.ok) return null;
-  const data = (await res.json()) as { id?: string };
-  const userId = data?.id;
-  return userId ? { userId } : null;
+  for (let attempt = 0; attempt <= AUTH_VERIFY_MAX_RETRIES; attempt++) {
+    try {
+      const res = await fetch(url, { method: "GET", headers });
+      const retryable = res.status === 429 || res.status >= 500;
+      if (res.ok) {
+        const data = (await res.json()) as { id?: string };
+        const userId = data?.id;
+        return userId ? { userId } : null;
+      }
+      if (!retryable) return null;
+    } catch {
+      /* network error; retry */
+    }
+    if (attempt < AUTH_VERIFY_MAX_RETRIES) {
+      const delayMs = AUTH_VERIFY_RETRY_DELAYS_MS[attempt] ?? 1000;
+      await new Promise((r) => setTimeout(r, delayMs));
+    }
+  }
+  return null;
 }
 
 export function sessionCookieHeader(sessionId: string, maxAgeSec: number, secure = true): string {

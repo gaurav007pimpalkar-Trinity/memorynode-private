@@ -1151,7 +1151,7 @@ function resolveBodyLimit(method: string, path: string, env: Env): number {
 /** Known paths and allowed methods (Phase 2: 405 for wrong method). Single source of truth per IMPROVEMENT_PLAN.md. */
 const KNOWN_PATH_ALLOWED_METHODS: Array<{ test: (path: string) => boolean; allow: string }> = [
   { test: (p) => p === "/healthz", allow: "GET" },
-  { test: (p) => p === "/ready", allow: "GET" },
+  { test: (p) => p === "/ready" || p === "/ready/", allow: "GET" },
   { test: (p) => p === "/v1/memories", allow: "GET, POST" },
   { test: (p) => /^\/v1\/memories\/[^/]+$/.test(p), allow: "GET, DELETE" },
   { test: (p) => p === "/v1/search", allow: "POST" },
@@ -1242,6 +1242,31 @@ export async function handleRequest(request: Request, env: Env): Promise<Respons
         return response;
       }
 
+      // Deep readiness: /ready and /ready/ (normalized) — handle before 405 so path is always recognized
+      const pathNormalized = url.pathname.replace(/\/$/, "") || "/";
+      if (request.method === "GET" && pathNormalized === "/ready") {
+        supabase = createSupabaseClient(env);
+        const { error } = await supabase.from("app_settings").select("id").limit(1).maybeSingle();
+        if (error) {
+          response = jsonResponse(
+            {
+              status: "degraded",
+              db: "unavailable",
+              message: error.message ?? "Database check failed",
+            },
+            503,
+            { "Cache-Control": "no-store" },
+          );
+          return response;
+        }
+        response = jsonResponse(
+          { status: "ok", db: "connected" },
+          200,
+          { "Cache-Control": "no-store" },
+        );
+        return response;
+      }
+
       // 405 for known path + wrong method (before creating Supabase so no CONFIG_ERROR for wrong-method-only requests)
       const earlyAllow = getMethodNotAllowedForKnownPath(url.pathname, request.method);
       if (earlyAllow !== null) {
@@ -1271,25 +1296,6 @@ export async function handleRequest(request: Request, env: Env): Promise<Respons
       }
 
       supabase = createSupabaseClient(env);
-
-      // Deep readiness: DB connectivity (for LB/CF; no auth)
-      if (request.method === "GET" && url.pathname === "/ready") {
-        const { error } = await supabase.from("app_settings").select("id").limit(1).maybeSingle();
-        if (error) {
-          response = jsonResponse(
-            { status: "degraded", db: "unavailable", message: "Database check failed" },
-            503,
-            { "Cache-Control": "no-store" },
-          );
-          return response;
-        }
-        response = jsonResponse(
-          { status: "ok", db: "connected" },
-          200,
-          { "Cache-Control": "no-store" },
-        );
-        return response;
-      }
 
       // Dashboard session (Phase 0.2): create session from Supabase token, or logout
       if (request.method === "POST" && url.pathname === "/v1/dashboard/session") {
@@ -1524,7 +1530,7 @@ export { createSupabaseClient };
 
 /** Classify a URL pathname into a route group for golden-metrics aggregation. */
 function classifyRouteGroup(pathname: string): string {
-  if (pathname === "/healthz" || pathname === "/ready") return "health";
+  if (pathname === "/healthz" || pathname === "/ready" || pathname === "/ready/") return "health";
   if (pathname === "/v1/memories" || /^\/v1\/memories\/[^/]+$/.test(pathname)) return "memories";
   if (pathname === "/v1/search" || pathname === "/v1/search/history" || pathname === "/v1/search/replay") return "search";
   if (pathname === "/v1/context") return "context";
@@ -2314,6 +2320,40 @@ export function chunkText(text: string, chunkSize = 800, overlap = 100): string[
   return chunks;
 }
 
+const EMBED_MAX_RETRIES = 2;
+const EMBED_RETRY_DELAYS_MS = [500, 1000];
+
+/** Retry fetch on 5xx, 429, or network error. Does not retry on 4xx (except 429). */
+async function fetchWithRetry(
+  url: string,
+  init: RequestInit & { body: string },
+  maxRetries: number = EMBED_MAX_RETRIES,
+): Promise<Response> {
+  let lastError: unknown;
+  for (let attempt = 0; attempt <= maxRetries; attempt++) {
+    try {
+      const res = await fetch(url, { ...init, body: init.body });
+      const retryable = res.status === 429 || res.status >= 500;
+      if (!res.ok && !retryable) return res;
+      if (res.ok) return res;
+      lastError = new Error(`HTTP ${res.status}`);
+      if (attempt < maxRetries) {
+        const delayMs = EMBED_RETRY_DELAYS_MS[attempt] ?? 1000;
+        await new Promise((r) => setTimeout(r, delayMs));
+      }
+    } catch (err) {
+      lastError = err;
+      if (attempt < maxRetries) {
+        const delayMs = EMBED_RETRY_DELAYS_MS[attempt] ?? 1000;
+        await new Promise((r) => setTimeout(r, delayMs));
+      }
+      // On final attempt do not throw here; fall through and throw lastError below so both
+      // network and HTTP retryable paths use the same throw site and behavior.
+    }
+  }
+  throw lastError;
+}
+
 async function embedText(texts: string[], env: Env): Promise<number[][]> {
   const mode = (env.EMBEDDINGS_MODE || "openai").toLowerCase();
   if (mode === "stub") {
@@ -2325,17 +2365,21 @@ async function embedText(texts: string[], env: Env): Promise<number[][]> {
   }
 
   const embedStart = Date.now();
-  const response = await fetch("https://api.openai.com/v1/embeddings", {
-    method: "POST",
-    headers: {
-      "content-type": "application/json",
-      authorization: `Bearer ${env.OPENAI_API_KEY}`,
-    },
-    body: JSON.stringify({
-      model: "text-embedding-3-small",
-      input: texts,
-    }),
+  const body = JSON.stringify({
+    model: "text-embedding-3-small",
+    input: texts,
   });
+  const response = await fetchWithRetry(
+    "https://api.openai.com/v1/embeddings",
+    {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        authorization: `Bearer ${env.OPENAI_API_KEY}`,
+      },
+      body,
+    },
+  );
 
   if (!response.ok) {
     const embedLatency = Date.now() - embedStart;

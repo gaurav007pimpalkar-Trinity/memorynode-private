@@ -8,6 +8,7 @@
     "lint": "eslint src tests",
     "typecheck": "tsc -b",
     "test": "vitest run --root ../.. apps/api/tests",
+    "diagnose:workspace": "node scripts/diagnose_workspace_insert.mjs",
     "build": "pnpm exec wrangler deploy --env staging --dry-run",
     "deploy:staging": "pnpm exec wrangler deploy --env staging",
     "deploy:production": "pnpm exec wrangler deploy --env production"

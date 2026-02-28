@@ -49,4 +49,17 @@ describe("GET /ready (deep readiness)", () => {
     expect(json.status).toBe("ok");
     expect(json.db).toBe("connected");
   });
+
+  it("accepts /ready/ with trailing slash", async () => {
+    const env = {
+      ...baseEnv,
+      SUPABASE_MODE: "stub",
+      ENVIRONMENT: "dev",
+    } as unknown as FetchEnv;
+    const res = await api.fetch(new Request("http://localhost/ready/"), env);
+    const json = await res.json();
+    expect(res.status).toBe(200);
+    expect(json.status).toBe("ok");
+    expect(json.db).toBe("connected");
+  });
 });

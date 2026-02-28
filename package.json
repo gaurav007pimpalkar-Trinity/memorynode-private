@@ -35,6 +35,7 @@
     "migrations:list": "node scripts/migrations_list.mjs",
     "migrations:check": "node scripts/migrations_check.mjs",
     "db:migrate": "node scripts/db_migrate.mjs",
+    "db:migrate:verify": "node scripts/db_migrate_verify.mjs",
     "db:verify-rls": "node scripts/db_verify_rls.mjs",
     "db:verify-schema": "node scripts/db_verify_schema.mjs",
     "db:drift:test": "node scripts/db_migration_drift_test.mjs",
