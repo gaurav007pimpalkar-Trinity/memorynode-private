@@ -4,6 +4,18 @@ One-page reference for deploy, migrations, health checks, and escalation. Use th
 
 ---
 
+## Your steps (summary)
+
+1. Confirm **api.memorynode.ai** → Worker (Cloudflare Dashboard).
+2. Set **ALLOWED_ORIGINS** and **SUPABASE_ANON_KEY** on production Worker.
+3. Run **migrations** with production DB URL (`pnpm db:migrate` or `pnpm db:check`).
+4. **Deploy:** `DEPLOY_CONFIRM=memorynode-prod pnpm deploy:prod`.
+5. Verify **/healthz** and **/ready** return 200.
+6. Run **post-deploy smoke:** `BASE_URL=https://api.memorynode.ai pnpm prod:smoke`.
+7. Do **one manual E2E** (see `docs/E2E_CRITICAL_PATH.md`).
+
+---
+
 ## Pre-launch checklist (do once)
 
 - [ ] **Production API route**  
@@ -84,6 +96,8 @@ Migrations live in `infra/sql/` and are applied with `db_migrate.mjs`. **Run mig
   Exits 0 if up to date, 1 and lists missing files if not.
 
 The production deploy script (`deploy_prod.mjs`) runs `db:check` against the production DB before deploying the Worker. Ensure that URL is set correctly in the environment used for deploy.
+
+**CI:** `pnpm migrations:check` runs on every push and validates migration order and numbering; it does not apply migrations. Applying migrations is done only when you run `db:migrate` or `deploy:prod` with a DB URL.
 
 ---
 

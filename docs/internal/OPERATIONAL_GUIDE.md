@@ -132,7 +132,7 @@ These are signals that something may be wrong. They are not a full incident resp
 
 - **One decision at a time** — Decide the next single step: e.g. “roll back now,” “disable billing webhooks for now,” or “escalate to [person/team].” Then do that step and reassess. Avoid changing many things at once.
 
-- **Communicate simply** — If users or stakeholders need to know, keep messages short and factual: what’s affected, what you’re doing, and when you’ll update again. If you have a status page, use it.
+- **Communicate simply** — If users or stakeholders need to know, keep messages short and factual: what’s affected, what you’re doing, and when you’ll update again. Use email or in-app communication as needed.
 
 - **After the incident** — When the system is stable, you can do a proper review: what happened, what you did, and what to change (process, config, or code) so it doesn’t happen again. Your incident process doc describes severity levels and postmortem expectations; use it.
 

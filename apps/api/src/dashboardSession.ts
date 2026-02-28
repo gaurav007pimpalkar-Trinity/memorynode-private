@@ -5,6 +5,7 @@
 
 import type { SupabaseClient } from "@supabase/supabase-js";
 import type { Env } from "./env.js";
+import { withSupabaseQueryRetry } from "./supabaseRetry.js";
 
 export const DASHBOARD_SESSION_COOKIE = "mn_dash_session";
 export const SESSION_TTL_SEC = 15 * 60; // 15 min
@@ -39,11 +40,13 @@ export async function getDashboardSession(
 ): Promise<DashboardSession | null> {
   const sessionId = getDashboardSessionIdFromCookie(request);
   if (!sessionId) return null;
-  const { data, error } = await supabase
-    .from("dashboard_sessions")
-    .select("id, user_id, workspace_id, expires_at, csrf_token")
-    .eq("id", sessionId)
-    .maybeSingle();
+  const { data, error } = await withSupabaseQueryRetry(async () =>
+    supabase
+      .from("dashboard_sessions")
+      .select("id, user_id, workspace_id, expires_at, csrf_token")
+      .eq("id", sessionId)
+      .maybeSingle(),
+  );
   if (error || !data) return null;
   const expiresAt = (data as { expires_at?: string }).expires_at;
   if (!expiresAt || new Date(expiresAt).getTime() <= Date.now()) return null;
@@ -69,11 +72,13 @@ export async function createDashboardSession(
 ): Promise<{ sessionId: string; csrfToken: string }> {
   const expiresAt = new Date(Date.now() + ttlSec * 1000).toISOString();
   const csrfToken = randomCsrfToken();
-  const { data, error } = await supabase
-    .from("dashboard_sessions")
-    .insert({ user_id: userId, workspace_id: workspaceId, expires_at: expiresAt, csrf_token: csrfToken })
-    .select("id")
-    .single();
+  const { data, error } = await withSupabaseQueryRetry(async () =>
+    supabase
+      .from("dashboard_sessions")
+      .insert({ user_id: userId, workspace_id: workspaceId, expires_at: expiresAt, csrf_token: csrfToken })
+      .select("id")
+      .single(),
+  );
   if (error || !data) throw new Error("Failed to create dashboard session");
   return { sessionId: (data as { id: string }).id, csrfToken };
 }

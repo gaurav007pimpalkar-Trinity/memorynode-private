@@ -5,6 +5,7 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
 import type { Env } from "./env.js";
 import { createHttpError } from "./http.js";
+import { withSupabaseQueryRetry } from "./supabaseRetry.js";
 import { logger, redact } from "./logger.js";
 import { generateRequestId } from "./cors.js";
 import { getRateLimitMax } from "./limits.js";
@@ -65,7 +66,9 @@ export async function getApiKeySalt(
   supabase: SupabaseClient,
 ): Promise<{ salt: string; mismatchFatal: boolean }> {
   const envSalt = env.API_KEY_SALT || "";
-  const { data, error } = await supabase.from("app_settings").select("api_key_salt").limit(1).single();
+  const { data, error } = await withSupabaseQueryRetry(async () =>
+    supabase.from("app_settings").select("api_key_salt").limit(1).single(),
+  );
   const dbSalt = (data as { api_key_salt?: string } | null)?.api_key_salt ?? "";
   if (error && !envSalt && cachedSalt !== null) {
     return { salt: cachedSalt, mismatchFatal: false };
@@ -114,11 +117,13 @@ export async function authenticate(
         );
       }
     }
-    const { data: ws } = await supabase
-      .from("workspaces")
-      .select("plan, plan_status")
-      .eq("id", dashSession.workspaceId)
-      .maybeSingle();
+    const { data: ws } = await withSupabaseQueryRetry(async () =>
+      supabase
+        .from("workspaces")
+        .select("plan, plan_status")
+        .eq("id", dashSession.workspaceId)
+        .maybeSingle(),
+    );
     const planRaw = (ws as { plan?: string } | null)?.plan;
     const planStatusRaw = normalizePlanStatus((ws as { plan_status?: AuthContext["planStatus"] } | null)?.plan_status);
     const plan: AuthContext["plan"] = planRaw === "pro" || planRaw === "team" ? planRaw : "free";
@@ -155,12 +160,14 @@ export async function authenticate(
     throw createHttpError(500, "CONFIG_ERROR", "API key salt mismatch between env and database");
   }
   const hashed = await hashApiKey(rawKey, saltOutcome.salt);
-  const { data, error } = await supabase
-    .from("api_keys")
-    .select("id, workspace_id, created_at, workspaces(plan, plan_status)")
-    .eq("key_hash", hashed)
-    .is("revoked_at", null)
-    .single();
+  const { data, error } = await withSupabaseQueryRetry(async () =>
+    supabase
+      .from("api_keys")
+      .select("id, workspace_id, created_at, workspaces(plan, plan_status)")
+      .eq("key_hash", hashed)
+      .is("revoked_at", null)
+      .single(),
+  );
   const authMatched = !error && Boolean(data?.workspace_id);
   if ((env.AUTH_DEBUG ?? "").trim() === "1") {
     const errorCode = typeof (error as { code?: unknown } | null)?.code === "string"
@@ -173,7 +180,7 @@ export async function authenticate(
     });
   }
 
-  if (!authMatched) {
+  if (!authMatched || !data) {
     throw createHttpError(401, "UNAUTHORIZED", "Invalid API key");
   }
 
@@ -198,7 +205,7 @@ export async function authenticate(
   const planStatusRaw = normalizePlanStatus(workspace?.plan_status);
   const plan: AuthContext["plan"] = planRaw === "pro" || planRaw === "team" ? planRaw : "free";
 
-  const createdAt = (data as { created_at?: string } | null)?.created_at ?? null;
+  const createdAt = (data as { created_at?: string })?.created_at ?? null;
   const ctx: AuthContext = {
     workspaceId: data.workspace_id as string,
     keyHash: hashed,

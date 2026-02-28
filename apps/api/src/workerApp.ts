@@ -66,6 +66,7 @@ import {
   clearSessionCookieHeader,
   SESSION_TTL_SEC,
 } from "./dashboardSession.js";
+import { withSupabaseQueryRetry } from "./supabaseRetry.js";
 
 type MetadataFilter = Record<string, string | number | boolean>;
 
@@ -1246,13 +1247,16 @@ export async function handleRequest(request: Request, env: Env): Promise<Respons
       const pathNormalized = url.pathname.replace(/\/$/, "") || "/";
       if (request.method === "GET" && pathNormalized === "/ready") {
         supabase = createSupabaseClient(env);
-        const { error } = await supabase.from("app_settings").select("id").limit(1).maybeSingle();
+        const { error } = await withSupabaseQueryRetry(async () =>
+          supabase!.from("app_settings").select("id").limit(1).maybeSingle(),
+        );
         if (error) {
+          const errMsg = (error as { message?: string })?.message ?? "Database check failed";
           response = jsonResponse(
             {
               status: "degraded",
               db: "unavailable",
-              message: error.message ?? "Database check failed",
+              message: errMsg,
             },
             503,
             { "Cache-Control": "no-store" },
@@ -1566,7 +1570,7 @@ function createSupabaseClient(env: Env): SupabaseClient {
 }
 
 type StubRow = Record<string, unknown>;
-type StubFilter = { col: string; val: unknown; op: "eq" | "in" | "contains" | "gte" | "lte" };
+type StubFilter = { col: string; val: unknown; op: "eq" | "in" | "contains" | "gte" | "lte" | "lt" };
 
 let stubState: {
   db: {
@@ -1579,6 +1583,8 @@ let stubState: {
     app_settings: StubRow[];
     product_events: StubRow[];
     payu_webhook_events: StubRow[];
+    payu_transactions: StubRow[];
+    dashboard_sessions: StubRow[];
   };
   rawApiKeys: Map<string, { workspaceId: string }>;
 } | null = null;
@@ -1596,6 +1602,8 @@ function createStubSupabase(env: Env) {
         app_settings: [{ api_key_salt: env.API_KEY_SALT ?? "" }],
         product_events: [] as StubRow[],
         payu_webhook_events: [] as StubRow[],
+        payu_transactions: [] as StubRow[],
+        dashboard_sessions: [] as StubRow[],
       },
       rawApiKeys: new Map<string, { workspaceId: string }>(),
     };
@@ -1619,6 +1627,7 @@ function createStubSupabase(env: Env) {
         }
         if (f.op === "gte") return (r[f.col] as string) >= (f.val as string);
         if (f.op === "lte") return (r[f.col] as string) <= (f.val as string);
+        if (f.op === "lt") return (r[f.col] as string) < (f.val as string);
         return r[f.col] === f.val;
       }),
     );
@@ -1724,17 +1733,19 @@ function createStubSupabase(env: Env) {
     delete(opts?: { count?: "exact" }) {
       const deleteFilters = [...filters];
       let executed = false;
-      let result: { data: never[]; error: null; count: number | null } = {
+      let result: { data: StubRow[]; error: null; count: number | null } = {
         data: [],
         error: null,
         count: null,
       };
       const runDelete = () => {
         if (executed) return result;
-        const rows = applyFilters(db[table], deleteFilters);
-        db[table] = db[table].filter((r) => !rows.includes(r));
+        const rows = applyFilters(db[table as keyof typeof db] ?? [], deleteFilters);
+        const remaining = (db[table as keyof typeof db] ?? []).filter((r) => !rows.includes(r));
+        if (table in db) (db as Record<string, StubRow[]>)[table] = remaining;
         executed = true;
-        result = { data: [], error: null, count: opts?.count ? rows.length : null };
+        const deletedData = rows.map((r) => ({ id: (r as { id?: unknown }).id ?? null }));
+        result = { data: deletedData, error: null, count: opts?.count ? rows.length : null };
         return result;
       };
       const chain = {
@@ -1742,9 +1753,17 @@ function createStubSupabase(env: Env) {
           deleteFilters.push({ col, val, op: "eq" });
           return chain;
         },
+        lt(col: string, val: unknown) {
+          deleteFilters.push({ col, val, op: "lt" });
+          return chain;
+        },
         in(col: string, vals: unknown[]) {
           deleteFilters.push({ col, val: [...vals], op: "in" });
           return chain;
+        },
+        select(): Promise<{ data: StubRow[]; error: null }> {
+          const out = runDelete();
+          return Promise.resolve({ data: out.data, error: null });
         },
         then<TResult1 = typeof result, TResult2 = never>(
           onfulfilled?: ((value: typeof result) => TResult1 | PromiseLike<TResult1>) | null,

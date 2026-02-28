@@ -95,12 +95,6 @@ importers:
         specifier: ^6.4.1
         version: 6.4.1(@types/node@20.19.30)(yaml@2.8.2)
 
-  apps/status:
-    devDependencies:
-      vite:
-        specifier: ^6.4.1
-        version: 6.4.1(@types/node@20.19.30)(yaml@2.8.2)
-
   packages/sdk:
     dependencies:
       '@memorynodeai/shared':

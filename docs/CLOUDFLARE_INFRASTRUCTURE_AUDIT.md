@@ -128,7 +128,6 @@ www.memorynode.ai (CNAME) → Pages: memorynode-website.pages.dev
 | https://api.memorynode.ai/ready | 404 | See recommendations below |
 | https://api-staging.memorynode.ai/healthz | 200 | OK |
 | https://app.memorynode.ai | 200 | OK |
-| https://status.memorynode.ai | — | DNS not configured (non-existent domain) |
 | https://memorynode.ai, https://www.memorynode.ai | 200 / 301 | OK |
 | memorynode-api*.workers.dev/healthz | 200 | OK |
 | memorynode-website.pages.dev | 200 | OK |
@@ -137,7 +136,7 @@ www.memorynode.ai (CNAME) → Pages: memorynode-website.pages.dev
 ### 8.2 Follow-up recommendations (priority order) — executed
 
 1. **Ignore `/ready`** — Accepted. No change unless a load balancer or readiness probe requires it.
-2. **Ignore `status.memorynode.ai`** — Accepted. Defer DNS and status app until needed.
+2. **Status page** — Removed. The status app (`apps/status`) has been deleted from the repo.
 3. **Fix or delete the `memorynode` Pages project** — Script added; run locally to delete (see below).
 
 ### 8.3 Execute cleanup: memorynode Pages project

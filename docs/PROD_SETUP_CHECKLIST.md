@@ -171,7 +171,6 @@ Recommended hostnames:
 - [ ] `api.memorynode.ai` -> Cloudflare Worker production route
 - [ ] `api-staging.memorynode.ai` -> Cloudflare Worker staging route
 - [ ] `app.memorynode.ai` -> dashboard hosting (see `docs/internal/DASHBOARD_DEPLOY.md`; Vercel or Cloudflare Pages)
-- [ ] `status.memorynode.ai` -> status page (see `docs/internal/STATUS_PAGE.md`); deploy via Vercel or Cloudflare Pages
 
 Dashboard/API alignment:
 

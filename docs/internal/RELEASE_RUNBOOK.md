@@ -225,15 +225,6 @@ pnpm --filter @memorynode/dashboard build
 # Deploy apps/dashboard/dist to Vercel or Cloudflare Pages (app.memorynode.ai)
 ```
 
-## 9) Status Page Deploy (optional)
-
-Status page (`apps/status`) shows operational status, SLO summary, and incident history. See `docs/internal/STATUS_PAGE.md`.
-
-```bash
-pnpm --filter @memorynode/status build
-# Deploy apps/status/dist to Vercel or Cloudflare Pages (status.memorynode.ai)
-```
-
-## 10) Go/No-Go
+## 9) Go/No-Go
 
 Use `docs/internal/PROD_READY.md` as the release sign-off checklist.

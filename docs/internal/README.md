@@ -454,20 +454,6 @@ Tables/columns: `infra/sql/023_dashboard_sessions.sql`, `infra/sql/024_dashboard
 
 ---
 
-## Status page (merged from STATUS_PAGE.md)
-
-**URL:** Production `https://status.memorynode.ai`; local `pnpm --filter @memorynode/status dev` → http://localhost:5173.
-
-**Deploy (Vercel):** `cd apps/status && vercel --prod`; configure custom domain `status.memorynode.ai`.
-
-**Deploy (Cloudflare Pages):** Build: `pnpm --filter @memorynode/status build`; output `apps/status/dist`; custom domain `status.memorynode.ai`.
-
-**Updating incident history:** Edit `apps/status/public/incidents.json` and redeploy. Entry shape: `{ "date": "YYYY-MM-DD", "title": "...", "severity": "S0|S1|S2|S3", "status": "resolved|investigating", "description": "..." }`.
-
-**Health check:** Status page fetches `https://api.memorynode.ai/healthz`. Ensure CORS allows the status domain if needed.
-
----
-
 ## Identity and tenancy (merged from IDENTITY_TENANCY.md)
 
 **Auth:** Supabase Auth (email magic link + OAuth). **Mapping:** Auth user → workspace membership (`workspace_members`) → API keys scoped to workspace.

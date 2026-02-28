@@ -1,6 +1,6 @@
 # MemoryNode Incident Process
 
-How we detect, triage, communicate, and resolve incidents. Linked from status page and Trust entry point.
+How we detect, triage, communicate, and resolve incidents. Linked from Trust entry point.
 
 ---
 
@@ -46,7 +46,7 @@ How we detect, triage, communicate, and resolve incidents. Linked from status pa
 ## Communication
 
 - **Internal:** Slack/email to on-call and stakeholders.
-- **External:** Update status page (see `docs/internal/STATUS_PAGE.md`). For S0/S1, post incident start and resolution.
+- **External:** Communicate to users (email, in-app, etc.). For S0/S1, post incident start and resolution.
 
 ---
 
@@ -63,7 +63,7 @@ How we detect, triage, communicate, and resolve incidents. Linked from status pa
 When the **28-day rolling** error budget is exhausted (see `docs/OBSERVABILITY.md` § SLO definitions):
 
 1. **Freeze** non-essential releases; focus on reliability.
-2. **Communicate** to stakeholders (e.g. status page, email).
+2. **Communicate** to stakeholders (e.g. email, in-app notification).
 3. **Root-cause** the burn; add or tighten mitigations.
 4. **Resume** normal release cadence only after budget recovers or policy exception.
 

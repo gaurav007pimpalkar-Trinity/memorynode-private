@@ -82,14 +82,14 @@
 | Eval sets + run eval | Implemented | Router + handlers; **eval handler ~3% coverage**—high risk. |
 | Admin: webhook reprocess, session cleanup, memory hygiene | Implemented | Admin routes; **admin handler ~19% coverage**. |
 | Health / readiness | Implemented | `/healthz`, `/ready` (DB check). |
-| Status page | Referenced | `status.memorynode.ai` in docs; **DNS not configured** (audit doc). |
+| Status page | Removed | Status app deleted; no status page in repo. |
 
 ### 2.2 Partial / Stubbed / Broken / Dead
 
 - **Eval:** Implemented but barely tested (3% coverage in eval.ts); regression risk.
 - **Admin:** Low coverage (19%); critical for operations.
 - **Dashboard session flow:** Low coverage (dashboardSession.ts 15%); CSRF and cookie logic need more tests.
-- **Status page:** Documented but status.memorynode.ai has no DNS (audit).
+- **Status page:** Removed (app deleted).
 - **memorynode Pages project:** Audit reports 522 (origin unreachable); second Pages project may be redundant if dashboard is on app.memorynode.ai elsewhere.
 - **worker.memorynode.ai:** CNAME to gaurav007pimpalkar.workers.dev; audit flags as "possible non-existent Worker".
 
@@ -158,9 +158,9 @@
 | **Architecture** | 6 | Coherent single-Worker + Supabase design; no queues/cron in Worker; manual ops for maintenance. |
 | **Security** | 6 | API key hash, RLS, CSRF, webhook signature, admin token; session and admin paths need more tests; single admin token. |
 | **Scalability** | 5 | Worker scales with CF; DB and OpenAI are limits; no horizontal job queue. |
-| **Observability** | 5 | Health/ready, structured logs, audit table; no APM/traces; status page DNS missing. |
+| **Observability** | 5 | Health/ready, structured logs, audit table; no APM/traces. |
 | **DevOps maturity** | 5 | Scripts for deploy, migrate, smoke, gates; migrations manual; no automated staging deploy or migration run. |
-| **Product completeness** | 6 | Core memory/search/billing/dashboard present; eval and status page incomplete or unexposed. |
+| **Product completeness** | 6 | Core memory/search/billing/dashboard present; eval incomplete or unexposed. |
 
 **Overall (brutal):** **5.5/10** — Usable for early adopters with operational care; not yet "investor-grade" production without addressing risks below.
 
@@ -170,7 +170,7 @@
 
 ### 6.1 Is the product truly production-ready?
 
-**Not fully.** Core flows (sign up, workspace, API keys, memories, search, usage, PayU billing) are implemented and tested to a reasonable level. However: **(1)** Production API route for `api.memorynode.ai` is unclear (Worker "memorynode-api" reported with no zone route). **(2)** Migrations are manual and not run as part of deploy. **(3)** Critical operational endpoints (admin, eval) and dashboard session have low test coverage. **(4)** No retries for OpenAI/Supabase; single points of failure. **(5)** Status page and one Pages project are broken or unconfigured.
+**Not fully.** Core flows (sign up, workspace, API keys, memories, search, usage, PayU billing) are implemented and tested to a reasonable level. However: **(1)** Production API route for `api.memorynode.ai` is unclear (Worker "memorynode-api" reported with no zone route). **(2)** Migrations are manual and not run as part of deploy. **(3)** Critical operational endpoints (admin, eval) and dashboard session have low test coverage. **(4)** No retries for OpenAI/Supabase; single points of failure. **(5)** One Pages project is broken or unconfigured.
 
 ### 6.2 Can we confidently sell this?
 
@@ -182,7 +182,7 @@
 2. **Data loss / consistency** — No automated migrations; wrong order or missed run can leave schema/RLS out of sync. PayU webhook idempotency is present but admin/eval code paths are under-tested.
 3. **Security** — Single MASTER_ADMIN_TOKEN; dashboard session and admin paths under-tested; API key salt rotation is manual and error-prone.
 4. **Scaling / availability** — No retry for OpenAI or Supabase; DB or OpenAI blips cause immediate user-facing errors. No queue for heavy or async work.
-5. **Customer trust** — Status page missing (DNS); incomplete or broken Pages/worker records in audit; billing depends on correct PayU and webhook config—misconfiguration leads to wrong plan or failed checkout.
+5. **Customer trust** — Incomplete or broken Pages/worker records in audit; billing depends on correct PayU and webhook config—misconfiguration leads to wrong plan or failed checkout.
 
 ### 6.4 What must be fixed before scale?
 
@@ -190,7 +190,7 @@
 - Run migrations as part of release (or mandatory pre-deploy step) and add a migration check against staging.
 - Add retry/backoff for OpenAI and critical Supabase calls (at least for embeddings and session/workspace lookups).
 - Raise test coverage for admin, eval, and dashboard session (target >70% on critical paths).
-- Define and implement status page (or remove from promises) and clean up unused/broken Cloudflare resources (Pages/worker).
+- Clean up unused/broken Cloudflare resources (Pages/worker).
 - Document runbooks for: deploy, migrate, webhook reprocess, session cleanup, memory hygiene, and incident response.
 
 ### 6.5 If you joined as CTO tomorrow
@@ -200,13 +200,13 @@
 - Verify production routing (api.memorynode.ai → which Worker) and fix if wrong; ensure `/ready` is live.
 - Run full regression (sign up → workspace → key → memory → search → usage → billing) on staging and prod.
 - Add retry (e.g. 1–2 retries with backoff) for OpenAI embeddings and, if feasible, Supabase in auth/session path.
-- Fix or remove broken DNS/Pages/worker (status.memorynode.ai, memorynode Pages 522, worker.memorynode.ai).
+- Fix or remove broken DNS/Pages/worker (memorynode Pages 522, worker.memorynode.ai).
 
 **Next 30 days**
 
 - Automate migration run (e.g. in release pipeline or mandatory pre-deploy step) and add staging migration verification in CI.
 - Increase coverage for admin, eval, and dashboard session; add at least one E2E that covers dashboard login → API key → memory → search.
-- Introduce a simple status/health page (or redirect) and document it.
+- Document health/ready endpoints for monitoring.
 - Document and test rollback and webhook-reprocess/session-cleanup runbooks.
 
 **Next 90 days**

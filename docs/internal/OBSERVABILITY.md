@@ -138,7 +138,7 @@ Single dashboard for on-call. Open this view in **<2 minutes** to assess product
 
 ## 4) SLO Definitions (Appendix A — Explicit Math)
 
-All SLOs use a **28-day rolling** window unless otherwise stated. Status page and internal dashboards use these definitions.
+All SLOs use a **28-day rolling** window unless otherwise stated. Internal dashboards use these definitions.
 
 | SLO | Definition (exact) |
 | --- | --- |
