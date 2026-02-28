@@ -11,7 +11,8 @@
     "diagnose:workspace": "node scripts/diagnose_workspace_insert.mjs",
     "build": "pnpm exec wrangler deploy --env staging --dry-run",
     "deploy:staging": "pnpm exec wrangler deploy --env staging",
-    "deploy:production": "pnpm exec wrangler deploy --env production"
+    "deploy:production": "pnpm exec wrangler deploy --env production",
+    "deploy:prod": "node scripts/deploy_prod_with_version.mjs"
   },
   "dependencies": {
     "@memorynodeai/shared": "workspace:^",

@@ -39,6 +39,9 @@ RATE_LIMIT_WINDOW_MS = "60000"
 
 [env.production]
 name = "memorynode-api"
+routes = [
+  { pattern = "api.memorynode.ai/*", zone_name = "memorynode.ai" }
+]
 [env.production.durable_objects]
 bindings = [
   { name = "RATE_LIMIT_DO", class_name = "RateLimitDO" }
