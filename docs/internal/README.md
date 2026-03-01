@@ -282,7 +282,7 @@ It checks `/healthz`, validates authenticated usage/search/context paths, and ve
    - `MASTER_ADMIN_TOKEN`
    - `EMBEDDINGS_MODE` (`openai` or `stub`; use `stub` for local dev to avoid OpenAI calls)
 
-Migration manifest (CI-checked): `MIGRATIONS_TOTAL=29; MIGRATIONS_LATEST=027_smart_memory_upgrade.sql`
+Migration manifest (CI-checked): `MIGRATIONS_TOTAL=31; MIGRATIONS_LATEST=029_memory_recency_decay.sql`
 
 ## Admin & Bootstrap
 - Admin endpoints require header `x-admin-token: $MASTER_ADMIN_TOKEN`.

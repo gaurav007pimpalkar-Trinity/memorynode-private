@@ -1855,9 +1855,23 @@ function createStubSupabase(env: Env) {
     update(values: Record<string, unknown>) {
       return {
         eq(col: string, val: unknown) {
-          const rows = applyFilters(db[table], filters.concat({ col, val, op: "eq" }));
-          rows.forEach((r) => Object.assign(r, values));
-          return { data: rows, error: null };
+          const withEq = filters.concat({ col, val, op: "eq" });
+          return {
+            in(col2: string, vals: unknown[]) {
+              const withIn = withEq.concat({ col: col2, val: vals, op: "in" });
+              const rows = applyFilters(db[table], withIn);
+              rows.forEach((r) => Object.assign(r, values));
+              return { data: rows, error: null };
+            },
+            then<TResult1 = unknown, TResult2 = never>(
+              onfulfilled?: ((value: { data: StubRow[]; error: null }) => TResult1 | PromiseLike<TResult1>) | null,
+              onrejected?: ((reason: unknown) => TResult2 | PromiseLike<TResult2>) | null,
+            ) {
+              const rows = applyFilters(db[table], withEq);
+              rows.forEach((r) => Object.assign(r, values));
+              return Promise.resolve({ data: rows, error: null }).then(onfulfilled, onrejected);
+            },
+          };
         },
       };
     },

@@ -88,6 +88,11 @@ function makeSupabase(store: ReturnType<typeof makeStore>) {
           return delBuilder;
         },
         select: () => builder,
+        update: (_data: Record<string, unknown>) => ({
+          eq: (_c: string, _v: unknown) => ({
+            in: () => Promise.resolve({ data: null, error: null }),
+          }),
+        }),
         eq: (col: string, val: any) => {
           builder.filters.push({ col, val });
           return builder;

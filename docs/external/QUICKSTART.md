@@ -48,4 +48,4 @@ curl -X POST "https://api.memorynode.ai/v1/search" \
 
 For full request and response shapes, see [API usage](./API_USAGE.md).
 
-<!-- Migration manifest (CI-checked): MIGRATIONS_TOTAL=29; MIGRATIONS_LATEST=027_smart_memory_upgrade.sql -->
+<!-- Migration manifest (CI-checked): MIGRATIONS_TOTAL=31; MIGRATIONS_LATEST=029_memory_recency_decay.sql -->
