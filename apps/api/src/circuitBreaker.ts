@@ -69,7 +69,7 @@ export function recordFailure(name: CircuitName): void {
   const now = Date.now();
   if (s.failures >= CIRCUIT_BREAKER_FAILURE_THRESHOLD) {
     s.openUntil = now + CIRCUIT_BREAKER_OPEN_MS;
-    logger.warn({
+    logger.info({
       event: "circuit_breaker_open",
       circuit: name,
       failures: s.failures,
