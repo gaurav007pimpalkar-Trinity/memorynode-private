@@ -77,7 +77,7 @@ import {
   EMBED_REQUEST_TIMEOUT_MS,
   PAYU_VERIFY_TIMEOUT_MS,
 } from "./resilienceConstants.js";
-import { withCircuitBreaker, type CircuitName } from "./circuitBreaker.js";
+import { withCircuitBreaker } from "./circuitBreaker.js";
 
 type MetadataFilter = Record<string, string | number | boolean>;
 

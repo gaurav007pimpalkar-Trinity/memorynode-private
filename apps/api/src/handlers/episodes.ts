@@ -35,6 +35,8 @@ export function createEpisodeHandlers(
   ) => Promise<Response>;
 } {
   return {
+    // requestId required by RouterHandlers but not used in this handler
+    /* eslint-disable-next-line @typescript-eslint/no-unused-vars */
     async handleCreateEpisode(request, env, supabase, auditCtx, _requestId = "", deps?) {
       const d = deps ?? defaultDeps;
       const { jsonResponse } = d;
