@@ -402,6 +402,38 @@ paths:
                 required:
                   - status
                   - version
+  /v1/health:
+    get:
+      summary: Health check (versioned)
+      description: Returns service health and version. Same response as /healthz. No auth required. Prefer this for API
+        clients that version endpoints.
+      tags:
+        - Health
+      responses:
+        "200":
+          description: Service healthy
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status:
+                    type: string
+                    enum:
+                      - ok
+                  version:
+                    type: string
+                  build_version:
+                    type: string
+                  stage:
+                    type: string
+                  git_sha:
+                    type: string
+                  embedding_model:
+                    type: string
+                required:
+                  - status
+                  - version
   /ready:
     get:
       summary: Readiness check
