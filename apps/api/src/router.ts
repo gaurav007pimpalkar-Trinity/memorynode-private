@@ -219,6 +219,21 @@ export interface RouterHandlers {
     requestId: string,
     deps: HandlerDeps,
   ) => Promise<Response>;
+  handleCreateEpisode: (
+    request: Request,
+    env: Env,
+    supabase: SupabaseClient,
+    auditCtx: AuditCtx,
+    requestId: string,
+    deps: HandlerDeps,
+  ) => Promise<Response>;
+  handleListEpisodes: (
+    request: Request,
+    env: Env,
+    supabase: SupabaseClient,
+    auditCtx: AuditCtx,
+    deps: HandlerDeps,
+  ) => Promise<Response>;
 }
 
 /** Injected per-request deps (e.g. bound jsonResponse). Passed to every handler. */
@@ -362,6 +377,14 @@ export async function route(
   }
   if (request.method === "POST" && url.pathname === "/v1/eval/run") {
     return handlers.handleRunEval(request, env, supabase, auditCtx, requestId, handlerDeps);
+  }
+
+  if (request.method === "POST" && url.pathname === "/v1/episodes") {
+    return handlers.handleCreateEpisode(request, env, supabase, auditCtx, requestId, handlerDeps);
+  }
+
+  if (request.method === "GET" && url.pathname === "/v1/episodes") {
+    return handlers.handleListEpisodes(request, env, supabase, auditCtx, handlerDeps);
   }
 
   return null;

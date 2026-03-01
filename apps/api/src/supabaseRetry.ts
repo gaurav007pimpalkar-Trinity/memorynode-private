@@ -3,8 +3,10 @@
  * Use for critical path: auth salt lookup, session read/write, /ready probe.
  */
 
-const DEFAULT_MAX_RETRIES = 2;
-const DEFAULT_DELAYS_MS = [300, 700];
+import { RETRY_MAX_ATTEMPTS, SUPABASE_RETRY_DELAYS_MS } from "./resilienceConstants.js";
+
+const DEFAULT_MAX_RETRIES = RETRY_MAX_ATTEMPTS;
+const DEFAULT_DELAYS_MS = SUPABASE_RETRY_DELAYS_MS;
 
 function isRetryable(err: unknown): boolean {
   const msg = typeof (err as Error)?.message === "string" ? (err as Error).message.toLowerCase() : "";

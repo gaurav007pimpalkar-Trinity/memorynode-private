@@ -10,6 +10,7 @@ import {
 } from "./limits.js";
 import { getPlan } from "@memorynodeai/shared";
 import type { Env } from "./env.js";
+import { getEnvironmentStage, validateStubModes, validateRateLimitConfig } from "./env.js";
 import { logger, redact } from "./logger.js";
 import { route, type HandlerDeps } from "./router.js";
 import { createHttpError, isApiError } from "./http.js";
@@ -56,6 +57,7 @@ import { createImportHandlers, type ImportHandlerDeps, type ImportMode } from ".
 import { createWorkspacesHandlers, type WorkspacesHandlerDeps } from "./handlers/workspaces.js";
 import { createApiKeysHandlers, type ApiKeysHandlerDeps } from "./handlers/apiKeys.js";
 import { createEvalHandlers, type EvalHandlerDeps } from "./handlers/eval.js";
+import { createEpisodeHandlers } from "./handlers/episodes.js";
 import {
   createDashboardSession,
   deleteDashboardSession,
@@ -67,6 +69,15 @@ import {
   SESSION_TTL_SEC,
 } from "./dashboardSession.js";
 import { withSupabaseQueryRetry } from "./supabaseRetry.js";
+import {
+  RETRY_MAX_ATTEMPTS,
+  SUPABASE_RETRY_DELAYS_MS,
+  OPENAI_EMBED_RETRY_DELAYS_MS,
+  PAYU_VERIFY_RETRY_DELAYS_MS,
+  EMBED_REQUEST_TIMEOUT_MS,
+  PAYU_VERIFY_TIMEOUT_MS,
+} from "./resilienceConstants.js";
+import { withCircuitBreaker, type CircuitName } from "./circuitBreaker.js";
 
 type MetadataFilter = Record<string, string | number | boolean>;
 
@@ -172,7 +183,6 @@ const DEFAULT_CANCEL_PATH = "/settings/billing?status=canceled";
 const DEFAULT_PAYU_CURRENCY = "INR";
 const DEFAULT_PAYU_PRODUCT_INFO = "MemoryNode Platform";
 const DEFAULT_PAYU_VERIFY_URL = "https://info.payu.in/merchant/postservice?form=2";
-const DEFAULT_PAYU_VERIFY_TIMEOUT_MS = 10_000;
 const DEFAULT_WEBHOOK_REPROCESS_LIMIT = 50;
 
 const ENTITLEMENT_DURATION_DAYS: Record<string, number | null> = {
@@ -780,8 +790,8 @@ function resolvePayUVerifyUrl(env: Env): string {
 }
 
 function resolvePayUVerifyTimeoutMs(env: Env): number {
-  const parsed = Number(env.PAYU_VERIFY_TIMEOUT_MS ?? DEFAULT_PAYU_VERIFY_TIMEOUT_MS);
-  if (!Number.isFinite(parsed) || parsed <= 0) return DEFAULT_PAYU_VERIFY_TIMEOUT_MS;
+  const parsed = Number(env.PAYU_VERIFY_TIMEOUT_MS ?? PAYU_VERIFY_TIMEOUT_MS);
+  if (!Number.isFinite(parsed) || parsed <= 0) return PAYU_VERIFY_TIMEOUT_MS;
   return Math.min(30_000, Math.max(1_000, Math.floor(parsed)));
 }
 
@@ -808,64 +818,87 @@ async function verifyPayUTransactionViaApi(
     hash: verifyHash,
   });
 
-  const controller = new AbortController();
-  const timeout = setTimeout(() => controller.abort(), resolvePayUVerifyTimeoutMs(env));
-  let response: Response;
-  try {
-    response = await fetch(resolvePayUVerifyUrl(env), {
-      method: "POST",
-      headers: { "content-type": "application/x-www-form-urlencoded" },
-      body,
-      signal: controller.signal,
-    });
-  } catch (err) {
-    const message = redact((err as Error)?.message, "message");
-    throw createHttpError(502, "VERIFY_API_UNAVAILABLE", `PayU verify API unavailable: ${message}`);
-  } finally {
+  const maxAttempts = RETRY_MAX_ATTEMPTS;
+  const delaysMs = PAYU_VERIFY_RETRY_DELAYS_MS;
+  let lastError: unknown;
+  for (let attempt = 0; attempt <= maxAttempts; attempt++) {
+    if (attempt > 0) {
+      logger.info({
+        event: "payu_verify_retry",
+        attempt,
+        txn_id: txn.txn_id,
+        max_attempts: maxAttempts + 1,
+      });
+      await new Promise((r) => setTimeout(r, delaysMs[attempt - 1] ?? 500));
+    }
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), resolvePayUVerifyTimeoutMs(env));
+    let response: Response;
+    try {
+      response = await fetch(resolvePayUVerifyUrl(env), {
+        method: "POST",
+        headers: { "content-type": "application/x-www-form-urlencoded" },
+        body,
+        signal: controller.signal,
+      });
+    } catch (err) {
+      clearTimeout(timeout);
+      lastError = err;
+      if (attempt === maxAttempts) {
+        const message = redact((err as Error)?.message, "message");
+        throw createHttpError(502, "VERIFY_API_UNAVAILABLE", `PayU verify API unavailable: ${message}`);
+      }
+      continue;
+    }
     clearTimeout(timeout);
-  }
 
-  if (!response.ok) {
-    throw createHttpError(502, "VERIFY_API_UNAVAILABLE", `PayU verify API failed with status ${response.status}`);
-  }
+    if (!response.ok) {
+      lastError = new Error(`HTTP ${response.status}`);
+      if (attempt === maxAttempts) {
+        throw createHttpError(502, "VERIFY_API_UNAVAILABLE", `PayU verify API failed with status ${response.status}`);
+      }
+      continue;
+    }
 
-  let payload: Record<string, unknown>;
-  try {
-    payload = (await response.json()) as Record<string, unknown>;
-  } catch {
-    throw createHttpError(502, "VERIFY_API_BAD_RESPONSE", "PayU verify API returned non-JSON payload");
-  }
+    let payload: Record<string, unknown>;
+    try {
+      payload = (await response.json()) as Record<string, unknown>;
+    } catch {
+      throw createHttpError(502, "VERIFY_API_BAD_RESPONSE", "PayU verify API returned non-JSON payload");
+    }
 
-  const details = parsePayUVerifyTransactionDetails(payload, txn.txn_id);
-  if (!details) {
-    throw createHttpError(502, "VERIFY_API_BAD_RESPONSE", "PayU verify response missing transaction_details entry");
-  }
+    const details = parsePayUVerifyTransactionDetails(payload, txn.txn_id);
+    if (!details) {
+      throw createHttpError(502, "VERIFY_API_BAD_RESPONSE", "PayU verify response missing transaction_details entry");
+    }
 
-  const verifyTxnId = asNonEmptyString(details.txnid) ?? txn.txn_id;
-  const amount = formatAmountStrict(details.amount ?? details.amt ?? details.net_amount_debit);
-  const currency = normalizeCurrency(asNonEmptyString(details.currency) ?? txn.currency);
-  const paymentId =
-    asNonEmptyString(details.mihpayid) ??
-    asNonEmptyString(details.payuMoneyId) ??
-    asNonEmptyString(details.payment_id) ??
-    null;
-  const statusRaw =
-    asNonEmptyString(details.unmappedstatus) ??
-    asNonEmptyString(details.status) ??
-    asNonEmptyString(details.field9) ??
-    "failure";
-  const status = normalizePayUStatus(statusRaw);
-  const approved = status === "success";
-  return {
-    ok: approved && verifyTxnId === txn.txn_id,
-    status,
-    statusRaw,
-    txnId: verifyTxnId,
-    paymentId,
-    amount,
-    currency,
-    payload,
-  };
+    const verifyTxnId = asNonEmptyString(details.txnid) ?? txn.txn_id;
+    const amount = formatAmountStrict(details.amount ?? details.amt ?? details.net_amount_debit);
+    const currency = normalizeCurrency(asNonEmptyString(details.currency) ?? txn.currency);
+    const paymentId =
+      asNonEmptyString(details.mihpayid) ??
+      asNonEmptyString(details.payuMoneyId) ??
+      asNonEmptyString(details.payment_id) ??
+      null;
+    const statusRaw =
+      asNonEmptyString(details.unmappedstatus) ??
+      asNonEmptyString(details.status) ??
+      asNonEmptyString(details.field9) ??
+      "failure";
+    const status = normalizePayUStatus(statusRaw);
+    const approved = status === "success";
+    return {
+      ok: approved && verifyTxnId === txn.txn_id,
+      status,
+      statusRaw,
+      txnId: verifyTxnId,
+      paymentId,
+      amount,
+      currency,
+      payload,
+    };
+  }
+  throw lastError;
 }
 
 async function upsertWorkspaceEntitlementFromTransaction(
@@ -1178,6 +1211,7 @@ const KNOWN_PATH_ALLOWED_METHODS: Array<{ test: (path: string) => boolean; allow
   { test: (p) => p === "/v1/eval/sets", allow: "GET, POST" },
   { test: (p) => /^\/v1\/eval\/sets\/[^/]+\/items$/.test(p), allow: "POST" },
   { test: (p) => p === "/v1/eval/run", allow: "POST" },
+  { test: (p) => p === "/v1/episodes", allow: "GET, POST" },
 ];
 
 /** If path is known but method is not allowed, returns Allow header value; otherwise null (use 404). */
@@ -1193,23 +1227,151 @@ function getMethodNotAllowedForKnownPath(pathname: string, method: string): stri
 }
 
 export async function handleRequest(request: Request, env: Env): Promise<Response> {
+    const started = Date.now();
     const url = new URL(request.url);
     const pathname = url.pathname.replace(/\/$/, "") || "/";
-    if (pathname === "/healthz") {
-      return new Response(JSON.stringify({ status: "ok" }), {
-        status: 200,
-        headers: { "content-type": "application/json" },
-      });
-    }
-    if (pathname === "/ready") {
-      return new Response(JSON.stringify({ status: "ready" }), {
-        status: 200,
-        headers: { "content-type": "application/json" },
+    const requestId = resolveRequestId(request);
+    setRequestIdForRequest(requestId);
+    const requestIdHeader = getRequestIdHeaders();
+    setSecurityHeadersForRequest(pathname);
+    const securityHeaders = getSecurityHeaders();
+
+    function logHealthReadyCompleted(status: number): void {
+      const durationMs = Date.now() - started;
+      logger.info({
+        event: "request_completed",
+        workspace_id: null,
+        route: pathname,
+        route_group: "health",
+        method: request.method,
+        status,
+        duration_ms: durationMs,
+        latency_ms: durationMs,
+        request_id: requestId,
       });
     }
 
-    const started = Date.now();
-    const requestId = resolveRequestId(request);
+    // GET /healthz: return version, build_version, stage, embedding_model; 500 if critical env missing in non-dev
+    if (pathname === "/healthz") {
+      if (request.method !== "GET") {
+        const allowlist = parseAllowedOrigins(env.ALLOWED_ORIGINS);
+        const cors = makeCorsHeaders(request.headers.get("origin") ?? "", allowlist, request.headers);
+        logHealthReadyCompleted(405);
+        return new Response(JSON.stringify({ error: { code: "METHOD_NOT_ALLOWED", message: "Method not allowed" } }), {
+          status: 405,
+          headers: { "content-type": "application/json", Allow: "GET", ...requestIdHeader, ...securityHeaders, ...cors },
+        });
+      }
+      const allowlist = parseAllowedOrigins(env.ALLOWED_ORIGINS);
+      const cors = makeCorsHeaders(request.headers.get("origin") ?? "", allowlist, request.headers);
+      const stage = getEnvironmentStage(env);
+      if (stage !== "dev") {
+        const missing: string[] = [];
+        if (!env.SUPABASE_SERVICE_ROLE_KEY) missing.push("SUPABASE_SERVICE_ROLE_KEY");
+        if (!env.API_KEY_SALT) missing.push("API_KEY_SALT");
+        if (missing.length > 0) {
+          logHealthReadyCompleted(500);
+          return new Response(
+            JSON.stringify({
+              status: "error",
+              error: { code: "CONFIG_ERROR", message: `Missing critical env: ${missing.join(", ")}` },
+            }),
+            { status: 500, headers: { "content-type": "application/json", ...requestIdHeader, ...securityHeaders, ...cors } },
+          );
+        }
+        const stubError = validateStubModes(env, stage);
+        if (stubError) {
+          logHealthReadyCompleted(500);
+          return new Response(
+            JSON.stringify({ status: "error", error: { code: "CONFIG_ERROR", message: stubError } }),
+            { status: 500, headers: { "content-type": "application/json", ...requestIdHeader, ...securityHeaders, ...cors } },
+          );
+        }
+        const rateLimitError = validateRateLimitConfig(env, stage);
+        if (rateLimitError) {
+          logHealthReadyCompleted(500);
+          return new Response(
+            JSON.stringify({ status: "error", error: { code: "CONFIG_ERROR", message: rateLimitError } }),
+            { status: 500, headers: { "content-type": "application/json", ...requestIdHeader, ...securityHeaders, ...cors } },
+          );
+        }
+      }
+      const buildVersion = (env.BUILD_VERSION ?? "").trim();
+      const version = buildVersion || "dev";
+      const stageStr = (env.ENVIRONMENT ?? env.NODE_ENV ?? "").trim();
+      const embeddingsMode = (env.EMBEDDINGS_MODE ?? "openai").toLowerCase();
+      const embeddingModel = embeddingsMode === "stub" ? "stub" : "text-embedding-3-small";
+      logHealthReadyCompleted(200);
+      return new Response(
+        JSON.stringify({
+          status: "ok",
+          version,
+          build_version: version,
+          ...(stageStr ? { stage: stageStr } : {}),
+          ...((env.GIT_SHA ?? "").trim() ? { git_sha: (env.GIT_SHA ?? "").trim() } : {}),
+          embedding_model: embeddingModel,
+        }),
+        { status: 200, headers: { "content-type": "application/json", ...requestIdHeader, ...securityHeaders, ...cors } },
+      );
+    }
+
+    // GET /ready: check Supabase connectivity; 503 if unavailable
+    if (pathname === "/ready") {
+      if (request.method !== "GET") {
+        const allowlist = parseAllowedOrigins(env.ALLOWED_ORIGINS);
+        const cors = makeCorsHeaders(request.headers.get("origin") ?? "", allowlist, request.headers);
+        logHealthReadyCompleted(405);
+        return new Response(JSON.stringify({ error: { code: "METHOD_NOT_ALLOWED", message: "Method not allowed" } }), {
+          status: 405,
+          headers: { "content-type": "application/json", Allow: "GET", ...requestIdHeader, ...securityHeaders, ...cors },
+        });
+      }
+      let supabaseForReady: SupabaseClient;
+      try {
+        supabaseForReady = createSupabaseClient(env);
+      } catch (e) {
+        const msg = e instanceof Error ? e.message : String(e);
+        logHealthReadyCompleted(503);
+        return new Response(
+          JSON.stringify({ status: "degraded", db: "unavailable", message: msg }),
+          { status: 503, headers: { "content-type": "application/json", "Cache-Control": "no-store", ...requestIdHeader, ...securityHeaders } },
+        );
+      }
+      try {
+        await withCircuitBreaker("supabase", async () => {
+          const r = await withSupabaseQueryRetry(
+            async () => {
+              const result = await supabaseForReady.from("app_settings").select("id").limit(1).maybeSingle();
+              return { data: result.data, error: result.error };
+            },
+            { delaysMs: SUPABASE_RETRY_DELAYS_MS },
+          );
+          if (r.error) throw r.error;
+          return r;
+        });
+      } catch (e) {
+        const msg = e instanceof Error ? e.message : String(e);
+        if (msg.startsWith("CIRCUIT_OPEN:")) {
+          logHealthReadyCompleted(503);
+          return new Response(
+            JSON.stringify({ status: "degraded", db: "unavailable", message: "Service temporarily unavailable" }),
+            { status: 503, headers: { "content-type": "application/json", "Cache-Control": "no-store", ...requestIdHeader, ...securityHeaders } },
+          );
+        }
+        const errMsg = e instanceof Error ? e.message : String(e);
+        logHealthReadyCompleted(503);
+        return new Response(
+          JSON.stringify({ status: "degraded", db: "unavailable", message: errMsg }),
+          { status: 503, headers: { "content-type": "application/json", "Cache-Control": "no-store", ...requestIdHeader, ...securityHeaders } },
+        );
+      }
+      logHealthReadyCompleted(200);
+      return new Response(JSON.stringify({ status: "ok", db: "connected" }), {
+        status: 200,
+        headers: { "content-type": "application/json", "Cache-Control": "no-store", ...requestIdHeader, ...securityHeaders },
+      });
+    }
+
     setRequestIdForRequest(requestId);
     const ip = request.headers.get("cf-connecting-ip") ?? request.headers.get("x-forwarded-for") ?? "unknown";
     const origin = request.headers.get("origin") ?? "";
@@ -1237,53 +1399,6 @@ export async function handleRequest(request: Request, env: Env): Promise<Respons
 
       const bodyLimit = resolveBodyLimit(request.method, url.pathname, env);
       await assertBodySize(request, env, bodyLimit);
-
-      if (request.method === "GET" && url.pathname === "/healthz") {
-        const buildVersion = (env.BUILD_VERSION ?? "").trim();
-        const version = buildVersion || "dev";
-        const stage = (env.ENVIRONMENT ?? env.NODE_ENV ?? "").trim();
-        const gitSha = (env.GIT_SHA ?? "").trim();
-        const embeddingsMode = (env.EMBEDDINGS_MODE ?? "openai").toLowerCase();
-        const embeddingModel =
-          embeddingsMode === "stub" ? "stub" : "text-embedding-3-small";
-        response = jsonResponse({
-          status: "ok",
-          version,
-          build_version: version,
-          embedding_model: embeddingModel,
-          ...(gitSha ? { git_sha: gitSha } : {}),
-          ...(stage ? { stage } : {}),
-        });
-        return response;
-      }
-
-      // Deep readiness: /ready and /ready/ (normalized) — handle before 405 so path is always recognized
-      const pathNormalized = url.pathname.replace(/\/$/, "") || "/";
-      if (request.method === "GET" && pathNormalized === "/ready") {
-        supabase = createSupabaseClient(env);
-        const { error } = await withSupabaseQueryRetry(async () =>
-          supabase!.from("app_settings").select("id").limit(1).maybeSingle(),
-        );
-        if (error) {
-          const errMsg = (error as { message?: string })?.message ?? "Database check failed";
-          response = jsonResponse(
-            {
-              status: "degraded",
-              db: "unavailable",
-              message: errMsg,
-            },
-            503,
-            { "Cache-Control": "no-store" },
-          );
-          return response;
-        }
-        response = jsonResponse(
-          { status: "ok", db: "connected" },
-          200,
-          { "Cache-Control": "no-store" },
-        );
-        return response;
-      }
 
       // 405 for known path + wrong method (before creating Supabase so no CONFIG_ERROR for wrong-method-only requests)
       const earlyAllow = getMethodNotAllowedForKnownPath(url.pathname, request.method);
@@ -1468,6 +1583,7 @@ export async function handleRequest(request: Request, env: Env): Promise<Respons
       const workspacesHandlers = createWorkspacesHandlers(handlerDeps, defaultWorkspacesHandlerDeps);
       const apiKeysHandlers = createApiKeysHandlers(handlerDeps, defaultApiKeysHandlerDeps);
       const evalHandlers = createEvalHandlers(handlerDeps, defaultEvalHandlerDeps);
+      const episodeHandlers = createEpisodeHandlers(handlerDeps, defaultEpisodeHandlerDeps);
       const routed = await route(request, env, supabase, url, auditCtx, requestId, {
         handlers: {
           ...memoryHandlers,
@@ -1482,6 +1598,7 @@ export async function handleRequest(request: Request, env: Env): Promise<Respons
           ...workspacesHandlers,
           ...apiKeysHandlers,
           ...evalHandlers,
+          ...episodeHandlers,
         },
         handlerDeps,
       });
@@ -2353,35 +2470,41 @@ export function chunkText(text: string, chunkSize = 800, overlap = 100): string[
   return chunks;
 }
 
-const EMBED_MAX_RETRIES = 2;
-const EMBED_RETRY_DELAYS_MS = [500, 1000];
+const EMBED_MAX_RETRIES = RETRY_MAX_ATTEMPTS;
+const EMBED_RETRY_DELAYS_MS = OPENAI_EMBED_RETRY_DELAYS_MS;
 
-/** Retry fetch on 5xx, 429, or network error. Does not retry on 4xx (except 429). */
+/** Retry fetch on 5xx, 429, or network error. Does not retry on 4xx (except 429). Request-level timeout per attempt. */
 async function fetchWithRetry(
   url: string,
   init: RequestInit & { body: string },
-  maxRetries: number = EMBED_MAX_RETRIES,
+  options?: { maxRetries?: number; delaysMs?: number[]; timeoutMs?: number },
 ): Promise<Response> {
+  const maxRetries = options?.maxRetries ?? EMBED_MAX_RETRIES;
+  const delaysMs = options?.delaysMs ?? EMBED_RETRY_DELAYS_MS;
+  const timeoutMs = options?.timeoutMs ?? EMBED_REQUEST_TIMEOUT_MS;
   let lastError: unknown;
   for (let attempt = 0; attempt <= maxRetries; attempt++) {
+    const controller = new AbortController();
+    const timeoutId = timeoutMs > 0 ? setTimeout(() => controller.abort(), timeoutMs) : undefined;
+    const signal = controller.signal;
     try {
-      const res = await fetch(url, { ...init, body: init.body });
+      const res = await fetch(url, { ...init, signal, body: init.body });
+      if (timeoutId) clearTimeout(timeoutId);
       const retryable = res.status === 429 || res.status >= 500;
       if (!res.ok && !retryable) return res;
       if (res.ok) return res;
       lastError = new Error(`HTTP ${res.status}`);
       if (attempt < maxRetries) {
-        const delayMs = EMBED_RETRY_DELAYS_MS[attempt] ?? 1000;
+        const delayMs = delaysMs[attempt] ?? 1000;
         await new Promise((r) => setTimeout(r, delayMs));
       }
     } catch (err) {
+      if (timeoutId) clearTimeout(timeoutId);
       lastError = err;
       if (attempt < maxRetries) {
-        const delayMs = EMBED_RETRY_DELAYS_MS[attempt] ?? 1000;
+        const delayMs = delaysMs[attempt] ?? 1000;
         await new Promise((r) => setTimeout(r, delayMs));
       }
-      // On final attempt do not throw here; fall through and throw lastError below so both
-      // network and HTTP retryable paths use the same throw site and behavior.
     }
   }
   throw lastError;
@@ -2402,17 +2525,29 @@ async function embedText(texts: string[], env: Env): Promise<number[][]> {
     model: "text-embedding-3-small",
     input: texts,
   });
-  const response = await fetchWithRetry(
-    "https://api.openai.com/v1/embeddings",
-    {
-      method: "POST",
-      headers: {
-        "content-type": "application/json",
-        authorization: `Bearer ${env.OPENAI_API_KEY}`,
-      },
-      body,
-    },
-  );
+  let response: Response;
+  try {
+    response = await withCircuitBreaker("openai", () =>
+      fetchWithRetry(
+        "https://api.openai.com/v1/embeddings",
+        {
+          method: "POST",
+          headers: {
+            "content-type": "application/json",
+            authorization: `Bearer ${env.OPENAI_API_KEY}`,
+          },
+          body,
+        },
+        { timeoutMs: EMBED_REQUEST_TIMEOUT_MS },
+      ),
+    );
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    if (msg.startsWith("CIRCUIT_OPEN:")) {
+      throw createHttpError(503, "SERVICE_UNAVAILABLE", "Embedding service temporarily unavailable");
+    }
+    throw err;
+  }
 
   if (!response.ok) {
     const embedLatency = Date.now() - embedStart;
@@ -2520,6 +2655,24 @@ async function callMatchVector(
     success: true,
   });
   return (data ?? []) as MatchResult[];
+}
+
+/**
+ * Update last_accessed_at for chunks returned in search. Fire-and-forget only; never await.
+ * Enforces workspace_id. Swallows errors.
+ */
+function bumpChunkAccess(
+  supabase: SupabaseClient,
+  workspaceId: string,
+  chunkIds: string[],
+): void {
+  if (chunkIds.length === 0) return;
+  const p = supabase
+    .from("memory_chunks")
+    .update({ last_accessed_at: new Date().toISOString() })
+    .eq("workspace_id", workspaceId)
+    .in("id", chunkIds);
+  void Promise.resolve(p).catch(() => {});
 }
 
 async function callMatchText(
@@ -2751,6 +2904,10 @@ async function performSearch(
 
   const final = finalizeResults(scored, page, page_size);
 
+  if (final.results.length > 0) {
+    bumpChunkAccess(supabase, auth.workspaceId, final.results.map((r) => r.chunk_id));
+  }
+
   const searchLatency = Date.now() - searchStart;
   logger.info({
     event: "search_request",
@@ -2967,6 +3124,11 @@ const defaultEvalHandlerDeps: EvalHandlerDeps = {
   performSearch,
 };
 
+const defaultEpisodeHandlerDeps: HandlerDeps = {
+  jsonResponse: simpleJsonResponse,
+};
+const episodeHandlersDefault = createEpisodeHandlers(defaultEpisodeHandlerDeps, defaultEpisodeHandlerDeps);
+
 /** Full deps for usage handler when called directly (e.g. from tests). */
 const defaultUsageHandlerDeps: UsageHandlerDeps = {
   jsonResponse: simpleJsonResponse,
@@ -3084,6 +3246,8 @@ export const handleListMemories = memoryHandlersDefault.handleListMemories;
 export const handleGetMemory = memoryHandlersDefault.handleGetMemory;
 export const handleDeleteMemory = memoryHandlersDefault.handleDeleteMemory;
 export const handleSearch = searchHandlersDefault.handleSearch;
+export const handleCreateEpisode = episodeHandlersDefault.handleCreateEpisode;
+export const handleListEpisodes = episodeHandlersDefault.handleListEpisodes;
 export const handleContext = contextHandlersDefault.handleContext;
 export const handleUsageToday = usageHandlersDefault.handleUsageToday;
 export const handleBillingStatus = billingHandlersDefault.handleBillingStatus;

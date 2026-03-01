@@ -14,6 +14,13 @@ import { authenticate, rateLimit } from "../auth.js";
 import type { HandlerDeps } from "../router.js";
 import { MemoryInsertSchema, parseWithSchema } from "../contracts/index.js";
 import type { MemoryType } from "../contracts/index.js";
+import { requireWorkspaceId } from "../supabaseScoped.js";
+import { createHttpError, isApiError } from "../http.js";
+import {
+  RETRY_MAX_ATTEMPTS,
+  OPENAI_EXTRACT_RETRY_DELAYS_MS,
+  EXTRACT_REQUEST_TIMEOUT_MS,
+} from "../resilienceConstants.js";
 
 export type { MemoryInsertPayload } from "../contracts/index.js";
 
@@ -104,59 +111,80 @@ interface ExtractedItem {
 
 /**
  * Call a cheap LLM to extract facts/preferences/events from text.
- * Returns empty array on any failure (fail-silent contract).
+ * Retries up to 2 times with exponential backoff. Throws on failure (structured error).
  */
 const MAX_EXTRACT_ITEMS = 10;
-const EXTRACT_TIMEOUT_MS = 15_000;
 
 async function extractItems(text: string, env: Env): Promise<ExtractedItem[]> {
-  if (!env.OPENAI_API_KEY) return [];
-  const controller = new AbortController();
-  const timeoutId = setTimeout(() => controller.abort(), EXTRACT_TIMEOUT_MS);
-  try {
-    const resp = await fetch("https://api.openai.com/v1/chat/completions", {
-      method: "POST",
-      headers: {
-        "content-type": "application/json",
-        authorization: `Bearer ${env.OPENAI_API_KEY}`,
-      },
-      signal: controller.signal,
-      body: JSON.stringify({
-        model: "gpt-4o-mini",
-        temperature: 0,
-        max_tokens: 1024,
-        messages: [
-          { role: "system", content: EXTRACTION_PROMPT },
-          { role: "user", content: text },
-        ],
-      }),
-    });
-    if (!resp.ok) return [];
-    const json = (await resp.json()) as {
-      choices?: { message?: { content?: string } }[];
-    };
-    const raw = json.choices?.[0]?.message?.content?.trim() ?? "";
-    const parsed = JSON.parse(raw);
-    if (!Array.isArray(parsed)) return [];
-    const valid: ExtractedItem[] = [];
-    for (const item of parsed) {
-      if (
-        typeof item === "object" && item &&
-        typeof item.text === "string" && item.text.length > 0 &&
-        typeof item.memory_type === "string" &&
-        // "note" excluded: notes are user-authored, not auto-extracted
-        ["fact", "preference", "event"].includes(item.memory_type)
-      ) {
-        valid.push({ text: item.text, memory_type: item.memory_type as MemoryType });
-      }
-      if (valid.length >= MAX_EXTRACT_ITEMS) break;
-    }
-    return valid;
-  } catch {
-    return [];
-  } finally {
-    clearTimeout(timeoutId);
+  if (!env.OPENAI_API_KEY) {
+    throw createHttpError(503, "EXTRACTION_ERROR", "OPENAI_API_KEY not configured");
   }
+  const maxAttempts = RETRY_MAX_ATTEMPTS;
+  const delaysMs = OPENAI_EXTRACT_RETRY_DELAYS_MS;
+  let lastError: unknown;
+  for (let attempt = 0; attempt <= maxAttempts; attempt++) {
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), EXTRACT_REQUEST_TIMEOUT_MS);
+    try {
+      const resp = await fetch("https://api.openai.com/v1/chat/completions", {
+        method: "POST",
+        headers: {
+          "content-type": "application/json",
+          authorization: `Bearer ${env.OPENAI_API_KEY}`,
+        },
+        signal: controller.signal,
+        body: JSON.stringify({
+          model: "gpt-4o-mini",
+          temperature: 0,
+          max_tokens: 1024,
+          messages: [
+            { role: "system", content: EXTRACTION_PROMPT },
+            { role: "user", content: text },
+          ],
+        }),
+      });
+      clearTimeout(timeoutId);
+      if (!resp.ok) {
+        const body = await resp.text();
+        throw createHttpError(
+          resp.status >= 500 ? 503 : 400,
+          "EXTRACTION_ERROR",
+          `OpenAI extraction failed: ${resp.status} ${body.slice(0, 200)}`,
+        );
+      }
+      const json = (await resp.json()) as {
+        choices?: { message?: { content?: string } }[];
+      };
+      const raw = json.choices?.[0]?.message?.content?.trim() ?? "";
+      const parsed = JSON.parse(raw);
+      if (!Array.isArray(parsed)) return [];
+      const valid: ExtractedItem[] = [];
+      for (const item of parsed) {
+        if (
+          typeof item === "object" && item &&
+          typeof item.text === "string" && item.text.length > 0 &&
+          typeof item.memory_type === "string" &&
+          ["fact", "preference", "event"].includes(item.memory_type)
+        ) {
+          valid.push({ text: item.text, memory_type: item.memory_type as MemoryType });
+        }
+        if (valid.length >= MAX_EXTRACT_ITEMS) break;
+      }
+      return valid;
+    } catch (err) {
+      clearTimeout(timeoutId);
+      lastError = err;
+      if (isApiError(err)) throw err;
+      if (attempt < maxAttempts) {
+        await new Promise((r) => setTimeout(r, delaysMs[attempt] ?? 500));
+      } else {
+        const msg = err instanceof Error ? err.message : String(err);
+        throw createHttpError(503, "EXTRACTION_ERROR", `Extraction failed: ${msg}`);
+      }
+    }
+  }
+  const msg = lastError instanceof Error ? lastError.message : String(lastError);
+  throw createHttpError(503, "EXTRACTION_ERROR", `Extraction failed: ${msg}`);
 }
 
 /**
@@ -297,6 +325,7 @@ export function createMemoryHandlers(
       const { jsonResponse } = d;
       const auth = await authenticate(request, env, supabase, auditCtx);
       auditCtx.workspaceId = auth.workspaceId;
+      requireWorkspaceId(auth.workspaceId);
       const rate = await rateLimit(auth.keyHash, env, auth);
       if (!rate.allowed) {
         return jsonResponse(
@@ -390,6 +419,14 @@ export function createMemoryHandlers(
       let extractionResult: { children_created: number; skipped: boolean; error?: string } | undefined;
       if (extract) {
         extractionResult = await extractAndStore(env, supabase, d, memoryId, auth.workspaceId, user_id, namespaceVal, text);
+
+        if (extractionResult.error) {
+          return jsonResponse(
+            { error: { code: "EXTRACTION_ERROR", message: extractionResult.error } },
+            503,
+            rate.headers,
+          );
+        }
 
         void d.emitProductEvent(
           supabase,

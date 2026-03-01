@@ -9,6 +9,7 @@ import type { AuthContext } from "../auth.js";
 import { authenticate, rateLimit } from "../auth.js";
 import type { HandlerDeps } from "../router.js";
 import { SearchPayloadSchema, parseWithSchema, type SearchPayload } from "../contracts/index.js";
+import { requireWorkspaceId } from "../supabaseScoped.js";
 
 export type { SearchPayload } from "../contracts/index.js";
 
@@ -95,6 +96,7 @@ export function createSearchHandlers(
       const d = (deps ?? defaultDeps) as SearchHandlerDeps;
       const { jsonResponse } = d;
       const auth = await authenticate(request, env, supabase, auditCtx);
+      requireWorkspaceId(auth.workspaceId);
       const rate = await rateLimit(auth.keyHash, env, auth);
       if (!rate.allowed) {
         return jsonResponse(
@@ -193,6 +195,7 @@ export function createSearchHandlers(
       const d = (deps ?? defaultDeps) as SearchHandlerDeps;
       const { jsonResponse } = d;
       const auth = await authenticate(request, env, supabase, auditCtx);
+      requireWorkspaceId(auth.workspaceId);
       const rate = await rateLimit(auth.keyHash, env, auth);
       if (!rate.allowed) {
         return jsonResponse({ error: { code: "rate_limited", message: "Rate limit exceeded" } }, 429, rate.headers);
@@ -215,6 +218,7 @@ export function createSearchHandlers(
       const d = (deps ?? defaultDeps) as SearchHandlerDeps;
       const { jsonResponse } = d;
       const auth = await authenticate(request, env, supabase, auditCtx);
+      requireWorkspaceId(auth.workspaceId);
       const rate = await rateLimit(auth.keyHash, env, auth);
       if (!rate.allowed) {
         return jsonResponse({ error: { code: "rate_limited", message: "Rate limit exceeded" } }, 429, rate.headers);

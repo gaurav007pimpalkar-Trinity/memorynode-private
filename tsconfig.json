@@ -3,6 +3,7 @@
   "references": [
     { "path": "./packages/shared" },
     { "path": "./packages/sdk" },
+    { "path": "./packages/mcp-server" },
     { "path": "./apps/api" },
     { "path": "./apps/dashboard" }
   ]
