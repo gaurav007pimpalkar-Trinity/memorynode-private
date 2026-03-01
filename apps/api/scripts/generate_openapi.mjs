@@ -280,6 +280,32 @@ registry.registerPath({
   },
 });
 
+// Versioned health (API clients; same payload as /healthz)
+registry.registerPath({
+  method: "get",
+  path: "/v1/health",
+  summary: "Health check (versioned)",
+  description: "Returns service health and version. Same response as /healthz. No auth required. Prefer this for API clients that version endpoints.",
+  tags: ["Health"],
+  responses: {
+    200: {
+      description: "Service healthy",
+      content: {
+        "application/json": {
+          schema: z.object({
+            status: z.literal("ok"),
+            version: z.string(),
+            build_version: z.string().optional(),
+            stage: z.string().optional(),
+            git_sha: z.string().optional(),
+            embedding_model: z.string().optional(),
+          }),
+        },
+      },
+    },
+  },
+});
+
 // Readiness (deep: DB check; for LB/CF)
 registry.registerPath({
   method: "get",

@@ -1,20 +1,16 @@
 # Quickstart
 
-Get from zero to storing and retrieving memories in a few minutes.
+Get from zero to stored and retrieved memory in a few minutes. No marketing fluff.
 
-## 1. Get an API key
+## 1. Setup
 
-Sign up and create a workspace in the dashboard. Create an API key and copy it once — it’s shown only at creation. Use it as: `Authorization: Bearer <your_api_key>`.
+- Sign up at [memorynode.ai](https://memorynode.ai), create a workspace, create an API key. Copy the key once (e.g. `mn_live_...`).
+- Base URL: `https://api.memorynode.ai` (or your deployment).
+- Send the key on every request: `Authorization: Bearer <key>` or header `x-api-key: <key>`.
 
-## 2. Store a memory
+## 2. Insert
 
-Send a POST request to `/v1/memories` with your API key and a JSON body:
-
-- **user_id** — Your end-user’s id (e.g. from your app).
-- **text** — The memory content.
-- **namespace** (optional) — e.g. a project or environment name. Use the same value when you search.
-
-Example (replace `YOUR_API_KEY` and `https://api.memorynode.ai` with your key and base URL):
+**POST /v1/memories**
 
 ```bash
 curl -X POST "https://api.memorynode.ai/v1/memories" \
@@ -23,13 +19,11 @@ curl -X POST "https://api.memorynode.ai/v1/memories" \
   -d '{"user_id":"user-123","namespace":"myapp","text":"User prefers dark mode"}'
 ```
 
-You’ll get back a `memory_id` and related details.
+Response: `{"memory_id":"...", "chunks": 1}`. Use the same `user_id` and `namespace` when you search.
 
-## 3. Search or get context
+## 3. Search
 
-Use the same **user_id** and **namespace** you used when storing.
-
-**Search** — POST to `/v1/search` with `user_id`, `query`, and optional `namespace`:
+**POST /v1/search**
 
 ```bash
 curl -X POST "https://api.memorynode.ai/v1/search" \
@@ -38,14 +32,20 @@ curl -X POST "https://api.memorynode.ai/v1/search" \
   -d '{"user_id":"user-123","namespace":"myapp","query":"theme preference","top_k":5}'
 ```
 
-**Context** (for prompts) — POST to `/v1/context` with the same fields. The response includes `context_text` and `citations` ready to use in your AI prompt. You can optionally tag memories with `memory_type` (fact, preference, event, note), use `search_mode` (hybrid, vector, keyword), and filter by `memory_type` in search/context — see [API usage](./API_USAGE.md).
+Response: `{"results": [{"chunk_id":"...", "memory_id":"...", "text":"...", "score": 0.9}, ...]}`.
 
-## 4. If something goes wrong
+For prompt-ready text and citations, use **POST /v1/context** with the same body; response includes `context_text` and `citations`.
 
-- **401** — Check your API key and that you’re sending `Authorization: Bearer <key>`.
-- **Empty results** — Use the same `user_id` and `namespace` as when you stored; confirm you stored at least one memory first.
-- **Other errors** — Retry once or twice; if it continues, contact support with the `x-request-id` from the response.
+## 4. Connect MCP
 
-For full request and response shapes, see [API usage](./API_USAGE.md).
+To let AI agents read/write memory via MCP tools:
+
+1. Install: `pnpm add @memorynodeai/mcp-server` (or use the repo package).
+2. Configure your MCP client with:
+   - `MEMORYNODE_API_KEY` — your API key.
+   - `MEMORYNODE_BASE_URL` — `https://api.memorynode.ai` (or your base URL).
+3. Use the `memory://search` resource and the memory insert tool from your agent.
+
+See [packages/mcp-server](packages/mcp-server) and [API usage](API_USAGE.md) for full request/response shapes.
 
 <!-- Migration manifest (CI-checked): MIGRATIONS_TOTAL=31; MIGRATIONS_LATEST=029_memory_recency_decay.sql -->

@@ -1186,6 +1186,7 @@ function resolveBodyLimit(method: string, path: string, env: Env): number {
 const KNOWN_PATH_ALLOWED_METHODS: Array<{ test: (path: string) => boolean; allow: string }> = [
   { test: (p) => p === "/healthz", allow: "GET" },
   { test: (p) => p === "/ready" || p === "/ready/", allow: "GET" },
+  { test: (p) => p === "/v1/health", allow: "GET" },
   { test: (p) => p === "/v1/memories", allow: "GET, POST" },
   { test: (p) => /^\/v1\/memories\/[^/]+$/.test(p), allow: "GET, DELETE" },
   { test: (p) => p === "/v1/search", allow: "POST" },
@@ -1240,14 +1241,15 @@ export async function handleRequest(request: Request, env: Env): Promise<Respons
       const durationMs = Date.now() - started;
       logger.info({
         event: "request_completed",
+        request_id: requestId,
         workspace_id: null,
         route: pathname,
         route_group: "health",
         method: request.method,
         status,
-        duration_ms: durationMs,
+        status_code: status,
         latency_ms: durationMs,
-        request_id: requestId,
+        duration_ms: durationMs,
       });
     }
 
@@ -1370,6 +1372,45 @@ export async function handleRequest(request: Request, env: Env): Promise<Respons
         status: 200,
         headers: { "content-type": "application/json", "Cache-Control": "no-store", ...requestIdHeader, ...securityHeaders },
       });
+    }
+
+    // GET /v1/health: versioned health (same payload as /healthz, no auth)
+    if (pathname === "/v1/health" && request.method === "GET") {
+      const allowlist = parseAllowedOrigins(env.ALLOWED_ORIGINS);
+      const cors = makeCorsHeaders(request.headers.get("origin") ?? "", allowlist, request.headers);
+      const stage = getEnvironmentStage(env);
+      if (stage !== "dev") {
+        const missing: string[] = [];
+        if (!env.SUPABASE_SERVICE_ROLE_KEY) missing.push("SUPABASE_SERVICE_ROLE_KEY");
+        if (!env.API_KEY_SALT) missing.push("API_KEY_SALT");
+        if (missing.length > 0) {
+          logHealthReadyCompleted(500);
+          return new Response(
+            JSON.stringify({
+              status: "error",
+              error: { code: "CONFIG_ERROR", message: `Missing critical env: ${missing.join(", ")}` },
+            }),
+            { status: 500, headers: { "content-type": "application/json", ...requestIdHeader, ...securityHeaders, ...cors } },
+          );
+        }
+      }
+      const buildVersion = (env.BUILD_VERSION ?? "").trim();
+      const version = buildVersion || "dev";
+      const stageStr = (env.ENVIRONMENT ?? env.NODE_ENV ?? "").trim();
+      const embeddingsMode = (env.EMBEDDINGS_MODE ?? "openai").toLowerCase();
+      const embeddingModel = embeddingsMode === "stub" ? "stub" : "text-embedding-3-small";
+      logHealthReadyCompleted(200);
+      return new Response(
+        JSON.stringify({
+          status: "ok",
+          version,
+          build_version: version,
+          ...(stageStr ? { stage: stageStr } : {}),
+          ...((env.GIT_SHA ?? "").trim() ? { git_sha: (env.GIT_SHA ?? "").trim() } : {}),
+          embedding_model: embeddingModel,
+        }),
+        { status: 200, headers: { "content-type": "application/json", ...requestIdHeader, ...securityHeaders, ...cors } },
+      );
     }
 
     setRequestIdForRequest(requestId);
@@ -1643,14 +1684,16 @@ export async function handleRequest(request: Request, env: Env): Promise<Respons
         const errorFields = await extractErrorLogFields(response);
         logger.info({
           event: "request_completed",
+          request_id: requestId,
           workspace_id: auditCtx.workspaceId ?? null,
           route: url.pathname,
           route_group: classifyRouteGroup(url.pathname),
           method: request.method,
           status: response?.status ?? 0,
-          duration_ms: durationMs,
+          status_code: response?.status ?? 0,
           latency_ms: durationMs,
-          request_id: requestId,
+          duration_ms: durationMs,
+          ...(errorFields.error_code ? { error_type: errorFields.error_code } : {}),
           ...errorFields,
         });
       } finally {
@@ -1666,6 +1709,7 @@ export { createSupabaseClient };
 /** Classify a URL pathname into a route group for golden-metrics aggregation. */
 function classifyRouteGroup(pathname: string): string {
   if (pathname === "/healthz" || pathname === "/ready" || pathname === "/ready/") return "health";
+  if (pathname === "/v1/health") return "health";
   if (pathname === "/v1/memories" || /^\/v1\/memories\/[^/]+$/.test(pathname)) return "memories";
   if (pathname === "/v1/search" || pathname === "/v1/search/history" || pathname === "/v1/search/replay") return "search";
   if (pathname === "/v1/context") return "context";
@@ -1716,6 +1760,7 @@ let stubState: {
     payu_webhook_events: StubRow[];
     payu_transactions: StubRow[];
     dashboard_sessions: StubRow[];
+    agent_episodes: StubRow[];
   };
   rawApiKeys: Map<string, { workspaceId: string }>;
 } | null = null;
@@ -1735,6 +1780,7 @@ function createStubSupabase(env: Env) {
         payu_webhook_events: [] as StubRow[],
         payu_transactions: [] as StubRow[],
         dashboard_sessions: [] as StubRow[],
+        agent_episodes: [] as StubRow[],
       },
       rawApiKeys: new Map<string, { workspaceId: string }>(),
     };
@@ -1779,6 +1825,18 @@ function createStubSupabase(env: Env) {
     is(col: string, val: unknown) {
       return this.eq(col, val);
     },
+    gte(col: string, val: unknown) {
+      return makeResult(
+        rows.filter((r) => (r[col] as string) >= (val as string)),
+        count ? rows.filter((r) => (r[col] as string) >= (val as string)).length : undefined,
+      );
+    },
+    lte(col: string, val: unknown) {
+      return makeResult(
+        rows.filter((r) => (r[col] as string) <= (val as string)),
+        count ? rows.filter((r) => (r[col] as string) <= (val as string)).length : undefined,
+      );
+    },
     contains(obj: Record<string, unknown>) {
       const filtered = rows.filter((r) => {
         const target = r.metadata as Record<string, unknown>;
@@ -1797,6 +1855,9 @@ function createStubSupabase(env: Env) {
     },
     single() {
       return { data: rows[0] ?? null, error: null };
+    },
+    then<T>(onfulfilled?: (value: { data: StubRow[]; error: null }) => T | PromiseLike<T>, onrejected?: (reason: unknown) => never) {
+      return Promise.resolve({ data: rows, error: null }).then(onfulfilled, onrejected);
     },
   });
 
@@ -1836,6 +1897,8 @@ function createStubSupabase(env: Env) {
           (r as Record<string, unknown>).revoked_at = null;
         }
         if (!r.id) (r as Record<string, unknown>).id = crypto.randomUUID();
+        if (!Object.prototype.hasOwnProperty.call(r, "created_at"))
+          (r as Record<string, unknown>).created_at = new Date().toISOString();
         db[table].push(structuredClone(r));
       });
       return {
