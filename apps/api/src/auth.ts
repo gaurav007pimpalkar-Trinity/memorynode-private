@@ -59,13 +59,24 @@ export async function hashApiKey(rawKey: string, salt: string): Promise<string> 
   return sha256Hex(salt + rawKey);
 }
 
+const SALT_CACHE_TTL_MS = 5 * 60 * 1000; // 5 minutes
+
 let cachedSalt: string | null = null;
+let cachedSaltAt = 0;
+
+function isSaltCacheValid(): boolean {
+  return cachedSalt !== null && Date.now() - cachedSaltAt < SALT_CACHE_TTL_MS;
+}
 
 export async function getApiKeySalt(
   env: Env,
   supabase: SupabaseClient,
 ): Promise<{ salt: string; mismatchFatal: boolean }> {
   const envSalt = env.API_KEY_SALT || "";
+  if (isSaltCacheValid() && !envSalt) {
+    return { salt: cachedSalt!, mismatchFatal: false };
+  }
+
   const { data, error } = await withSupabaseQueryRetry(async () =>
     supabase.from("app_settings").select("api_key_salt").limit(1).single(),
   );
@@ -89,6 +100,7 @@ export async function getApiKeySalt(
 
   const saltToUse = envSalt || dbSalt || cachedSalt || "";
   cachedSalt = saltToUse;
+  cachedSaltAt = Date.now();
   return { salt: saltToUse, mismatchFatal: false };
 }
 

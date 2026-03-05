@@ -10,23 +10,33 @@ port = 8787
 
 [durable_objects]
 bindings = [
-  { name = "RATE_LIMIT_DO", class_name = "RateLimitDO" }
+  { name = "RATE_LIMIT_DO", class_name = "RateLimitDO" },
+  { name = "CIRCUIT_BREAKER_DO", class_name = "CircuitBreakerDO" }
 ]
 
 [[migrations]]
 tag = "v1"
 new_sqlite_classes = ["RateLimitDO"]
 
+[[migrations]]
+tag = "v2"
+new_sqlite_classes = ["CircuitBreakerDO"]
+
 [env.staging]
 name = "memorynode-api-staging"
 [env.staging.durable_objects]
 bindings = [
-  { name = "RATE_LIMIT_DO", class_name = "RateLimitDO" }
+  { name = "RATE_LIMIT_DO", class_name = "RateLimitDO" },
+  { name = "CIRCUIT_BREAKER_DO", class_name = "CircuitBreakerDO" }
 ]
 
 [[env.staging.migrations]]
 tag = "v1"
 new_sqlite_classes = ["RateLimitDO"]
+
+[[env.staging.migrations]]
+tag = "v2"
+new_sqlite_classes = ["CircuitBreakerDO"]
 
 [env.staging.vars]
 EMBEDDINGS_MODE = "openai"
@@ -44,12 +54,17 @@ routes = [
 ]
 [env.production.durable_objects]
 bindings = [
-  { name = "RATE_LIMIT_DO", class_name = "RateLimitDO" }
+  { name = "RATE_LIMIT_DO", class_name = "RateLimitDO" },
+  { name = "CIRCUIT_BREAKER_DO", class_name = "CircuitBreakerDO" }
 ]
 
 [[env.production.migrations]]
 tag = "v1"
 new_sqlite_classes = ["RateLimitDO"]
+
+[[env.production.migrations]]
+tag = "v2"
+new_sqlite_classes = ["CircuitBreakerDO"]
 
 [env.production.vars]
 EMBEDDINGS_MODE = "openai"

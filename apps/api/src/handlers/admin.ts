@@ -8,10 +8,19 @@ import type { Env } from "../env.js";
 import type { HandlerDeps } from "../router.js";
 import type { PayUWebhookPayloadLike } from "./webhooks.js";
 import type { ReconcileOutcomeLike } from "./webhooks.js";
+import { createHttpError } from "../http.js";
+
+function extractClientIp(request: Request): string {
+  return (
+    request.headers.get("cf-connecting-ip") ??
+    request.headers.get("x-forwarded-for")?.split(",")[0]?.trim() ??
+    "unknown"
+  );
+}
 
 export interface AdminHandlerDeps extends HandlerDeps {
   requireAdmin: (request: Request, env: Env) => Promise<{ token: string }>;
-  rateLimit: (keyHash: string, env: Env) => Promise<{ allowed: boolean; headers: Record<string, string> }>;
+  rateLimit: (keyHash: string, env: Env, auth?: { keyCreatedAt?: string | null }) => Promise<{ allowed: boolean; headers: Record<string, string> }>;
   emitEventLog: (event_name: string, fields: Record<string, unknown>) => void;
   redact: (value: unknown, keyHint?: string) => unknown;
   reconcilePayUWebhook: (
@@ -60,10 +69,19 @@ export function createAdminHandlers(
     deps?: HandlerDeps,
   ) => Promise<Response>;
 } {
+  async function guardAdminIp(request: Request, env: Env, d: AdminHandlerDeps): Promise<void> {
+    const ip = extractClientIp(request);
+    const ipRate = await d.rateLimit(`admin-ip:${ip}`, env);
+    if (!ipRate.allowed) {
+      throw createHttpError(429, "RATE_LIMITED", "Too many admin requests from this IP");
+    }
+  }
+
   return {
     async handleCleanupExpiredSessions(request, env, supabase, requestId = "", deps?) {
       const d = (deps ?? defaultDeps) as AdminHandlerDeps;
       const { jsonResponse } = d;
+      await guardAdminIp(request, env, d);
       const { token } = await d.requireAdmin(request, env);
       const rate = await d.rateLimit(`admin:sessions:${token}`, env);
       if (!rate.allowed) {
@@ -98,6 +116,7 @@ export function createAdminHandlers(
     async handleReprocessDeferredWebhooks(request, env, supabase, requestId = "", deps?) {
       const d = (deps ?? defaultDeps) as AdminHandlerDeps;
       const { jsonResponse } = d;
+      await guardAdminIp(request, env, d);
       const { token } = await d.requireAdmin(request, env);
       const rate = await d.rateLimit(`admin:${token}`, env);
       if (!rate.allowed) {
@@ -225,6 +244,7 @@ export function createAdminHandlers(
     async handleAdminBillingHealth(request, env, supabase, deps?) {
       const d = (deps ?? defaultDeps) as AdminHandlerDeps;
       const { jsonResponse } = d;
+      await guardAdminIp(request, env, d);
       const { token } = await d.requireAdmin(request, env);
       const rate = await d.rateLimit(`admin:${token}`, env);
       if (!rate.allowed) {
@@ -326,6 +346,7 @@ export function createAdminHandlers(
       const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
       const d = (deps ?? defaultDeps) as AdminHandlerDeps;
       const { jsonResponse } = d;
+      await guardAdminIp(request, env, d);
       const { token } = await d.requireAdmin(request, env);
       const rate = await d.rateLimit(`admin:hygiene:${token}`, env);
       if (!rate.allowed) {

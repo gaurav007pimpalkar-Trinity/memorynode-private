@@ -42,7 +42,7 @@ function makeSupabasePlanV2(options: {
   usage?: Partial<UsageState>;
 }) {
   const planCode = options.planCode ?? "free";
-  const _limits = getLimitsForPlanCode(planCode);
+  getLimitsForPlanCode(planCode);
   const usage: UsageState = {
     writes: options.usage?.writes ?? 0,
     reads: options.usage?.reads ?? 0,

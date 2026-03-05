@@ -30,6 +30,7 @@ import {
   isOriginAllowed,
   makeCorsHeaders,
   resolveRequestId,
+  runInRequestScope,
 } from "./cors.js";
 import {
   rateLimit,
@@ -1262,7 +1263,11 @@ function getMethodNotAllowedForKnownPath(pathname: string, method: string): stri
   return null;
 }
 
-export async function handleRequest(request: Request, env: Env): Promise<Response> {
+export function handleRequest(request: Request, env: Env): Promise<Response> {
+  return runInRequestScope(() => handleRequestImpl(request, env));
+}
+
+async function handleRequestImpl(request: Request, env: Env): Promise<Response> {
     const started = Date.now();
     const url = new URL(request.url);
     const pathname = url.pathname.replace(/\/$/, "") || "/";
@@ -1385,7 +1390,7 @@ export async function handleRequest(request: Request, env: Env): Promise<Respons
           );
           if (r.error) throw r.error;
           return r;
-        });
+        }, env);
       } catch (e) {
         const msg = e instanceof Error ? e.message : String(e);
         if (msg.startsWith("CIRCUIT_OPEN:")) {
@@ -2697,10 +2702,16 @@ async function fetchWithRetry(
   throw lastError;
 }
 
-async function embedText(texts: string[], env: Env): Promise<number[][]> {
+export interface EmbedResult {
+  embeddings: number[][];
+  tokensUsed: number;
+}
+
+async function embedText(texts: string[], env: Env): Promise<EmbedResult> {
   const mode = (env.EMBEDDINGS_MODE || "openai").toLowerCase();
   if (mode === "stub") {
-    return texts.map((t) => stubEmbedding(t));
+    const estimatedTokens = texts.reduce((sum, t) => sum + Math.ceil(t.length / 4), 0);
+    return { embeddings: texts.map((t) => stubEmbedding(t)), tokensUsed: estimatedTokens };
   }
 
   if (!env.OPENAI_API_KEY) {
@@ -2727,6 +2738,7 @@ async function embedText(texts: string[], env: Env): Promise<number[][]> {
         },
         { timeoutMs: EMBED_REQUEST_TIMEOUT_MS },
       ),
+    env,
     );
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
@@ -2738,26 +2750,31 @@ async function embedText(texts: string[], env: Env): Promise<number[][]> {
 
   if (!response.ok) {
     const embedLatency = Date.now() - embedStart;
+    const rawErrorBody = await response.text();
     logger.error({
       event: "embed_request",
       embed_latency_ms: embedLatency,
       embed_count: texts.length,
       status: response.status,
       success: false,
+      upstream_error: redact(rawErrorBody, "upstream_error"),
     });
-    const message = await response.text();
-    throw createHttpError(500, "EMBED_ERROR", `Embedding request failed: ${response.status} ${message}`);
+    throw createHttpError(500, "EMBED_ERROR", `Embedding service returned HTTP ${response.status}`);
   }
 
   const json = (await response.json()) as {
     data: { embedding: number[] }[];
+    usage?: { prompt_tokens?: number; total_tokens?: number };
   };
+
+  const tokensUsed = json.usage?.total_tokens ?? texts.reduce((sum, t) => sum + Math.ceil(t.length / 4), 0);
 
   const embedLatency = Date.now() - embedStart;
   logger.info({
     event: "embed_request",
     embed_latency_ms: embedLatency,
     embed_count: texts.length,
+    tokens_used: tokensUsed,
     status: response.status,
     success: true,
   });
@@ -2766,7 +2783,7 @@ async function embedText(texts: string[], env: Env): Promise<number[][]> {
     throw createHttpError(500, "EMBED_ERROR", "Embedding response missing data");
   }
 
-  return json.data.map((item) => item.embedding);
+  return { embeddings: json.data.map((item) => item.embedding), tokensUsed };
 }
 
 function vectorToPgvectorString(vector: number[]): string {
@@ -3050,7 +3067,6 @@ async function performSearch(
   const matchCount = Math.min(SEARCH_MATCH_COUNT, desired * 3);
 
   const needsKeyword = search_mode === "hybrid" || search_mode === "keyword";
-  const _embedsDelta = needsVector ? 1 : 0;
 
   const sharedArgs = {
     workspaceId: auth.workspaceId,
@@ -3068,15 +3084,15 @@ async function performSearch(
   let textResults: MatchResult[] = [];
 
   if (needsVector && needsKeyword) {
-    const queryEmbedding = (await embedText([query], env))[0];
-    const embeddingVector = vectorToPgvectorString(queryEmbedding);
+    const embedResult = await embedText([query], env);
+    const embeddingVector = vectorToPgvectorString(embedResult.embeddings[0]);
     [vectorResults, textResults] = await Promise.all([
       callMatchVector(supabase, { ...sharedArgs, queryEmbedding: embeddingVector }),
       callMatchText(supabase, { ...sharedArgs, query }),
     ]);
   } else if (needsVector) {
-    const queryEmbedding = (await embedText([query], env))[0];
-    const embeddingVector = vectorToPgvectorString(queryEmbedding);
+    const embedResult = await embedText([query], env);
+    const embeddingVector = vectorToPgvectorString(embedResult.embeddings[0]);
     vectorResults = await callMatchVector(supabase, { ...sharedArgs, queryEmbedding: embeddingVector });
   } else {
     textResults = await callMatchText(supabase, { ...sharedArgs, query });
