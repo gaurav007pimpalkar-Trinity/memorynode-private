@@ -336,7 +336,39 @@ function makeSupabase(options?: {
       }
       throw new Error(`Unexpected table ${table}`);
     },
-    rpc() {
+    rpc(name: string, params?: Record<string, unknown>) {
+      if (name === "bump_usage_if_within_cap") {
+        const pW = (params?.p_writes as number) ?? 0;
+        const pR = (params?.p_reads as number) ?? 0;
+        const pE = (params?.p_embeds as number) ?? 0;
+        const pEt = (params?.p_embed_tokens as number) ?? 0;
+        const pEx = (params?.p_extraction_calls as number) ?? 0;
+        const capW = (params?.p_writes_cap as number) ?? 0;
+        const capR = (params?.p_reads_cap as number) ?? 0;
+        const capE = (params?.p_embeds_cap as number) ?? 0;
+        const capEt = (params?.p_embed_tokens_cap as number) ?? 0;
+        const capEx = (params?.p_extraction_calls_cap as number) ?? 0;
+        const w = usage.writes;
+        const r = usage.reads;
+        const e = usage.embeds;
+        const et = (usage as Record<string, number>).embed_tokens_used ?? 0;
+        const ex = (usage as Record<string, number>).extraction_calls ?? 0;
+        if (w + pW > capW || r + pR > capR || e + pE > capE || et + pEt > capEt || ex + pEx > capEx) {
+          return {
+            data: [{ workspace_id: "ws1", day: new Date().toISOString().slice(0, 10), writes: w, reads: r, embeds: e, extraction_calls: ex, embed_tokens_used: et, exceeded: true, limit_name: "writes" }],
+            error: null,
+          };
+        }
+        usage.writes = w + pW;
+        usage.reads = r + pR;
+        usage.embeds = e + pE;
+        (usage as Record<string, number>).embed_tokens_used = et + pEt;
+        (usage as Record<string, number>).extraction_calls = ex + pEx;
+        return {
+          data: [{ workspace_id: "ws1", day: new Date().toISOString().slice(0, 10), ...usage, exceeded: false, limit_name: null }],
+          error: null,
+        };
+      }
       return { data: [], error: null };
     },
   } as unknown as SupabaseClient & {
@@ -974,9 +1006,8 @@ describe("cap enforcement upgrade path", () => {
 
     expect(res.status).toBe(402);
     const json = await res.json();
-    expect(json.error.code).toBe("CAP_EXCEEDED");
-    expect(json.error.upgrade_required).toBe(true);
-    expect(json.error.effective_plan).toBe("free");
+    expect(json.error.code).toBe("PLAN_LIMIT_EXCEEDED");
+    expect(json.error.limit).toBeDefined();
     expect(json.error.upgrade_url).toContain("/settings/billing");
   });
 
@@ -1008,9 +1039,9 @@ describe("cap enforcement upgrade path", () => {
 
     expect(res.status).toBe(402);
     const json = await res.json();
-    expect(json.error.code).toBe("CAP_EXCEEDED");
-    expect(json.error.upgrade_required).toBe(true);
-    expect(json.error.effective_plan).toBe("free");
+    expect(json.error.code).toBe("PLAN_LIMIT_EXCEEDED");
+    expect(json.error.limit).toBe("writes");
+    expect(json.error.upgrade_url).toContain("/settings/billing");
   });
 
   it("context cap uses effective plan when canceled", async () => {
@@ -1037,9 +1068,8 @@ describe("cap enforcement upgrade path", () => {
 
     expect(res.status).toBe(402);
     const json = await res.json();
-    expect(json.error.code).toBe("CAP_EXCEEDED");
-    expect(json.error.upgrade_required).toBe(true);
-    expect(json.error.effective_plan).toBe("free");
+    expect(json.error.code).toBe("PLAN_LIMIT_EXCEEDED");
+    expect(json.error.limit).toBeDefined();
   });
 
   it("blocks quota-consuming routes when entitlement is expired", async () => {

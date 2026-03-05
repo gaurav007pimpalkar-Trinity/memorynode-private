@@ -47,6 +47,10 @@ export interface Env {
   PAYU_VERIFY_URL?: string;
   PAYU_VERIFY_TIMEOUT_MS?: string;
   PAYU_CURRENCY?: string;
+  /** Global AI cost kill switch: max monthly estimated cost in INR (e.g. 50000). If exceeded, embedding/LLM calls return 503. */
+  AI_COST_BUDGET_INR?: string;
+  /** Optional: USD to INR rate for cost guard (default 83). */
+  USD_TO_INR?: string;
 }
 
 export function getEnvironmentStage(env: Env): EnvironmentStage {

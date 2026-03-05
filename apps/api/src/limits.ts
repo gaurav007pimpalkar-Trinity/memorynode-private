@@ -12,6 +12,9 @@ import {
 
 export type UsageCaps = SharedUsageCaps;
 
+/**
+ * Max text length allowed in request body (schema validation). Plan-based max_text_chars is enforced in handler and may be lower.
+ */
 export const MAX_TEXT_CHARS = 50_000;
 export const MAX_QUERY_CHARS = 2_000;
 export const DEFAULT_TOPK = 8;
@@ -47,9 +50,9 @@ export function capsByPlanCode(planCode: string | null | undefined): UsageCaps {
 
 /** Deprecated: legacy free/pro/team mapping retained only for internal fixtures/tests; do not use for new code. Not in OpenAPI or public types. */
 export const capsByPlan: Record<"free" | "pro" | "team", UsageCaps> = {
-  free: getUsageCapsForPlanCode("free"),
-  pro: getUsageCapsForPlanCode("build"),
-  team: getUsageCapsForPlanCode("deploy"),
+  free: getUsageCapsForPlanCode("free"),   // Launch: 300, 1000, 250
+  pro: getUsageCapsForPlanCode("build"),   // Build: 1000, 3000, 1000
+  team: getUsageCapsForPlanCode("deploy"), // Deploy: 5000, 10000, 10000
 };
 
 export type UsageSnapshot = { writes: number; reads: number; embeds: number };

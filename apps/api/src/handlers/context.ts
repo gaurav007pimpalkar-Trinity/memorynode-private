@@ -11,10 +11,11 @@
 
 import type { SupabaseClient } from "@supabase/supabase-js";
 import type { Env } from "../env.js";
-import { authenticate, rateLimit } from "../auth.js";
+import { authenticate, rateLimit, rateLimitWorkspace } from "../auth.js";
 import type { HandlerDeps } from "../router.js";
 import type { SearchHandlerDeps } from "./search.js";
 import { SearchPayloadSchema, parseWithSchema } from "../contracts/index.js";
+import { requireWorkspaceId } from "../supabaseScoped.js";
 
 export type ContextHandlerDeps = SearchHandlerDeps;
 
@@ -169,6 +170,25 @@ export function createContextHandlers(
       const d = (deps ?? defaultDeps) as ContextHandlerDeps;
       const { jsonResponse } = d;
       const auth = await authenticate(request, env, supabase, auditCtx);
+      requireWorkspaceId(auth.workspaceId);
+      const quota = await d.resolveQuotaForWorkspace(auth, supabase);
+      if (quota.blocked) {
+        return jsonResponse(
+          {
+            error: {
+              code: quota.errorCode ?? "ENTITLEMENT_EXPIRED",
+              message: quota.message ?? "Active entitlement expired. Renew to continue quota-consuming API calls.",
+              upgrade_required: true,
+              effective_plan: "free",
+              ...(quota.expiredAt != null && { expired_at: quota.expiredAt }),
+            },
+            upgrade_url: (env as { PUBLIC_APP_URL?: string }).PUBLIC_APP_URL
+              ? `${(env as { PUBLIC_APP_URL: string }).PUBLIC_APP_URL}/billing`
+              : undefined,
+          },
+          402,
+        );
+      }
       const rate = await rateLimit(auth.keyHash, env, auth);
       if (!rate.allowed) {
         return jsonResponse(
@@ -177,6 +197,17 @@ export function createContextHandlers(
           rate.headers,
         );
       }
+      const wsRpm = quota.planLimits.workspace_rpm ?? 120;
+      const wsRate = await d.rateLimitWorkspace(auth.workspaceId, wsRpm, env);
+      if (!wsRate.allowed) {
+        return jsonResponse(
+          { error: { code: "rate_limited", message: "Workspace rate limit exceeded" } },
+          429,
+          { ...rate.headers, ...wsRate.headers },
+        );
+      }
+      const rateHeaders = { ...rate.headers, ...wsRate.headers };
+
       const parseResult = await parseWithSchema(SearchPayloadSchema, request);
       if (!parseResult.ok) {
         return jsonResponse(
@@ -188,20 +219,29 @@ export function createContextHandlers(
             },
           },
           400,
-          rate.headers,
+          rateHeaders,
         );
       }
 
       const searchMode = parseResult.data.search_mode ?? "hybrid";
       const embedsDelta = searchMode === "keyword" ? 0 : 1;
-      const capResponse = await d.checkCapsAndMaybeRespond(
-        jsonResponse,
-        auth,
+      const embedTokensDelta = d.estimateEmbedTokens(parseResult.data.query.length);
+      const today = d.todayUtc();
+      const capResponse = await d.reserveQuotaAndMaybeRespond(
+        quota,
         supabase,
-        { writesDelta: 0, readsDelta: 1, embedsDelta },
-        rate.headers,
+        auth.workspaceId,
+        today,
+        {
+          writesDelta: 0,
+          readsDelta: 1,
+          embedsDelta,
+          embedTokensDelta,
+          extractionCallsDelta: 0,
+        },
+        rateHeaders,
         env,
-        { requestId, route: "/v1/context", method: "POST" },
+        jsonResponse,
       );
       if (capResponse) return capResponse;
 
@@ -253,7 +293,7 @@ export function createContextHandlers(
           has_more: outcome.has_more,
         },
         200,
-        rate.headers,
+        rateHeaders,
       );
     },
   };

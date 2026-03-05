@@ -1,15 +1,11 @@
-/**
- * Search handler (hybrid search + pagination + has_more/total). Phase 4: Worker split (IMPROVEMENT_PLAN.md).
- * Dependencies injected via SearchHandlerDeps to avoid circular dependency with index.
- */
-
 import type { SupabaseClient } from "@supabase/supabase-js";
 import type { Env } from "../env.js";
 import type { AuthContext } from "../auth.js";
-import { authenticate, rateLimit } from "../auth.js";
+import { authenticate, rateLimit, rateLimitWorkspace } from "../auth.js";
 import type { HandlerDeps } from "../router.js";
 import { SearchPayloadSchema, parseWithSchema, type SearchPayload } from "../contracts/index.js";
 import { requireWorkspaceId } from "../supabaseScoped.js";
+import type { QuotaResolutionLike } from "./memories.js";
 
 export type { SearchPayload } from "../contracts/index.js";
 
@@ -29,15 +25,26 @@ export interface SearchOutcome {
 
 export interface SearchHandlerDeps extends HandlerDeps {
   safeParseJson: <T>(request: Request) => Promise<{ ok: true; data: T } | { ok: false; error: string }>;
-  checkCapsAndMaybeRespond: (
-    jsonResponse: (data: unknown, status?: number, extraHeaders?: Record<string, string>) => Response,
-    auth: AuthContext,
+  resolveQuotaForWorkspace: (auth: AuthContext, supabase: SupabaseClient) => Promise<QuotaResolutionLike>;
+  rateLimitWorkspace: (workspaceId: string, workspaceRpm: number, env: Env) => Promise<{ allowed: boolean; headers: Record<string, string> }>;
+  reserveQuotaAndMaybeRespond: (
+    quota: QuotaResolutionLike,
     supabase: SupabaseClient,
-    deltas: { writesDelta: number; readsDelta: number; embedsDelta: number },
+    workspaceId: string,
+    day: string,
+    deltas: {
+      writesDelta: number;
+      readsDelta: number;
+      embedsDelta: number;
+      embedTokensDelta: number;
+      extractionCallsDelta: number;
+    },
     rateHeaders: Record<string, string> | undefined,
     env: Env,
-    logCtx?: { requestId?: string; route?: string; method?: string },
+    jsonResponse: (data: unknown, status?: number, extraHeaders?: Record<string, string>) => Response,
   ) => Promise<Response | null>;
+  todayUtc: () => string;
+  estimateEmbedTokens: (textLength: number) => number;
   performSearch: (
     auth: AuthContext,
     payload: SearchPayload,
@@ -97,6 +104,24 @@ export function createSearchHandlers(
       const { jsonResponse } = d;
       const auth = await authenticate(request, env, supabase, auditCtx);
       requireWorkspaceId(auth.workspaceId);
+      const quota = await d.resolveQuotaForWorkspace(auth, supabase);
+      if (quota.blocked) {
+        return jsonResponse(
+          {
+            error: {
+              code: quota.errorCode ?? "ENTITLEMENT_EXPIRED",
+              message: quota.message ?? "Active entitlement expired. Renew to continue quota-consuming API calls.",
+              upgrade_required: true,
+              effective_plan: "free",
+              ...(quota.expiredAt != null && { expired_at: quota.expiredAt }),
+            },
+            upgrade_url: (env as { PUBLIC_APP_URL?: string }).PUBLIC_APP_URL
+              ? `${(env as { PUBLIC_APP_URL: string }).PUBLIC_APP_URL}/billing`
+              : undefined,
+          },
+          402,
+        );
+      }
       const rate = await rateLimit(auth.keyHash, env, auth);
       if (!rate.allowed) {
         return jsonResponse(
@@ -105,6 +130,17 @@ export function createSearchHandlers(
           rate.headers,
         );
       }
+      const wsRpm = quota.planLimits.workspace_rpm ?? 120;
+      const wsRate = await d.rateLimitWorkspace(auth.workspaceId, wsRpm, env);
+      if (!wsRate.allowed) {
+        return jsonResponse(
+          { error: { code: "rate_limited", message: "Workspace rate limit exceeded" } },
+          429,
+          { ...rate.headers, ...wsRate.headers },
+        );
+      }
+      const rateHeaders = { ...rate.headers, ...wsRate.headers };
+
       const parseResult = await parseWithSchema(SearchPayloadSchema, request);
       if (!parseResult.ok) {
         return jsonResponse(
@@ -116,22 +152,47 @@ export function createSearchHandlers(
             },
           },
           400,
-          rate.headers,
+          rateHeaders,
         );
       }
 
       const searchMode = parseResult.data.search_mode ?? "hybrid";
       const embedsDelta = searchMode === "keyword" ? 0 : 1;
-      const capResponse = await d.checkCapsAndMaybeRespond(
-        jsonResponse,
-        auth,
+      const embedTokensDelta = d.estimateEmbedTokens(parseResult.data.query.length);
+      const today = d.todayUtc();
+      const capResponse = await d.reserveQuotaAndMaybeRespond(
+        quota,
         supabase,
-        { writesDelta: 0, readsDelta: 1, embedsDelta },
-        rate.headers,
+        auth.workspaceId,
+        today,
+        {
+          writesDelta: 0,
+          readsDelta: 1,
+          embedsDelta,
+          embedTokensDelta,
+          extractionCallsDelta: 0,
+        },
+        rateHeaders,
         env,
-        { requestId, route: "/v1/search", method: "POST" },
+        jsonResponse,
       );
-      if (capResponse) return capResponse;
+      if (capResponse) {
+        void d.emitProductEvent(
+          supabase,
+          "cap_exceeded",
+          {
+            workspaceId: auth.workspaceId,
+            requestId,
+            route: "/v1/search",
+            method: "POST",
+            status: 402,
+            effectivePlan: d.effectivePlan(auth.plan, auth.planStatus),
+            planStatus: auth.planStatus,
+          },
+          {},
+        );
+        return capResponse;
+      }
 
       const outcome = await d.performSearch(auth, parseResult.data, env, supabase);
 
@@ -187,7 +248,7 @@ export function createSearchHandlers(
           has_more: outcome.has_more,
         },
         200,
-        rate.headers,
+        rateHeaders,
       );
     },
 
@@ -260,16 +321,52 @@ export function createSearchHandlers(
         min_score: replayMinScore,
       };
       const replayEmbedsDelta = (replaySearchMode ?? "hybrid") === "keyword" ? 0 : 1;
-      const capResponse = await d.checkCapsAndMaybeRespond(
-        jsonResponse,
-        auth,
+      const replayEmbedTokensDelta = d.estimateEmbedTokens(String(row.query ?? "").length);
+      const quotaReplay = await d.resolveQuotaForWorkspace(auth, supabase);
+      if (quotaReplay.blocked) {
+        return jsonResponse(
+          {
+            error: {
+              code: "ENTITLEMENT_EXPIRED",
+              message: "Active entitlement expired. Renew to continue quota-consuming API calls.",
+              upgrade_required: true,
+              effective_plan: "free",
+            },
+            upgrade_url: (env as { PUBLIC_APP_URL?: string }).PUBLIC_APP_URL
+              ? `${(env as { PUBLIC_APP_URL: string }).PUBLIC_APP_URL}/billing`
+              : undefined,
+          },
+          402,
+        );
+      }
+      const wsRpmReplay = quotaReplay.planLimits.workspace_rpm ?? 120;
+      const wsRateReplay = await d.rateLimitWorkspace(auth.workspaceId, wsRpmReplay, env);
+      if (!wsRateReplay.allowed) {
+        return jsonResponse(
+          { error: { code: "rate_limited", message: "Workspace rate limit exceeded" } },
+          429,
+          { ...rate.headers, ...wsRateReplay.headers },
+        );
+      }
+      const rateHeadersReplay = { ...rate.headers, ...wsRateReplay.headers };
+      const todayReplay = d.todayUtc();
+      const capResponseReplay = await d.reserveQuotaAndMaybeRespond(
+        quotaReplay,
         supabase,
-        { writesDelta: 0, readsDelta: 1, embedsDelta: replayEmbedsDelta },
-        rate.headers,
+        auth.workspaceId,
+        todayReplay,
+        {
+          writesDelta: 0,
+          readsDelta: 1,
+          embedsDelta: replayEmbedsDelta,
+          embedTokensDelta: replayEmbedTokensDelta,
+          extractionCallsDelta: 0,
+        },
+        rateHeadersReplay,
         env,
-        { requestId, route: "/v1/search/replay", method: "POST" },
+        jsonResponse,
       );
-      if (capResponse) return capResponse;
+      if (capResponseReplay) return capResponseReplay;
       const current = await d.performSearch(auth, payload, env, supabase);
       return jsonResponse(
         {
@@ -284,7 +381,7 @@ export function createSearchHandlers(
           },
         },
         200,
-        rate.headers,
+        rateHeadersReplay,
       );
     },
   };

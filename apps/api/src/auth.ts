@@ -259,6 +259,45 @@ export async function rateLimit(
   return { allowed: data.allowed, headers };
 }
 
+/** Workspace-level rate limit (Plan v2). Call after key rate limit. Uses same DO with rl-ws:workspaceId. */
+export async function rateLimitWorkspace(
+  workspaceId: string,
+  workspaceRpm: number,
+  env: Env,
+): Promise<{ allowed: boolean; headers: Record<string, string> }> {
+  if ((env.RATE_LIMIT_MODE ?? "on").toLowerCase() === "off") return { allowed: true, headers: {} };
+  const ns = env.RATE_LIMIT_DO;
+  if (!ns || typeof ns.idFromName !== "function" || typeof ns.get !== "function") {
+    return { allowed: true, headers: {} };
+  }
+  const name = `rl-ws:${workspaceId}`;
+  const id = ns.idFromName(name);
+  const stub = ns.get(id);
+  let resp: Response;
+  try {
+    resp = await stub.fetch("https://rate-limit/check", {
+      method: "POST",
+      body: JSON.stringify({ limit: Math.max(1, Math.floor(workspaceRpm)) }),
+      headers: { "content-type": "application/json" },
+    });
+  } catch (err) {
+    throw createHttpError(503, "RATE_LIMIT_UNAVAILABLE", "Rate limit service unavailable");
+  }
+  if (!resp.ok) {
+    throw createHttpError(503, "RATE_LIMIT_UNAVAILABLE", "Rate limit service unavailable");
+  }
+  const data = (await resp.json()) as { allowed: boolean; count: number; limit: number; reset: number };
+  const nowSec = Math.floor(Date.now() / 1000);
+  const retryAfter = Math.max(0, data.reset - nowSec);
+  const headers = {
+    "x-ratelimit-workspace-limit": data.limit.toString(),
+    "x-ratelimit-workspace-remaining": Math.max(0, data.limit - data.count).toString(),
+    "x-ratelimit-workspace-reset": data.reset.toString(),
+    "retry-after": retryAfter.toString(),
+  };
+  return { allowed: data.allowed, headers };
+}
+
 export async function requireAdmin(request: Request, env: Env): Promise<{ token: string }> {
   const token = request.headers.get("x-admin-token");
   if (!token || token !== env.MASTER_ADMIN_TOKEN) {

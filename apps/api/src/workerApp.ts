@@ -8,12 +8,13 @@ import {
   MAX_TOPK,
   type UsageSnapshot,
 } from "./limits.js";
-import { getPlan } from "@memorynodeai/shared";
+import { getPlan, getLimitsForPlanCode, type PlanLimits } from "@memorynodeai/shared";
 import type { Env } from "./env.js";
 import { getEnvironmentStage, validateStubModes, validateRateLimitConfig } from "./env.js";
 import { logger, redact } from "./logger.js";
 import { route, type HandlerDeps } from "./router.js";
 import { createHttpError, isApiError } from "./http.js";
+import { checkGlobalCostGuard, AIBudgetExceededError } from "./costGuard.js";
 import {
   setCorsHeadersForRequest,
   clearCorsHeadersForRequest,
@@ -32,6 +33,7 @@ import {
 } from "./cors.js";
 import {
   rateLimit,
+  rateLimitWorkspace,
   requireAdmin,
   type AuthContext,
   normalizePlanStatus,
@@ -544,11 +546,13 @@ type PayUVerifyResponse = {
 
 type QuotaResolution = {
   caps: UsageSnapshot;
+  planLimits: PlanLimits;
   effectivePlan: EffectivePlanCode;
   planStatus: AuthContext["planStatus"];
   blocked: false;
 } | {
   caps: UsageSnapshot;
+  planLimits: PlanLimits;
   effectivePlan: EffectivePlanCode;
   planStatus: AuthContext["planStatus"];
   blocked: true;
@@ -645,6 +649,7 @@ async function resolveQuotaForWorkspace(
   supabase: SupabaseClient,
 ): Promise<QuotaResolution> {
   const fallbackCaps = capsByPlanCode("free");
+  const fallbackPlanLimits = getLimitsForPlanCode("free");
   const fallbackPlan: EffectivePlanCode = "free";
   const fallbackStatus = auth.planStatus ?? "free";
   const now = Date.now();
@@ -658,6 +663,7 @@ async function resolveQuotaForWorkspace(
     if (query.error) {
       return {
         caps: fallbackCaps,
+        planLimits: fallbackPlanLimits,
         effectivePlan: fallbackPlan,
         planStatus: fallbackStatus,
         blocked: false,
@@ -673,6 +679,7 @@ async function resolveQuotaForWorkspace(
     if (rows.length === 0) {
       return {
         caps: fallbackCaps,
+        planLimits: fallbackPlanLimits,
         effectivePlan: fallbackPlan,
         planStatus: fallbackStatus,
         blocked: false,
@@ -692,6 +699,7 @@ async function resolveQuotaForWorkspace(
       const caps = normalizeUsageCaps(active.caps_json) ?? resolveCapsByEntitlementPlan(planCode);
       return {
         caps,
+        planLimits: getLimitsForPlanCode(planCode),
         effectivePlan: authPlanFromEntitlement(planCode),
         planStatus: "active",
         blocked: false,
@@ -705,6 +713,7 @@ async function resolveQuotaForWorkspace(
     if (expired) {
       return {
         caps: fallbackCaps,
+        planLimits: fallbackPlanLimits,
         effectivePlan: "free",
         planStatus: "canceled",
         blocked: true,
@@ -718,6 +727,7 @@ async function resolveQuotaForWorkspace(
   }
   return {
     caps: fallbackCaps,
+    planLimits: fallbackPlanLimits,
     effectivePlan: fallbackPlan,
     planStatus: fallbackStatus,
     blocked: false,
@@ -1004,6 +1014,31 @@ function capExceededResponse(
         effective_plan: effectivePlanOverride,
         limits: caps,
         usage,
+        upgrade_url: buildUpgradeUrl(env),
+      },
+    },
+    402,
+    rateHeaders,
+  );
+}
+
+/** Plan v2: 402 with PLAN_LIMIT_EXCEEDED and limit/used/cap for clarity. */
+function planLimitExceededResponse(
+  limit: string,
+  used: number,
+  cap: number,
+  rateHeaders: Record<string, string> | undefined,
+  jsonResponse: (data: unknown, status?: number, extraHeaders?: Record<string, string>) => Response,
+  env: Env,
+): Response {
+  return jsonResponse(
+    {
+      error: {
+        code: "PLAN_LIMIT_EXCEEDED",
+        limit,
+        used,
+        cap,
+        message: `Plan limit exceeded: ${limit}`,
         upgrade_url: buildUpgradeUrl(env),
       },
     },
@@ -1568,6 +1603,9 @@ export async function handleRequest(request: Request, env: Env): Promise<Respons
         performSearch,
         getUsage,
         resolveQuotaForWorkspace,
+        reserveQuotaAndMaybeRespond,
+        planLimitExceededResponse,
+        estimateEmbedTokens,
         normalizePlanStatus,
         emitEventLog,
         redact,
@@ -1599,6 +1637,7 @@ export async function handleRequest(request: Request, env: Env): Promise<Respons
         isApiError,
         requireAdmin,
         rateLimit,
+        rateLimitWorkspace,
         defaultWebhookReprocessLimit: DEFAULT_WEBHOOK_REPROCESS_LIMIT,
         resolvePayUVerifyTimeoutMs,
         wantsZipResponse,
@@ -2011,15 +2050,60 @@ function createStubSupabase(env: Env) {
             existing.embeds = (existing.embeds as number) + (params.p_embeds as number);
             return Promise.resolve({ data: existing, error: null });
           }
-          const row = {
+          const row: Record<string, unknown> = {
             workspace_id: params.p_workspace_id,
             day: params.p_day,
             writes: params.p_writes,
             reads: params.p_reads,
             embeds: params.p_embeds,
+            extraction_calls: 0,
+            embed_tokens_used: 0,
           };
-          db.usage_daily.push(row);
+          db.usage_daily.push(row as StubRow);
           return Promise.resolve({ data: row, error: null });
+        }
+        case "bump_usage_if_within_cap": {
+          const pW = (params.p_writes as number) ?? 0;
+          const pR = (params.p_reads as number) ?? 0;
+          const pE = (params.p_embeds as number) ?? 0;
+          const pEt = (params.p_embed_tokens as number) ?? 0;
+          const pEx = (params.p_extraction_calls as number) ?? 0;
+          const capW = (params.p_writes_cap as number) ?? 0;
+          const capR = (params.p_reads_cap as number) ?? 0;
+          const capE = (params.p_embeds_cap as number) ?? 0;
+          const capEt = (params.p_embed_tokens_cap as number) ?? 0;
+          const capEx = (params.p_extraction_calls_cap as number) ?? 0;
+          let existing = db.usage_daily.find(
+            (r) => r.workspace_id === params.p_workspace_id && r.day === params.p_day,
+          ) as Record<string, unknown> | undefined;
+          if (!existing) {
+            existing = {
+              workspace_id: params.p_workspace_id,
+              day: params.p_day,
+              writes: 0,
+              reads: 0,
+              embeds: 0,
+              extraction_calls: 0,
+              embed_tokens_used: 0,
+            };
+            db.usage_daily.push(existing as StubRow);
+          }
+          const w = (existing.writes as number) ?? 0;
+          const r = (existing.reads as number) ?? 0;
+          const e = (existing.embeds as number) ?? 0;
+          const et = (existing.embed_tokens_used as number) ?? 0;
+          const ex = (existing.extraction_calls as number) ?? 0;
+          if (w + pW > capW) return Promise.resolve({ data: [{ ...existing, exceeded: true, limit_name: "writes" }], error: null });
+          if (r + pR > capR) return Promise.resolve({ data: [{ ...existing, exceeded: true, limit_name: "reads" }], error: null });
+          if (e + pE > capE) return Promise.resolve({ data: [{ ...existing, exceeded: true, limit_name: "embeds" }], error: null });
+          if (et + pEt > capEt) return Promise.resolve({ data: [{ ...existing, exceeded: true, limit_name: "embed_tokens" }], error: null });
+          if (ex + pEx > capEx) return Promise.resolve({ data: [{ ...existing, exceeded: true, limit_name: "extraction_calls" }], error: null });
+          existing.writes = w + pW;
+          existing.reads = r + pR;
+          existing.embeds = e + pE;
+          existing.embed_tokens_used = et + pEt;
+          existing.extraction_calls = ex + pEx;
+          return Promise.resolve({ data: [{ ...existing, exceeded: false, limit_name: null }], error: null });
         }
         case "match_chunks_vector":
         case "match_chunks_text": {
@@ -2361,7 +2445,16 @@ export async function importArtifact(
   artifactBase64: string,
   maxBytes: number,
   mode: ImportMode = "upsert",
-): Promise<ImportOutcome> {
+  options?: {
+    preInsertGuard?: (deltas: {
+      writesDelta: number;
+      readsDelta: number;
+      embedsDelta: number;
+      embedTokensDelta: number;
+      extractionCallsDelta: number;
+    }) => Promise<Response | null>;
+  },
+): Promise<ImportOutcome | { cap_exceeded: true; response: Response }> {
   const allowedModes: ImportMode[] = ["upsert", "skip_existing", "error_on_conflict", "replace_ids", "replace_all"];
   if (!allowedModes.includes(mode)) {
     throw createHttpError(400, "BAD_REQUEST", "invalid import mode");
@@ -2466,6 +2559,23 @@ export async function importArtifact(
       const delMems = await supabase.from("memories").delete().eq("workspace_id", auth.workspaceId).in("id", memIds);
       ensureOk(delMems, "Failed to delete memories by id");
     }
+  }
+
+  const writesDelta = memoriesToWrite.length;
+  const embedsDelta = chunksToWrite.length;
+  const embedTokensDelta = chunksToWrite.reduce(
+    (sum, c) => sum + estimateEmbedTokens(String((c as { chunk_text?: string }).chunk_text ?? "").length),
+    0,
+  );
+  if (options?.preInsertGuard) {
+    const guardResponse = await options.preInsertGuard({
+      writesDelta,
+      readsDelta: 0,
+      embedsDelta,
+      embedTokensDelta,
+      extractionCallsDelta: 0,
+    });
+    if (guardResponse) return { cap_exceeded: true, response: guardResponse };
   }
 
   let importedMemories = 0;
@@ -2923,12 +3033,22 @@ async function performSearch(
   const searchStart = Date.now();
   const params = normalizeSearchPayload(payload);
   const { user_id, query, namespace, top_k, page, page_size, explain, search_mode, min_score, filters } = params;
-  const today = todayUtc();
+
+  const needsVector = search_mode === "hybrid" || search_mode === "vector";
+  if (needsVector) {
+    try {
+      await checkGlobalCostGuard(supabase, env);
+    } catch (e) {
+      if (e instanceof AIBudgetExceededError) {
+        throw createHttpError(503, "ai_budget_exceeded", "AI usage temporarily paused due to budget protection.");
+      }
+      throw e;
+    }
+  }
 
   const desired = Math.min(MAX_FUSE_RESULTS, Math.max(top_k, page * page_size));
   const matchCount = Math.min(SEARCH_MATCH_COUNT, desired * 3);
 
-  const needsVector = search_mode === "hybrid" || search_mode === "vector";
   const needsKeyword = search_mode === "hybrid" || search_mode === "keyword";
   const embedsDelta = needsVector ? 1 : 0;
 
@@ -2962,12 +3082,7 @@ async function performSearch(
     textResults = await callMatchText(supabase, { ...sharedArgs, query });
   }
 
-  await bumpUsage(supabase, auth.workspaceId, today, {
-    writesDelta: 0,
-    readsDelta: 1,
-    embedsDelta: embedsDelta,
-  });
-
+  /* Quota reserved by caller (search/context/eval) via reserveQuotaAndMaybeRespond before calling performSearch. */
   const fused = reciprocalRankFusion(
     vectorResults,
     textResults,
@@ -3086,6 +3201,8 @@ type UsageRow = {
   writes: number;
   reads: number;
   embeds: number;
+  extraction_calls?: number;
+  embed_tokens_used?: number;
 };
 
 function todayUtc(): string {
@@ -3099,7 +3216,7 @@ async function getUsage(
 ): Promise<UsageRow> {
   const { data, error } = await supabase
     .from("usage_daily")
-    .select("workspace_id, day, writes, reads, embeds")
+    .select("workspace_id, day, writes, reads, embeds, extraction_calls, embed_tokens_used")
     .eq("workspace_id", workspaceId)
     .eq("day", day)
     .maybeSingle();
@@ -3109,10 +3226,27 @@ async function getUsage(
   }
 
   if (!data) {
-    return { workspace_id: workspaceId, day, writes: 0, reads: 0, embeds: 0 };
+    return {
+      workspace_id: workspaceId,
+      day,
+      writes: 0,
+      reads: 0,
+      embeds: 0,
+      extraction_calls: 0,
+      embed_tokens_used: 0,
+    };
   }
 
-  return data as UsageRow;
+  const row = data as Record<string, unknown>;
+  return {
+    workspace_id: workspaceId,
+    day,
+    writes: Number(row.writes) ?? 0,
+    reads: Number(row.reads) ?? 0,
+    embeds: Number(row.embeds) ?? 0,
+    extraction_calls: Number(row.extraction_calls) ?? 0,
+    embed_tokens_used: Number(row.embed_tokens_used) ?? 0,
+  };
 }
 
 async function bumpUsage(
@@ -3134,6 +3268,140 @@ async function bumpUsage(
   }
 
   return data as UsageRow;
+}
+
+/** Estimate embed tokens from text length: ceil(len/4). */
+function estimateEmbedTokens(textLength: number): number {
+  return Math.ceil(Math.max(0, textLength) / 4);
+}
+
+/** Result of atomic cap check + bump. On success usage was incremented; on exceeded nothing was changed. */
+type BumpWithinCapResult =
+  | { ok: true; usage: UsageRow }
+  | { ok: false; limit: string; used: number; cap: number };
+
+async function bumpUsageIfWithinCap(
+  supabase: SupabaseClient,
+  workspaceId: string,
+  day: string,
+  deltas: {
+    writesDelta: number;
+    readsDelta: number;
+    embedsDelta: number;
+    embedTokensDelta: number;
+    extractionCallsDelta: number;
+  },
+  planLimits: PlanLimits,
+): Promise<BumpWithinCapResult> {
+  const caps = {
+    writes: planLimits.writes_per_day,
+    reads: planLimits.reads_per_day,
+    embeds: Math.floor(planLimits.embed_tokens_per_day / 200),
+    embed_tokens: planLimits.embed_tokens_per_day,
+    extraction_calls: planLimits.extraction_calls_per_day,
+  };
+  const { data, error } = await supabase.rpc("bump_usage_if_within_cap", {
+    p_workspace_id: workspaceId,
+    p_day: day,
+    p_writes: deltas.writesDelta,
+    p_reads: deltas.readsDelta,
+    p_embeds: deltas.embedsDelta,
+    p_embed_tokens: deltas.embedTokensDelta,
+    p_extraction_calls: deltas.extractionCallsDelta,
+    p_writes_cap: caps.writes,
+    p_reads_cap: caps.reads,
+    p_embeds_cap: caps.embeds,
+    p_embed_tokens_cap: caps.embed_tokens,
+    p_extraction_calls_cap: caps.extraction_calls,
+  });
+
+  if (error) {
+    throw createHttpError(500, "DB_ERROR", `Failed to bump usage: ${error.message}`);
+  }
+
+  const rows = Array.isArray(data) ? data : data ? [data] : [];
+  const row = rows[0] as
+    | { exceeded?: boolean; limit_name?: string; writes?: number; reads?: number; embeds?: number; extraction_calls?: number; embed_tokens_used?: number }
+    | undefined;
+  if (!row) {
+    throw createHttpError(500, "DB_ERROR", "bump_usage_if_within_cap returned no row");
+  }
+  if (row.exceeded === true && row.limit_name) {
+    const used =
+      row.limit_name === "writes"
+        ? (row.writes ?? 0)
+        : row.limit_name === "reads"
+          ? (row.reads ?? 0)
+          : row.limit_name === "embeds"
+            ? (row.embeds ?? 0)
+            : row.limit_name === "embed_tokens"
+              ? (row.embed_tokens_used ?? 0)
+              : row.limit_name === "extraction_calls"
+                ? (row.extraction_calls ?? 0)
+                : 0;
+    const cap =
+      row.limit_name === "writes"
+        ? caps.writes
+        : row.limit_name === "reads"
+          ? caps.reads
+          : row.limit_name === "embeds"
+            ? caps.embeds
+            : row.limit_name === "embed_tokens"
+              ? caps.embed_tokens
+              : row.limit_name === "extraction_calls"
+                ? caps.extraction_calls
+                : 0;
+    return { ok: false, limit: row.limit_name, used, cap };
+  }
+  return {
+    ok: true,
+    usage: {
+      workspace_id: workspaceId,
+      day,
+      writes: row.writes ?? 0,
+      reads: row.reads ?? 0,
+      embeds: row.embeds ?? 0,
+      extraction_calls: row.extraction_calls ?? 0,
+      embed_tokens_used: row.embed_tokens_used ?? 0,
+    },
+  };
+}
+
+async function reserveQuotaAndMaybeRespond(
+  quota: { planLimits: PlanLimits; blocked: boolean },
+  supabase: SupabaseClient,
+  workspaceId: string,
+  day: string,
+  deltas: {
+    writesDelta: number;
+    readsDelta: number;
+    embedsDelta: number;
+    embedTokensDelta: number;
+    extractionCallsDelta: number;
+  },
+  rateHeaders: Record<string, string> | undefined,
+  env: Env,
+  jsonResponse: (data: unknown, status?: number, extraHeaders?: Record<string, string>) => Response,
+): Promise<Response | null> {
+  if (quota.blocked) return null;
+  const result = await bumpUsageIfWithinCap(
+    supabase,
+    workspaceId,
+    day,
+    deltas,
+    quota.planLimits,
+  );
+  if (!result.ok) {
+    return planLimitExceededResponse(
+      result.limit,
+      result.used,
+      result.cap,
+      rateHeaders,
+      jsonResponse,
+      env,
+    );
+  }
+  return null;
 }
 
 export async function deleteMemoryCascade(
@@ -3179,6 +3447,10 @@ const defaultMemoryHandlerDeps: MemoryHandlerDeps = {
   performListMemories,
   deleteMemoryCascade,
   checkCapsAndMaybeRespond,
+  resolveQuotaForWorkspace,
+  reserveQuotaAndMaybeRespond,
+  planLimitExceededResponse,
+  estimateEmbedTokens,
 };
 
 const memoryHandlersDefault = createMemoryHandlers(defaultMemoryHandlerDeps, defaultMemoryHandlerDeps);
@@ -3187,7 +3459,11 @@ const memoryHandlersDefault = createMemoryHandlers(defaultMemoryHandlerDeps, def
 const defaultSearchHandlerDeps: SearchHandlerDeps = {
   jsonResponse: simpleJsonResponse,
   safeParseJson,
-  checkCapsAndMaybeRespond,
+  resolveQuotaForWorkspace,
+  rateLimitWorkspace,
+  reserveQuotaAndMaybeRespond,
+  todayUtc,
+  estimateEmbedTokens,
   performSearch,
   emitProductEvent,
   effectivePlan,
@@ -3198,8 +3474,14 @@ const contextHandlersDefault = createContextHandlers(defaultSearchHandlerDeps, d
 
 const defaultEvalHandlerDeps: EvalHandlerDeps = {
   jsonResponse: simpleJsonResponse,
+  resolveQuotaForWorkspace,
+  rateLimitWorkspace,
+  reserveQuotaAndMaybeRespond,
+  todayUtc,
+  estimateEmbedTokens,
   performSearch,
 };
+const evalHandlersDefault = createEvalHandlers(defaultEvalHandlerDeps, defaultEvalHandlerDeps);
 
 const defaultEpisodeHandlerDeps: HandlerDeps = {
   jsonResponse: simpleJsonResponse,
@@ -3291,6 +3573,9 @@ const exportHandlersDefault = createExportHandlers(defaultExportHandlerDeps, def
 const defaultImportHandlerDeps: ImportHandlerDeps = {
   jsonResponse: simpleJsonResponse,
   safeParseJson,
+  resolveQuotaForWorkspace,
+  reserveQuotaAndMaybeRespond,
+  todayUtc,
   importArtifact: importArtifact as ImportHandlerDeps["importArtifact"],
   defaultMaxImportBytes: DEFAULT_MAX_IMPORT_BYTES,
 };
@@ -3337,6 +3622,7 @@ export const handleCleanupExpiredSessions = adminHandlersDefault.handleCleanupEx
 export const handleMemoryHygiene = adminHandlersDefault.handleMemoryHygiene;
 export const handleExport = exportHandlersDefault.handleExport;
 export const handleImport = importHandlersDefault.handleImport;
+export const handleRunEval = evalHandlersDefault.handleRunEval;
 export const handleCreateWorkspace = workspacesHandlersDefault.handleCreateWorkspace;
 export const handleCreateApiKey = apiKeysHandlersDefault.handleCreateApiKey;
 export const handleListApiKeys = apiKeysHandlersDefault.handleListApiKeys;

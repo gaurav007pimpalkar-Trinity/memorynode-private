@@ -1,15 +1,20 @@
 /**
  * Eval handler: CRUD + run retrieval evaluation. Phase 5 retrieval cockpit.
+ * Phase 6: Cap items per run (max 100), total delta, atomic RPC before run.
  */
 
 import type { SupabaseClient } from "@supabase/supabase-js";
 import type { Env } from "../env.js";
 import type { AuthContext } from "../auth.js";
-import { authenticate, rateLimit } from "../auth.js";
+import { authenticate, rateLimit, rateLimitWorkspace } from "../auth.js";
 import type { HandlerDeps } from "../router.js";
 import type { SearchOutcome } from "./search.js";
+import type { QuotaResolutionLike } from "./memories.js";
 
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+
+/** Max eval items per run for cap enforcement. */
+export const EVAL_RUN_ITEMS_CAP = 100;
 
 const RunEvalSchema = {
   eval_set_id: (v: unknown) => (typeof v === "string" && v.length > 0 ? v : null),
@@ -18,6 +23,26 @@ const RunEvalSchema = {
 };
 
 export interface EvalHandlerDeps extends HandlerDeps {
+  resolveQuotaForWorkspace: (auth: AuthContext, supabase: SupabaseClient) => Promise<QuotaResolutionLike>;
+  rateLimitWorkspace: (workspaceId: string, workspaceRpm: number, env: Env) => Promise<{ allowed: boolean; headers: Record<string, string> }>;
+  reserveQuotaAndMaybeRespond: (
+    quota: QuotaResolutionLike,
+    supabase: SupabaseClient,
+    workspaceId: string,
+    day: string,
+    deltas: {
+      writesDelta: number;
+      readsDelta: number;
+      embedsDelta: number;
+      embedTokensDelta: number;
+      extractionCallsDelta: number;
+    },
+    rateHeaders: Record<string, string> | undefined,
+    env: Env,
+    jsonResponse: (data: unknown, status?: number, extraHeaders?: Record<string, string>) => Response,
+  ) => Promise<Response | null>;
+  todayUtc: () => string;
+  estimateEmbedTokens: (textLength: number) => number;
   performSearch: (
     auth: AuthContext,
     payload: { user_id: string; query: string; namespace?: string; top_k?: number; explain?: boolean },
@@ -228,6 +253,60 @@ export function createEvalHandlers(
         );
       }
 
+      const cappedItems = items.slice(0, EVAL_RUN_ITEMS_CAP);
+      const totalReads = cappedItems.length;
+      const totalEmbeds = cappedItems.length;
+      const totalEmbedTokens = cappedItems.reduce(
+        (sum, item) => sum + d.estimateEmbedTokens(String((item as { query?: string }).query ?? "").length),
+        0,
+      );
+
+      const quota = await d.resolveQuotaForWorkspace(auth, supabase);
+      if (quota.blocked) {
+        return jsonResponse(
+          {
+            error: {
+              code: "ENTITLEMENT_EXPIRED",
+              message: "Active entitlement expired. Renew to continue quota-consuming API calls.",
+              upgrade_required: true,
+              effective_plan: "free",
+            },
+            upgrade_url: (env as { PUBLIC_APP_URL?: string }).PUBLIC_APP_URL
+              ? `${(env as { PUBLIC_APP_URL: string }).PUBLIC_APP_URL}/billing`
+              : undefined,
+          },
+          402,
+        );
+      }
+      const wsRpm = quota.planLimits.workspace_rpm ?? 120;
+      const wsRate = await d.rateLimitWorkspace(auth.workspaceId, wsRpm, env);
+      if (!wsRate.allowed) {
+        return jsonResponse(
+          { error: { code: "rate_limited", message: "Workspace rate limit exceeded" } },
+          429,
+          { ...rate.headers, ...wsRate.headers },
+        );
+      }
+      const rateHeaders = { ...rate.headers, ...wsRate.headers };
+      const today = d.todayUtc();
+      const capResponse = await d.reserveQuotaAndMaybeRespond(
+        quota,
+        supabase,
+        auth.workspaceId,
+        today,
+        {
+          writesDelta: 0,
+          readsDelta: totalReads,
+          embedsDelta: totalEmbeds,
+          embedTokensDelta: totalEmbedTokens,
+          extractionCallsDelta: 0,
+        },
+        rateHeaders,
+        env,
+        jsonResponse,
+      );
+      if (capResponse) return capResponse;
+
       const results: Array<{
         item_id: string;
         query: string;
@@ -237,7 +316,7 @@ export function createEvalHandlers(
         recall: number;
       }> = [];
 
-      for (const item of items) {
+      for (const item of cappedItems) {
         const expected = ((item.expected_memory_ids ?? []) as string[]).filter(Boolean);
         const outcome = await d.performSearch(
           auth,
@@ -274,7 +353,7 @@ export function createEvalHandlers(
           },
         },
         200,
-        rate.headers,
+        rateHeaders,
       );
     },
   };

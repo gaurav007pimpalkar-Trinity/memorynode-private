@@ -179,4 +179,5 @@ export {
   getLimitsForPlanCode,
   embedsCapFromEmbedTokens,
   getUsageCapsForPlanCode,
+  getWorkspaceRpmForPlanCode,
 } from "./plans.js";

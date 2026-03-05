@@ -273,9 +273,39 @@ function makeSupabase(options?: {
       }
       return { rpc: () => ({ data: [], error: null }) };
     },
-    rpc(name: string) {
+    rpc(name: string, params?: Record<string, unknown>) {
       if (name === "bump_usage_rpc" || name === "bump_usage")
-        return { data: { writes: usage.writes, reads: usage.reads, embeds: usage.embeds }, error: null };
+        return { data: { writes: usage.writes, reads: usage.reads, embeds: usage.embeds, extraction_calls: 0, embed_tokens_used: 0 }, error: null };
+      if (name === "bump_usage_if_within_cap") {
+        const pW = (params?.p_writes as number) ?? 0;
+        const pR = (params?.p_reads as number) ?? 0;
+        const pE = (params?.p_embeds as number) ?? 0;
+        const pEt = (params?.p_embed_tokens as number) ?? 0;
+        const pEx = (params?.p_extraction_calls as number) ?? 0;
+        const capW = (params?.p_writes_cap as number) ?? 0;
+        const capR = (params?.p_reads_cap as number) ?? 0;
+        const capE = (params?.p_embeds_cap as number) ?? 0;
+        const capEt = (params?.p_embed_tokens_cap as number) ?? 0;
+        const capEx = (params?.p_extraction_calls_cap as number) ?? 0;
+        const w = usage.writes;
+        const r = usage.reads;
+        const e = usage.embeds;
+        const et = 0;
+        const ex = 0;
+        if (w + pW > capW || r + pR > capR || e + pE > capE || et + pEt > capEt || ex + pEx > capEx) {
+          return {
+            data: [{ workspace_id: "ws1", day: new Date().toISOString().slice(0, 10), writes: w, reads: r, embeds: e, extraction_calls: ex, embed_tokens_used: et, exceeded: true, limit_name: "writes" }],
+            error: null,
+          };
+        }
+        usage.writes = w + pW;
+        usage.reads = r + pR;
+        usage.embeds = e + pE;
+        return {
+          data: [{ workspace_id: "ws1", day: new Date().toISOString().slice(0, 10), writes: usage.writes, reads: usage.reads, embeds: usage.embeds, extraction_calls: 0, embed_tokens_used: 0, exceeded: false, limit_name: null }],
+          error: null,
+        };
+      }
       return { data: [], error: null };
     },
   } as unknown as SupabaseMock;

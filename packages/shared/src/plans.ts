@@ -1,6 +1,7 @@
 /**
- * Single source of truth for platform plans and limits.
+ * Single source of truth for platform plans and limits (Plan v2).
  * Used by API (caps, billing) and docs. No internal org/team plans.
+ * Financial safety: extraction_calls_per_day, max_text_chars, token-based caps.
  */
 
 export type PlanId = "launch" | "build" | "deploy" | "scale" | "scale_plus";
@@ -8,8 +9,14 @@ export type PlanId = "launch" | "build" | "deploy" | "scale" | "scale_plus";
 export interface PlanLimits {
   writes_per_day: number;
   reads_per_day: number;
-  /** Hard gate: blocks ingest + search/context when exceeded. ~200 tokens per embed. */
+  /** Hard gate: blocks ingest + search/context when exceeded. */
   embed_tokens_per_day: number;
+  /** 0 = extraction disabled for plan. */
+  extraction_calls_per_day: number;
+  /** Max characters per memory text (plan-based). */
+  max_text_chars: number;
+  /** Optional workspace-level RPM (Scale: 300, others: 120). */
+  workspace_rpm?: number;
 }
 
 export interface Plan {
@@ -26,7 +33,12 @@ export const RATE_LIMIT_RPM_DEFAULT = 60;
 /** New keys: 15 req/min for first 48h (implemented via api_keys.created_at in API). */
 export const RATE_LIMIT_RPM_NEW_KEY = 15;
 
-/** ~200 tokens per embed (docs + future embed_tokens enforcement). */
+/** Workspace-level RPM for non-Scale plans. */
+export const WORKSPACE_RPM_DEFAULT = 120;
+/** Workspace-level RPM for Scale plan. */
+export const WORKSPACE_RPM_SCALE = 300;
+
+/** ~200 tokens per embed (backward-compatible embeds count cap). */
 export const TOKENS_PER_EMBED_ASSUMED = 200;
 
 const PLANS: Plan[] = [
@@ -36,9 +48,12 @@ const PLANS: Plan[] = [
     price_inr: 299,
     billing_period_days: 7,
     limits: {
-      writes_per_day: 200,
-      reads_per_day: 500,
-      embed_tokens_per_day: 400_000, // ~2000 embeds
+      writes_per_day: 300,
+      reads_per_day: 1000,
+      embed_tokens_per_day: 50_000,
+      extraction_calls_per_day: 0,
+      max_text_chars: 15_000,
+      workspace_rpm: WORKSPACE_RPM_DEFAULT,
     },
   },
   {
@@ -47,9 +62,12 @@ const PLANS: Plan[] = [
     price_inr: 499,
     billing_period_days: 30,
     limits: {
-      writes_per_day: 2000,
-      reads_per_day: 5000,
-      embed_tokens_per_day: 4_000_000, // ~20k embeds
+      writes_per_day: 1000,
+      reads_per_day: 3000,
+      embed_tokens_per_day: 200_000,
+      extraction_calls_per_day: 50,
+      max_text_chars: 15_000,
+      workspace_rpm: WORKSPACE_RPM_DEFAULT,
     },
   },
   {
@@ -58,9 +76,12 @@ const PLANS: Plan[] = [
     price_inr: 1999,
     billing_period_days: 30,
     limits: {
-      writes_per_day: 10000,
-      reads_per_day: 20000,
-      embed_tokens_per_day: 20_000_000, // ~100k embeds
+      writes_per_day: 5000,
+      reads_per_day: 10000,
+      embed_tokens_per_day: 2_000_000,
+      extraction_calls_per_day: 300,
+      max_text_chars: 20_000,
+      workspace_rpm: WORKSPACE_RPM_DEFAULT,
     },
   },
   {
@@ -69,9 +90,12 @@ const PLANS: Plan[] = [
     price_inr: 4999,
     billing_period_days: 30,
     limits: {
-      writes_per_day: 30000,
-      reads_per_day: 60000,
-      embed_tokens_per_day: 60_000_000, // ~300k embeds
+      writes_per_day: 20000,
+      reads_per_day: 50000,
+      embed_tokens_per_day: 10_000_000,
+      extraction_calls_per_day: 1000,
+      max_text_chars: 25_000,
+      workspace_rpm: WORKSPACE_RPM_SCALE,
     },
   },
   {
@@ -82,7 +106,10 @@ const PLANS: Plan[] = [
     limits: {
       writes_per_day: 100000,
       reads_per_day: 200000,
-      embed_tokens_per_day: 200_000_000, // ~1M embeds
+      embed_tokens_per_day: 200_000_000,
+      extraction_calls_per_day: 5000,
+      max_text_chars: 50_000,
+      workspace_rpm: WORKSPACE_RPM_SCALE,
     },
   },
 ];
@@ -120,7 +147,6 @@ export function getLimitsForPlanCode(planCode: string | null | undefined): PlanL
 
 /**
  * Embeds cap derived from embed_tokens_per_day for backward-compatible usage_daily.embeds counting.
- * TODO (backlog): Implement embed_tokens/day enforcement by tracking actual tokens from embedding responses (or approximate per request) and blocking ingest/search when exceeded.
  */
 export function embedsCapFromEmbedTokens(embedTokensPerDay: number): number {
   return Math.floor(embedTokensPerDay / TOKENS_PER_EMBED_ASSUMED);
@@ -141,4 +167,10 @@ export function getUsageCapsForPlanCode(planCode: string | null | undefined): Us
     reads: limits.reads_per_day,
     embeds: embedsCapFromEmbedTokens(limits.embed_tokens_per_day),
   };
+}
+
+/** Returns workspace RPM for plan (Scale/Scale+: 300, others: 120). */
+export function getWorkspaceRpmForPlanCode(planCode: string | null | undefined): number {
+  const limits = getLimitsForPlanCode(planCode);
+  return limits.workspace_rpm ?? WORKSPACE_RPM_DEFAULT;
 }
