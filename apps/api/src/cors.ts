@@ -1,52 +1,17 @@
 /**
  * Per-request CORS, security headers, and request-id state. Phase 4: Worker split (IMPROVEMENT_PLAN.md).
+ * Uses request-scoped RequestContext to avoid shared mutable state across concurrent requests.
  */
 
-let requestCorsHeaders: Record<string, string> = {};
-let securityHeaders: Record<string, string> = {};
-let requestIdHeaderValue = "";
-
-export function setCorsHeadersForRequest(headers: Record<string, string>): void {
-  requestCorsHeaders = headers;
+export interface RequestContext {
+  requestId: string;
+  corsHeaders: Record<string, string>;
+  securityHeaders: Record<string, string>;
 }
 
-export function clearCorsHeadersForRequest(): void {
-  requestCorsHeaders = {};
-}
-
-export function getCorsHeaders(): Record<string, string> {
-  return requestCorsHeaders;
-}
-
-export function setSecurityHeadersForRequest(path: string): void {
-  securityHeaders = buildSecurityHeaders(path);
-}
-
-export function clearSecurityHeadersForRequest(): void {
-  securityHeaders = {};
-}
-
-export function getSecurityHeaders(): Record<string, string> {
-  return securityHeaders;
-}
-
-export function setRequestIdForRequest(requestId: string): void {
-  requestIdHeaderValue = requestId;
-}
-
-export function clearRequestIdForRequest(): void {
-  requestIdHeaderValue = "";
-}
-
-export function getRequestIdHeaderValue(): string {
-  return requestIdHeaderValue;
-}
-
-export function getRequestIdHeaders(): Record<string, string> {
-  const headers: Record<string, string> = {};
-  if (requestIdHeaderValue) {
-    headers["x-request-id"] = requestIdHeaderValue;
-  }
+export function buildResponseHeaders(ctx: RequestContext): Record<string, string> {
+  const headers: Record<string, string> = { ...ctx.corsHeaders, ...ctx.securityHeaders };
+  if (ctx.requestId) headers["x-request-id"] = ctx.requestId;
   return headers;
 }
 

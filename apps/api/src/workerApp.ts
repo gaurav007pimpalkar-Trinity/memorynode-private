@@ -10,22 +10,15 @@ import {
 } from "./limits.js";
 import { getPlan, getLimitsForPlanCode, type PlanLimits } from "@memorynodeai/shared";
 import type { Env } from "./env.js";
-import { getEnvironmentStage, validateStubModes, validateRateLimitConfig } from "./env.js";
+import { getEnvironmentStage, validateStubModes, validateRateLimitConfig, validateSecrets } from "./env.js";
 import { logger, redact } from "./logger.js";
 import { route, type HandlerDeps } from "./router.js";
 import { createHttpError, isApiError } from "./http.js";
 import { checkGlobalCostGuard, AIBudgetExceededError } from "./costGuard.js";
 import {
-  setCorsHeadersForRequest,
-  clearCorsHeadersForRequest,
-  getCorsHeaders,
-  setSecurityHeadersForRequest,
-  clearSecurityHeadersForRequest,
-  getSecurityHeaders,
-  setRequestIdForRequest,
-  clearRequestIdForRequest,
-  getRequestIdHeaders,
-  getRequestIdHeaderValue,
+  type RequestContext,
+  buildResponseHeaders,
+  buildSecurityHeaders,
   parseAllowedOrigins,
   isOriginAllowed,
   makeCorsHeaders,
@@ -1107,34 +1100,36 @@ async function checkCapsAndMaybeRespond(
   return null;
 }
 
-function attachRequestIdToErrorPayload(data: unknown, status: number): unknown {
+function attachRequestIdToErrorPayload(data: unknown, status: number, requestId: string): unknown {
   if (status < 400) return data;
-  const requestIdHeaderValue = getRequestIdHeaderValue();
-  if (!requestIdHeaderValue) return data;
+  if (!requestId) return data;
   if (!data || typeof data !== "object" || Array.isArray(data)) return data;
   const payload = data as Record<string, unknown>;
   if (!("error" in payload)) return data;
   if (typeof payload.request_id === "string" && payload.request_id.length > 0) return data;
-  return { ...payload, request_id: requestIdHeaderValue };
+  return { ...payload, request_id: requestId };
 }
 
-const jsonResponse = (
-  data: unknown,
-  status = 200,
-  extraHeaders?: Record<string, string>,
-): Response => {
-  const body = attachRequestIdToErrorPayload(data, status);
-  return new Response(JSON.stringify(body), {
-    status,
-    headers: {
-      "content-type": "application/json; charset=utf-8",
-      ...getCorsHeaders(),
-      ...getSecurityHeaders(),
-      ...getRequestIdHeaders(),
-      ...(extraHeaders ?? {}),
+function createResponseFns(ctx: RequestContext): {
+  jsonResponse: (data: unknown, status?: number, extraHeaders?: Record<string, string>) => Response;
+  emptyResponse: (status?: number) => Response;
+} {
+  const baseHeaders = buildResponseHeaders(ctx);
+  return {
+    jsonResponse: (data: unknown, status = 200, extraHeaders?: Record<string, string>) => {
+      const body = attachRequestIdToErrorPayload(data, status, ctx.requestId);
+      return new Response(JSON.stringify(body), {
+        status,
+        headers: {
+          "content-type": "application/json; charset=utf-8",
+          ...baseHeaders,
+          ...(extraHeaders ?? {}),
+        },
+      });
     },
-  });
-};
+    emptyResponse: (status = 204) => new Response(null, { status, headers: baseHeaders }),
+  };
+}
 
 /** Default deps when handlers are called directly (e.g. from tests) without going through route(). */
 const simpleJsonResponse = (data: unknown, status = 200, extraHeaders?: Record<string, string>) =>
@@ -1142,9 +1137,6 @@ const simpleJsonResponse = (data: unknown, status = 200, extraHeaders?: Record<s
     status,
     headers: { "content-type": "application/json; charset=utf-8", ...(extraHeaders ?? {}) },
   });
-
-const emptyResponse = (status = 204): Response =>
-  new Response(null, { status, headers: { ...getCorsHeaders(), ...getSecurityHeaders(), ...getRequestIdHeaders() } });
 
 type ErrorLogFields = {
   error_code?: string;
@@ -1267,10 +1259,14 @@ export async function handleRequest(request: Request, env: Env): Promise<Respons
     const url = new URL(request.url);
     const pathname = url.pathname.replace(/\/$/, "") || "/";
     const requestId = resolveRequestId(request);
-    setRequestIdForRequest(requestId);
-    const requestIdHeader = getRequestIdHeaders();
-    setSecurityHeadersForRequest(pathname);
-    const securityHeaders = getSecurityHeaders();
+    const allowlist = parseAllowedOrigins(env.ALLOWED_ORIGINS);
+    const origin = request.headers.get("origin") ?? "";
+    const ctx: RequestContext = {
+      requestId,
+      securityHeaders: buildSecurityHeaders(pathname),
+      corsHeaders: makeCorsHeaders(origin, allowlist, request.headers),
+    };
+    const { jsonResponse, emptyResponse } = createResponseFns(ctx);
 
     function logHealthReadyCompleted(status: number): void {
       const durationMs = Date.now() - started;
@@ -1291,16 +1287,12 @@ export async function handleRequest(request: Request, env: Env): Promise<Respons
     // GET /healthz: return version, build_version, stage, embedding_model; 500 if critical env missing in non-dev
     if (pathname === "/healthz") {
       if (request.method !== "GET") {
-        const allowlist = parseAllowedOrigins(env.ALLOWED_ORIGINS);
-        const cors = makeCorsHeaders(request.headers.get("origin") ?? "", allowlist, request.headers);
         logHealthReadyCompleted(405);
         return new Response(JSON.stringify({ error: { code: "METHOD_NOT_ALLOWED", message: "Method not allowed" } }), {
           status: 405,
-          headers: { "content-type": "application/json", Allow: "GET", ...requestIdHeader, ...securityHeaders, ...cors },
+          headers: { "content-type": "application/json", Allow: "GET", ...buildResponseHeaders(ctx) },
         });
       }
-      const allowlist = parseAllowedOrigins(env.ALLOWED_ORIGINS);
-      const cors = makeCorsHeaders(request.headers.get("origin") ?? "", allowlist, request.headers);
       const stage = getEnvironmentStage(env);
       if (stage !== "dev") {
         const missing: string[] = [];
@@ -1313,7 +1305,7 @@ export async function handleRequest(request: Request, env: Env): Promise<Respons
               status: "error",
               error: { code: "CONFIG_ERROR", message: `Missing critical env: ${missing.join(", ")}` },
             }),
-            { status: 500, headers: { "content-type": "application/json", ...requestIdHeader, ...securityHeaders, ...cors } },
+            { status: 500, headers: { "content-type": "application/json", ...buildResponseHeaders(ctx) } },
           );
         }
         const stubError = validateStubModes(env, stage);
@@ -1321,7 +1313,7 @@ export async function handleRequest(request: Request, env: Env): Promise<Respons
           logHealthReadyCompleted(500);
           return new Response(
             JSON.stringify({ status: "error", error: { code: "CONFIG_ERROR", message: stubError } }),
-            { status: 500, headers: { "content-type": "application/json", ...requestIdHeader, ...securityHeaders, ...cors } },
+            { status: 500, headers: { "content-type": "application/json", ...buildResponseHeaders(ctx) } },
           );
         }
         const rateLimitError = validateRateLimitConfig(env, stage);
@@ -1329,7 +1321,15 @@ export async function handleRequest(request: Request, env: Env): Promise<Respons
           logHealthReadyCompleted(500);
           return new Response(
             JSON.stringify({ status: "error", error: { code: "CONFIG_ERROR", message: rateLimitError } }),
-            { status: 500, headers: { "content-type": "application/json", ...requestIdHeader, ...securityHeaders, ...cors } },
+            { status: 500, headers: { "content-type": "application/json", ...buildResponseHeaders(ctx) } },
+          );
+        }
+        const secretsError = validateSecrets(env, stage);
+        if (secretsError) {
+          logHealthReadyCompleted(500);
+          return new Response(
+            JSON.stringify({ status: "error", error: { code: "CONFIG_ERROR", message: secretsError } }),
+            { status: 500, headers: { "content-type": "application/json", ...buildResponseHeaders(ctx) } },
           );
         }
       }
@@ -1348,19 +1348,17 @@ export async function handleRequest(request: Request, env: Env): Promise<Respons
           ...((env.GIT_SHA ?? "").trim() ? { git_sha: (env.GIT_SHA ?? "").trim() } : {}),
           embedding_model: embeddingModel,
         }),
-        { status: 200, headers: { "content-type": "application/json", ...requestIdHeader, ...securityHeaders, ...cors } },
+        { status: 200, headers: { "content-type": "application/json", ...buildResponseHeaders(ctx) } },
       );
     }
 
     // GET /ready: check Supabase connectivity; 503 if unavailable
     if (pathname === "/ready") {
       if (request.method !== "GET") {
-        const allowlist = parseAllowedOrigins(env.ALLOWED_ORIGINS);
-        const cors = makeCorsHeaders(request.headers.get("origin") ?? "", allowlist, request.headers);
         logHealthReadyCompleted(405);
         return new Response(JSON.stringify({ error: { code: "METHOD_NOT_ALLOWED", message: "Method not allowed" } }), {
           status: 405,
-          headers: { "content-type": "application/json", Allow: "GET", ...requestIdHeader, ...securityHeaders, ...cors },
+          headers: { "content-type": "application/json", Allow: "GET", ...buildResponseHeaders(ctx) },
         });
       }
       let supabaseForReady: SupabaseClient;
@@ -1371,7 +1369,7 @@ export async function handleRequest(request: Request, env: Env): Promise<Respons
         logHealthReadyCompleted(503);
         return new Response(
           JSON.stringify({ status: "degraded", db: "unavailable", message: msg }),
-          { status: 503, headers: { "content-type": "application/json", "Cache-Control": "no-store", ...requestIdHeader, ...securityHeaders } },
+          { status: 503, headers: { "content-type": "application/json", "Cache-Control": "no-store", ...buildResponseHeaders(ctx) } },
         );
       }
       try {
@@ -1392,27 +1390,25 @@ export async function handleRequest(request: Request, env: Env): Promise<Respons
           logHealthReadyCompleted(503);
           return new Response(
             JSON.stringify({ status: "degraded", db: "unavailable", message: "Service temporarily unavailable" }),
-            { status: 503, headers: { "content-type": "application/json", "Cache-Control": "no-store", ...requestIdHeader, ...securityHeaders } },
+            { status: 503, headers: { "content-type": "application/json", "Cache-Control": "no-store", ...buildResponseHeaders(ctx) } },
           );
         }
         const errMsg = e instanceof Error ? e.message : String(e);
         logHealthReadyCompleted(503);
         return new Response(
           JSON.stringify({ status: "degraded", db: "unavailable", message: errMsg }),
-          { status: 503, headers: { "content-type": "application/json", "Cache-Control": "no-store", ...requestIdHeader, ...securityHeaders } },
+          { status: 503, headers: { "content-type": "application/json", "Cache-Control": "no-store", ...buildResponseHeaders(ctx) } },
         );
       }
       logHealthReadyCompleted(200);
       return new Response(JSON.stringify({ status: "ok", db: "connected" }), {
         status: 200,
-        headers: { "content-type": "application/json", "Cache-Control": "no-store", ...requestIdHeader, ...securityHeaders },
+        headers: { "content-type": "application/json", "Cache-Control": "no-store", ...buildResponseHeaders(ctx) },
       });
     }
 
     // GET /v1/health: versioned health (same payload as /healthz, no auth)
     if (pathname === "/v1/health" && request.method === "GET") {
-      const allowlist = parseAllowedOrigins(env.ALLOWED_ORIGINS);
-      const cors = makeCorsHeaders(request.headers.get("origin") ?? "", allowlist, request.headers);
       const stage = getEnvironmentStage(env);
       if (stage !== "dev") {
         const missing: string[] = [];
@@ -1425,7 +1421,15 @@ export async function handleRequest(request: Request, env: Env): Promise<Respons
               status: "error",
               error: { code: "CONFIG_ERROR", message: `Missing critical env: ${missing.join(", ")}` },
             }),
-            { status: 500, headers: { "content-type": "application/json", ...requestIdHeader, ...securityHeaders, ...cors } },
+            { status: 500, headers: { "content-type": "application/json", ...buildResponseHeaders(ctx) } },
+          );
+        }
+        const secretsError = validateSecrets(env, stage);
+        if (secretsError) {
+          logHealthReadyCompleted(500);
+          return new Response(
+            JSON.stringify({ status: "error", error: { code: "CONFIG_ERROR", message: secretsError } }),
+            { status: 500, headers: { "content-type": "application/json", ...buildResponseHeaders(ctx) } },
           );
         }
       }
@@ -1444,18 +1448,12 @@ export async function handleRequest(request: Request, env: Env): Promise<Respons
           ...((env.GIT_SHA ?? "").trim() ? { git_sha: (env.GIT_SHA ?? "").trim() } : {}),
           embedding_model: embeddingModel,
         }),
-        { status: 200, headers: { "content-type": "application/json", ...requestIdHeader, ...securityHeaders, ...cors } },
+        { status: 200, headers: { "content-type": "application/json", ...buildResponseHeaders(ctx) } },
       );
     }
 
-    setRequestIdForRequest(requestId);
     const ip = request.headers.get("cf-connecting-ip") ?? request.headers.get("x-forwarded-for") ?? "unknown";
-    const origin = request.headers.get("origin") ?? "";
-    const allowlist = parseAllowedOrigins(env.ALLOWED_ORIGINS);
     const originAllowed = isOriginAllowed(origin, allowlist);
-    const cors = makeCorsHeaders(origin, allowlist, request.headers);
-    setCorsHeadersForRequest(cors);
-    setSecurityHeadersForRequest(url.pathname);
     let supabase: SupabaseClient | null = null;
     const auditCtx: { workspaceId?: string; apiKeyId?: string } = {};
     let response: Response | null = null;
@@ -1550,9 +1548,7 @@ export async function handleRequest(request: Request, env: Env): Promise<Respons
           headers: {
             "content-type": "application/json",
             "Set-Cookie": cookieHeader,
-            ...getCorsHeaders(),
-            ...getSecurityHeaders(),
-            ...getRequestIdHeaders(),
+            ...buildResponseHeaders(ctx),
           },
         });
         return response;
@@ -1578,9 +1574,7 @@ export async function handleRequest(request: Request, env: Env): Promise<Respons
           headers: {
             "content-type": "application/json",
             "Set-Cookie": clearSessionCookieHeader(isSecure),
-            ...getCorsHeaders(),
-            ...getSecurityHeaders(),
-            ...getRequestIdHeaders(),
+            ...buildResponseHeaders(ctx),
           },
         });
         return response;
@@ -1642,7 +1636,8 @@ export async function handleRequest(request: Request, env: Env): Promise<Respons
         resolvePayUVerifyTimeoutMs,
         wantsZipResponse,
         buildExportArtifact: buildExportArtifact as ExportHandlerDeps["buildExportArtifact"],
-        makeExportResponse: makeExportResponse as ExportHandlerDeps["makeExportResponse"],
+        makeExportResponse: (outcome, wantsZip, auth, rateHeaders) =>
+          makeExportResponse(outcome, wantsZip, auth, rateHeaders, buildResponseHeaders(ctx)),
         defaultMaxExportBytes: DEFAULT_MAX_EXPORT_BYTES,
         importArtifact: importArtifact as ImportHandlerDeps["importArtifact"],
         defaultMaxImportBytes: DEFAULT_MAX_IMPORT_BYTES,
@@ -1717,30 +1712,28 @@ export async function handleRequest(request: Request, env: Env): Promise<Respons
       );
       return response;
     } finally {
-      try {
-        await emitAuditLog(request, response, started, ip, env, supabase, auditCtx, requestId);
-        const durationMs = Date.now() - started;
-        const errorFields = await extractErrorLogFields(response);
-        logger.info({
-          event: "request_completed",
-          request_id: requestId,
-          workspace_id: auditCtx.workspaceId ?? null,
-          route: url.pathname,
-          route_group: classifyRouteGroup(url.pathname),
-          method: request.method,
-          status: response?.status ?? 0,
-          status_code: response?.status ?? 0,
-          latency_ms: durationMs,
-          duration_ms: durationMs,
-          ...(errorFields.error_code ? { error_type: errorFields.error_code } : {}),
-          ...errorFields,
-        });
-      } finally {
-        clearRequestIdForRequest();
-        clearCorsHeadersForRequest();
-        clearSecurityHeadersForRequest();
+        try {
+          await emitAuditLog(request, response, started, ip, env, supabase, auditCtx, requestId);
+          const durationMs = Date.now() - started;
+          const errorFields = await extractErrorLogFields(response);
+          logger.info({
+            event: "request_completed",
+            request_id: requestId,
+            workspace_id: auditCtx.workspaceId ?? null,
+            route: url.pathname,
+            route_group: classifyRouteGroup(url.pathname),
+            method: request.method,
+            status: response?.status ?? 0,
+            status_code: response?.status ?? 0,
+            latency_ms: durationMs,
+            duration_ms: durationMs,
+            ...(errorFields.error_code ? { error_type: errorFields.error_code } : {}),
+            ...errorFields,
+          });
+        } catch (_) {
+          /* Logging best-effort; avoid masking original error */
+        }
       }
-    }
 }
 
 export { createSupabaseClient };
@@ -3565,7 +3558,8 @@ const defaultExportHandlerDeps: ExportHandlerDeps = {
   safeParseJson,
   wantsZipResponse,
   buildExportArtifact: buildExportArtifact as ExportHandlerDeps["buildExportArtifact"],
-  makeExportResponse: makeExportResponse as ExportHandlerDeps["makeExportResponse"],
+  makeExportResponse: (outcome, wantsZip, auth, rateHeaders) =>
+    makeExportResponse(outcome, wantsZip, auth, rateHeaders, {}),
   defaultMaxExportBytes: DEFAULT_MAX_EXPORT_BYTES,
 };
 const exportHandlersDefault = createExportHandlers(defaultExportHandlerDeps, defaultExportHandlerDeps);
@@ -3659,6 +3653,7 @@ export function makeExportResponse(
   wantsZip: boolean,
   auth: AuthContext,
   rateHeaders: Record<string, string>,
+  baseHeaders: Record<string, string>,
 ): Response {
   if (wantsZip) {
     const date = new Date().toISOString().slice(0, 10);
@@ -3666,21 +3661,18 @@ export function makeExportResponse(
       .slice(outcome.archive.byteOffset, outcome.archive.byteOffset + outcome.archive.byteLength) as ArrayBuffer;
     const headers = {
       ...rateHeaders,
-      ...getCorsHeaders(),
-      ...getSecurityHeaders(),
-      ...getRequestIdHeaders(),
+      ...baseHeaders,
       "content-type": "application/zip",
       "content-disposition": `attachment; filename="memorynode-export-${auth.workspaceId}-${date}.zip"`,
     };
     return new Response(buf as BodyInit, { status: 200, headers });
   }
 
-  return jsonResponse(
-    { artifact_base64: outcome.artifact_base64, bytes: outcome.bytes, sha256: outcome.sha256 },
-    200,
+  return new Response(
+    JSON.stringify({ artifact_base64: outcome.artifact_base64, bytes: outcome.bytes, sha256: outcome.sha256 }),
     {
-      ...rateHeaders,
-      "content-type": "application/json",
+      status: 200,
+      headers: { "content-type": "application/json", ...rateHeaders, ...baseHeaders },
     },
   );
 }

@@ -33,6 +33,8 @@ describe("/healthz version stamp", () => {
       GIT_SHA: "abc1234",
       SUPABASE_SERVICE_ROLE_KEY: "staging-key",
       API_KEY_SALT: "staging-salt",
+      MASTER_ADMIN_TOKEN: "staging-admin",
+      OPENAI_API_KEY: "sk-staging",
     } as unknown as FetchEnv;
     const res = await api.fetch(new Request("http://localhost/healthz"), env as unknown as FetchEnv);
     const json = await res.json();

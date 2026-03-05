@@ -23,6 +23,7 @@ import {
   EXTRACT_REQUEST_TIMEOUT_MS,
 } from "../resilienceConstants.js";
 import { checkGlobalCostGuard, AIBudgetExceededError } from "../costGuard.js";
+import { withCircuitBreaker } from "../circuitBreaker.js";
 
 export type { MemoryInsertPayload } from "../contracts/index.js";
 
@@ -167,7 +168,8 @@ async function extractItems(text: string, env: Env): Promise<ExtractedItem[]> {
     const controller = new AbortController();
     const timeoutId = setTimeout(() => controller.abort(), EXTRACT_REQUEST_TIMEOUT_MS);
     try {
-      const resp = await fetch("https://api.openai.com/v1/chat/completions", {
+      const resp = await withCircuitBreaker("openai", async () =>
+        fetch("https://api.openai.com/v1/chat/completions", {
         method: "POST",
         headers: {
           "content-type": "application/json",
@@ -183,7 +185,7 @@ async function extractItems(text: string, env: Env): Promise<ExtractedItem[]> {
             { role: "user", content: text },
           ],
         }),
-      });
+      }));
       clearTimeout(timeoutId);
       if (!resp.ok) {
         const body = await resp.text();
@@ -216,10 +218,13 @@ async function extractItems(text: string, env: Env): Promise<ExtractedItem[]> {
       clearTimeout(timeoutId);
       lastError = err;
       if (isApiError(err)) throw err;
+      const msg = err instanceof Error ? err.message : String(err);
+      if (msg.startsWith("CIRCUIT_OPEN:")) {
+        throw createHttpError(503, "EXTRACTION_ERROR", "Extraction service temporarily unavailable");
+      }
       if (attempt < maxAttempts) {
         await new Promise((r) => setTimeout(r, delaysMs[attempt] ?? 500));
       } else {
-        const msg = err instanceof Error ? err.message : String(err);
         throw createHttpError(503, "EXTRACTION_ERROR", `Extraction failed: ${msg}`);
       }
     }
@@ -251,54 +256,64 @@ async function extractAndStore(
     return { children_created: 0, skipped: true, error: "OPENAI_API_KEY not configured" };
   }
 
+  const BATCH_SIZE = 3;
+
+  async function processChild(item: ExtractedItem): Promise<number> {
+    const chunks = d.chunkText(item.text);
+    const embeddings = await d.embedText(chunks, env);
+
+    const { data: childInsert, error: childError } = await supabase
+      .from("memories")
+      .insert({
+        workspace_id: workspaceId,
+        user_id: userId,
+        namespace,
+        text: item.text,
+        metadata: { _extracted: true, _source_memory_id: sourceMemoryId },
+        memory_type: item.memory_type,
+        source_memory_id: sourceMemoryId,
+      })
+      .select("id")
+      .single();
+
+    if (childError || !childInsert) return 0;
+
+    const childId = childInsert.id as string;
+    const chunkRows = chunks.map((chunk, idx) => ({
+      workspace_id: workspaceId,
+      memory_id: childId,
+      user_id: userId,
+      namespace,
+      chunk_index: idx,
+      chunk_text: chunk,
+      embedding: d.vectorToPgvectorString(embeddings[idx]),
+    }));
+
+    const { error: chunkInsertError } = await supabase.from("memory_chunks").insert(chunkRows);
+    if (chunkInsertError) {
+      console.error("[extraction] chunk insert failed, removing orphan memory", {
+        child_memory_id: childId,
+        source_memory_id: sourceMemoryId,
+        error: chunkInsertError.message,
+      });
+      await supabase.from("memories").delete().eq("id", childId).eq("workspace_id", workspaceId);
+      return 0;
+    }
+
+    return 1;
+  }
+
   let totalWrites = 0;
   try {
     const items = await extractItems(text, env);
     if (items.length === 0) return { children_created: 0, skipped: false };
 
-    for (const item of items) {
-      const chunks = d.chunkText(item.text);
-      const embeddings = await d.embedText(chunks, env);
-
-      const { data: childInsert, error: childError } = await supabase
-        .from("memories")
-        .insert({
-          workspace_id: workspaceId,
-          user_id: userId,
-          namespace,
-          text: item.text,
-          metadata: { _extracted: true, _source_memory_id: sourceMemoryId },
-          memory_type: item.memory_type,
-          source_memory_id: sourceMemoryId,
-        })
-        .select("id")
-        .single();
-
-      if (childError || !childInsert) continue;
-
-      const childId = childInsert.id as string;
-      const chunkRows = chunks.map((chunk, idx) => ({
-        workspace_id: workspaceId,
-        memory_id: childId,
-        user_id: userId,
-        namespace,
-        chunk_index: idx,
-        chunk_text: chunk,
-        embedding: d.vectorToPgvectorString(embeddings[idx]),
-      }));
-
-      const { error: chunkInsertError } = await supabase.from("memory_chunks").insert(chunkRows);
-      if (chunkInsertError) {
-        console.error("[extraction] chunk insert failed, removing orphan memory", {
-          child_memory_id: childId,
-          source_memory_id: sourceMemoryId,
-          error: chunkInsertError.message,
-        });
-        await supabase.from("memories").delete().eq("id", childId).eq("workspace_id", workspaceId);
-        continue;
+    for (let i = 0; i < items.length; i += BATCH_SIZE) {
+      const batch = items.slice(i, i + BATCH_SIZE);
+      const results = await Promise.allSettled(batch.map((item) => processChild(item)));
+      for (const r of results) {
+        if (r.status === "fulfilled") totalWrites += r.value;
       }
-
-      totalWrites++;
     }
 
     return { children_created: totalWrites, skipped: false };
