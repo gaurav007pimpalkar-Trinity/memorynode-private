@@ -14,5 +14,10 @@ module.exports = {
   plugins: ["@typescript-eslint"],
   extends: ["eslint:recommended", "plugin:@typescript-eslint/recommended", "prettier"],
   ignorePatterns: ["dist", ".wrangler", "node_modules"],
-  rules: {},
+  rules: {
+    "@typescript-eslint/no-unused-vars": [
+      "error",
+      { argsIgnorePattern: "^_", varsIgnorePattern: "^_", caughtErrorsIgnorePattern: "^_" },
+    ],
+  },
 };
