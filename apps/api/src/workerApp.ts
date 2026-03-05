@@ -3050,7 +3050,7 @@ async function performSearch(
   const matchCount = Math.min(SEARCH_MATCH_COUNT, desired * 3);
 
   const needsKeyword = search_mode === "hybrid" || search_mode === "keyword";
-  const embedsDelta = needsVector ? 1 : 0;
+  const _embedsDelta = needsVector ? 1 : 0;
 
   const sharedArgs = {
     workspaceId: auth.workspaceId,

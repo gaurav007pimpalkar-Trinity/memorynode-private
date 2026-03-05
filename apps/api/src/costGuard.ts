@@ -59,11 +59,9 @@ async function getCurrentMonthCostInr(
 
   let totalEmbedTokens = 0;
   let totalExtractionCalls = 0;
-  let totalEmbeds = 0;
   for (const row of rows ?? []) {
     totalEmbedTokens += Number((row as { embed_tokens_used?: number }).embed_tokens_used ?? 0);
     totalExtractionCalls += Number((row as { extraction_calls?: number }).extraction_calls ?? 0);
-    totalEmbeds += Number((row as { embeds?: number }).embeds ?? 0);
   }
 
   const embedCostUsd = (totalEmbedTokens / 1000) * EMBED_COST_USD_PER_1K_TOKENS;
