@@ -48,4 +48,4 @@ To let AI agents read/write memory via MCP tools:
 
 See [packages/mcp-server](packages/mcp-server) and [API usage](API_USAGE.md) for full request/response shapes.
 
-<!-- Migration manifest (CI-checked): MIGRATIONS_TOTAL=31; MIGRATIONS_LATEST=029_memory_recency_decay.sql -->
+<!-- Migration manifest (CI-checked): MIGRATIONS_TOTAL=32; MIGRATIONS_LATEST=030_usage_plan_v2.sql -->
