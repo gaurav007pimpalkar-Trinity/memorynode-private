@@ -141,6 +141,28 @@ export function makeCorsHeaders(
 
 const REQUEST_ID_RE = /^[A-Za-z0-9._:-]{1,128}$/;
 
+/**
+ * Request-scoped context built by the caller (e.g. workerApp) and passed to buildResponseHeaders.
+ * Compatibility type for code that constructs ctx without using AsyncLocalStorage.
+ */
+export interface RequestContext {
+  requestId: string;
+  corsHeaders: Record<string, string>;
+  securityHeaders: Record<string, string>;
+}
+
+/**
+ * Merges CORS, security, and x-request-id from a RequestContext into a single headers object.
+ * Does not use AsyncLocalStorage; caller passes the context explicitly.
+ */
+export function buildResponseHeaders(ctx: RequestContext): Record<string, string> {
+  return {
+    ...ctx.corsHeaders,
+    ...ctx.securityHeaders,
+    "x-request-id": ctx.requestId,
+  };
+}
+
 export function generateRequestId(): string {
   return typeof crypto.randomUUID === "function" ? crypto.randomUUID() : Math.random().toString(36).slice(2);
 }
