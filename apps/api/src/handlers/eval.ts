@@ -6,7 +6,7 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
 import type { Env } from "../env.js";
 import type { AuthContext } from "../auth.js";
-import { authenticate, rateLimit, rateLimitWorkspace } from "../auth.js";
+import { authenticate, rateLimit } from "../auth.js";
 import type { HandlerDeps } from "../router.js";
 import type { SearchOutcome } from "./search.js";
 import type { QuotaResolutionLike } from "./memories.js";
