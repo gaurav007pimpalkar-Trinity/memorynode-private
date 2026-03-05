@@ -20,6 +20,8 @@ export interface Env {
   BUILD_VERSION?: string;
   GIT_SHA?: string;
   RATE_LIMIT_DO: DurableObjectNamespace;
+  /** Optional: shared circuit breaker state across isolates. When set, overrides in-memory per-isolate breaker. */
+  CIRCUIT_BREAKER_DO?: DurableObjectNamespace;
   RATE_LIMIT_MODE?: string;
   /** Max requests per minute per key (default from limits.ts). New keys use 15 for 48h. */
   RATE_LIMIT_MAX?: string;
@@ -60,9 +62,13 @@ export function getEnvironmentStage(env: Env): EnvironmentStage {
   return "dev";
 }
 
+const MIN_ADMIN_TOKEN_LENGTH = 24;
+const MIN_API_KEY_SALT_LENGTH = 16;
+
 export function validateSecrets(env: Env, stage: EnvironmentStage): string | null {
   if (stage === "dev") return null;
   const missing: string[] = [];
+  const weak: string[] = [];
   const supabaseMode = (env.SUPABASE_MODE ?? "").toLowerCase();
   const embeddingsMode = (env.EMBEDDINGS_MODE ?? "openai").toLowerCase();
 
@@ -71,10 +77,24 @@ export function validateSecrets(env: Env, stage: EnvironmentStage): string | nul
   if (!env.MASTER_ADMIN_TOKEN) missing.push("MASTER_ADMIN_TOKEN");
   if (embeddingsMode === "openai" && !env.OPENAI_API_KEY) missing.push("OPENAI_API_KEY");
 
-  if (missing.length === 0) return null;
-  return `Missing required secrets: ${missing.join(
-    ", ",
-  )}. Set each with ` + `wrangler secret put ${missing[0]}` + ` (repeat for the others) instead of wrangler.toml [vars].`;
+  if (missing.length > 0) {
+    return `Missing required secrets: ${missing.join(
+      ", ",
+    )}. Set each with ` + `wrangler secret put ${missing[0]}` + ` (repeat for the others) instead of wrangler.toml [vars].`;
+  }
+
+  if (env.MASTER_ADMIN_TOKEN && env.MASTER_ADMIN_TOKEN.length < MIN_ADMIN_TOKEN_LENGTH) {
+    weak.push(`MASTER_ADMIN_TOKEN must be at least ${MIN_ADMIN_TOKEN_LENGTH} characters (current: ${env.MASTER_ADMIN_TOKEN.length})`);
+  }
+  if (env.API_KEY_SALT && env.API_KEY_SALT.length < MIN_API_KEY_SALT_LENGTH) {
+    weak.push(`API_KEY_SALT must be at least ${MIN_API_KEY_SALT_LENGTH} characters (current: ${env.API_KEY_SALT.length})`);
+  }
+
+  if (weak.length > 0) {
+    return `Weak secret configuration: ${weak.join("; ")}. Use cryptographically random values (e.g. openssl rand -hex 32).`;
+  }
+
+  return null;
 }
 
 export function validateStubModes(env: Env, stage: EnvironmentStage): string | null {

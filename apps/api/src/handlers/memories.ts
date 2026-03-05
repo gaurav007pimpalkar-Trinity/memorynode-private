@@ -26,6 +26,11 @@ import { checkGlobalCostGuard, AIBudgetExceededError } from "../costGuard.js";
 
 export type { MemoryInsertPayload } from "../contracts/index.js";
 
+export interface EmbedResult {
+  embeddings: number[][];
+  tokensUsed: number;
+}
+
 export type MetadataFilter = Record<string, string | number | boolean>;
 
 export interface MemoryListParams {
@@ -61,7 +66,7 @@ export interface ListOutcome {
 export interface MemoryHandlerDeps extends HandlerDeps {
   safeParseJson: <T>(request: Request) => Promise<{ ok: true; data: T } | { ok: false; error: string }>;
   chunkText: (text: string) => string[];
-  embedText: (texts: string[], env: Env) => Promise<number[][]>;
+  embedText: (texts: string[], env: Env) => Promise<EmbedResult>;
   todayUtc: () => string;
   vectorToPgvectorString: (vector: number[]) => string;
   emitProductEvent: (
@@ -186,11 +191,11 @@ async function extractItems(text: string, env: Env): Promise<ExtractedItem[]> {
       });
       clearTimeout(timeoutId);
       if (!resp.ok) {
-        const body = await resp.text();
+        await resp.text();
         throw createHttpError(
           resp.status >= 500 ? 503 : 400,
           "EXTRACTION_ERROR",
-          `OpenAI extraction failed: ${resp.status} ${body.slice(0, 200)}`,
+          `Extraction service returned HTTP ${resp.status}`,
         );
       }
       const json = (await resp.json()) as {
@@ -258,7 +263,8 @@ async function extractAndStore(
 
     for (const item of items) {
       const chunks = d.chunkText(item.text);
-      const embeddings = await d.embedText(chunks, env);
+      const embedResult = await d.embedText(chunks, env);
+      const embeddings = embedResult.embeddings;
 
       const { data: childInsert, error: childError } = await supabase
         .from("memories")
@@ -479,7 +485,31 @@ export function createMemoryHandlers(
         throw e;
       }
 
-      const embeddings = await d.embedText(chunks, env);
+      const embedResult = await d.embedText(chunks, env);
+      const embeddings = embedResult.embeddings;
+      const actualEmbedTokens = embedResult.tokensUsed;
+
+      if (actualEmbedTokens > estimatedEmbedTokens) {
+        const tokenDelta = actualEmbedTokens - estimatedEmbedTokens;
+        try {
+          await supabase.rpc("bump_usage_if_within_cap", {
+            p_workspace_id: auth.workspaceId,
+            p_day: today,
+            p_writes: 0,
+            p_reads: 0,
+            p_embeds: 0,
+            p_embed_tokens: tokenDelta,
+            p_extraction_calls: 0,
+            p_writes_cap: Number.MAX_SAFE_INTEGER,
+            p_reads_cap: Number.MAX_SAFE_INTEGER,
+            p_embeds_cap: Number.MAX_SAFE_INTEGER,
+            p_embed_tokens_cap: Number.MAX_SAFE_INTEGER,
+            p_extraction_calls_cap: Number.MAX_SAFE_INTEGER,
+          });
+        } catch {
+          /* best-effort reconciliation; pre-flight estimate already enforced the cap */
+        }
+      }
 
       const { data: memoryInsert, error: memoryError } = await supabase
         .from("memories")

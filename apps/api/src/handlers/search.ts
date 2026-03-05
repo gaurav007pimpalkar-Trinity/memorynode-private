@@ -1,7 +1,7 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
 import type { Env } from "../env.js";
 import type { AuthContext } from "../auth.js";
-import { authenticate, rateLimit, rateLimitWorkspace } from "../auth.js";
+import { authenticate, rateLimit } from "../auth.js";
 import type { HandlerDeps } from "../router.js";
 import { SearchPayloadSchema, parseWithSchema, type SearchPayload } from "../contracts/index.js";
 import { requireWorkspaceId } from "../supabaseScoped.js";
@@ -276,6 +276,7 @@ export function createSearchHandlers(
     },
 
     async handleReplaySearch(request, env, supabase, auditCtx, requestId = "", deps?) {
+      void requestId;
       const d = (deps ?? defaultDeps) as SearchHandlerDeps;
       const { jsonResponse } = d;
       const auth = await authenticate(request, env, supabase, auditCtx);

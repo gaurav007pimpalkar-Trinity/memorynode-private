@@ -4,6 +4,7 @@
 
 import type { Env } from "./env.js";
 import { RateLimitDO } from "./rateLimitDO.js";
+import { CircuitBreakerDO } from "./circuitBreakerDO.js";
 import {
   handleRequest,
   createSupabaseClient,
@@ -61,9 +62,10 @@ export default {
     return handleRequest(request, env);
   },
   RateLimitDO,
+  CircuitBreakerDO,
 };
 
-export { RateLimitDO, createSupabaseClient };
+export { RateLimitDO, CircuitBreakerDO, createSupabaseClient };
 export {
   handleCreateMemory,
   handleListMemories,

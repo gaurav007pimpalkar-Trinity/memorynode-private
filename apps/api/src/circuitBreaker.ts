@@ -1,15 +1,21 @@
 /**
- * Lightweight in-memory circuit breaker (no external infra).
- * Per-dependency: separate state for "openai" and "supabase".
- * Does not persist across deploys.
+ * Circuit breaker for "openai" and "supabase".
+ * When env.CIRCUIT_BREAKER_DO is set, state is shared across all Worker isolates via a Durable Object.
+ * When not set (e.g. tests or dev), falls back to in-memory per-isolate state.
  */
 
+import type { Env } from "./env.js";
 import { logger } from "./logger.js";
 import {
   CIRCUIT_BREAKER_FAILURE_THRESHOLD,
   CIRCUIT_BREAKER_WINDOW_MS,
   CIRCUIT_BREAKER_OPEN_MS,
 } from "./resilienceConstants.js";
+import {
+  circuitBreakerDOIsOpen,
+  circuitBreakerDORecordSuccess,
+  circuitBreakerDORecordFailure,
+} from "./circuitBreakerDO.js";
 
 export type CircuitName = "openai" | "supabase";
 
@@ -28,7 +34,6 @@ function getState(name: CircuitName): State {
     s = { failures: 0, windowStart: now, openUntil: 0 };
     state.set(name, s);
   }
-  // Reset failure count if outside current window
   if (now - s.windowStart > CIRCUIT_BREAKER_WINDOW_MS) {
     s.failures = 0;
     s.windowStart = now;
@@ -36,9 +41,6 @@ function getState(name: CircuitName): State {
   return s;
 }
 
-/**
- * Returns true if the circuit is open (requests should fail fast with 503).
- */
 export function isOpen(name: CircuitName): boolean {
   const s = getState(name);
   const now = Date.now();
@@ -46,9 +48,6 @@ export function isOpen(name: CircuitName): boolean {
   return false;
 }
 
-/**
- * Record a success. Resets failure count and closes the circuit if it was open (probe succeeded).
- */
 export function recordSuccess(name: CircuitName): void {
   const s = state.get(name);
   if (!s) return;
@@ -60,9 +59,6 @@ export function recordSuccess(name: CircuitName): void {
   }
 }
 
-/**
- * Record a failure. May open the circuit if threshold reached.
- */
 export function recordFailure(name: CircuitName): void {
   const s = getState(name);
   s.failures += 1;
@@ -80,11 +76,29 @@ export function recordFailure(name: CircuitName): void {
 
 /**
  * Run fn; if circuit is open, throw immediately. On success call recordSuccess; on failure call recordFailure.
+ * When env.CIRCUIT_BREAKER_DO is provided, uses shared DO state so all isolates see the same open/closed state.
  */
 export async function withCircuitBreaker<T>(
   name: CircuitName,
   fn: () => Promise<T>,
+  env?: Env,
 ): Promise<T> {
+  const useDO = env?.CIRCUIT_BREAKER_DO && typeof env.CIRCUIT_BREAKER_DO.get === "function";
+
+  if (useDO && env.CIRCUIT_BREAKER_DO) {
+    const doNamespace = env.CIRCUIT_BREAKER_DO;
+    const open = await circuitBreakerDOIsOpen(doNamespace, name);
+    if (open) throw new Error(`CIRCUIT_OPEN:${name}`);
+    try {
+      const result = await fn();
+      await circuitBreakerDORecordSuccess(doNamespace, name);
+      return result;
+    } catch (err) {
+      await circuitBreakerDORecordFailure(doNamespace, name);
+      throw err;
+    }
+  }
+
   if (isOpen(name)) {
     throw new Error(`CIRCUIT_OPEN:${name}`);
   }

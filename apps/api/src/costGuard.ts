@@ -25,6 +25,8 @@ const CACHE_TTL_MS = 60_000;
 
 let cachedCostInr: number | null = null;
 let cachedAt = 0;
+/** When true, a refresh is in progress; other callers should use stale cache to avoid stampede. */
+let refreshing = false;
 
 export interface CostGuardEnv {
   AI_COST_BUDGET_INR?: string;
@@ -59,11 +61,9 @@ async function getCurrentMonthCostInr(
 
   let totalEmbedTokens = 0;
   let totalExtractionCalls = 0;
-  let totalEmbeds = 0;
   for (const row of rows ?? []) {
     totalEmbedTokens += Number((row as { embed_tokens_used?: number }).embed_tokens_used ?? 0);
     totalExtractionCalls += Number((row as { extraction_calls?: number }).extraction_calls ?? 0);
-    totalEmbeds += Number((row as { embeds?: number }).embeds ?? 0);
   }
 
   const embedCostUsd = (totalEmbedTokens / 1000) * EMBED_COST_USD_PER_1K_TOKENS;
@@ -98,12 +98,23 @@ export async function checkGlobalCostGuard(
     return;
   }
 
-  const costInr = await getCurrentMonthCostInr(supabase, usdToInr);
-  cachedCostInr = costInr;
-  cachedAt = now;
+  if (refreshing && cachedCostInr != null) {
+    if (cachedCostInr >= budgetInr) {
+      throw new AIBudgetExceededError("AI_COST_LIMIT_EXCEEDED");
+    }
+    return;
+  }
 
-  if (costInr >= budgetInr) {
-    throw new AIBudgetExceededError("AI_COST_LIMIT_EXCEEDED");
+  refreshing = true;
+  try {
+    const costInr = await getCurrentMonthCostInr(supabase, usdToInr);
+    cachedCostInr = costInr;
+    cachedAt = now;
+    if (costInr >= budgetInr) {
+      throw new AIBudgetExceededError("AI_COST_LIMIT_EXCEEDED");
+    }
+  } finally {
+    refreshing = false;
   }
 }
 
@@ -111,4 +122,5 @@ export async function checkGlobalCostGuard(
 export function resetCostGuardCache(): void {
   cachedCostInr = null;
   cachedAt = 0;
+  refreshing = false;
 }

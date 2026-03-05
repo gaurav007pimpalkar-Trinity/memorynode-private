@@ -11,7 +11,7 @@
 
 import type { SupabaseClient } from "@supabase/supabase-js";
 import type { Env } from "../env.js";
-import { authenticate, rateLimit, rateLimitWorkspace } from "../auth.js";
+import { authenticate, rateLimit } from "../auth.js";
 import type { HandlerDeps } from "../router.js";
 import type { SearchHandlerDeps } from "./search.js";
 import { SearchPayloadSchema, parseWithSchema } from "../contracts/index.js";
