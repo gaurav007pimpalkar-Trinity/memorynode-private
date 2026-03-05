@@ -150,8 +150,9 @@ export function createImportHandlers(
       if ("cap_exceeded" in outcome && outcome.cap_exceeded) {
         return outcome.response;
       }
+      const ok = outcome as ImportOutcomeLike;
       return jsonResponse(
-        { imported_memories: outcome.imported_memories, imported_chunks: outcome.imported_chunks },
+        { imported_memories: ok.imported_memories, imported_chunks: ok.imported_chunks },
         200,
         rate.headers,
       );
