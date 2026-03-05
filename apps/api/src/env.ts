@@ -76,6 +76,11 @@ export function validateSecrets(env: Env, stage: EnvironmentStage): string | nul
   if (!env.API_KEY_SALT) missing.push("API_KEY_SALT");
   if (!env.MASTER_ADMIN_TOKEN) missing.push("MASTER_ADMIN_TOKEN");
   if (embeddingsMode === "openai" && !env.OPENAI_API_KEY) missing.push("OPENAI_API_KEY");
+  if (stage === "prod") {
+    if (!env.AI_COST_BUDGET_INR || Number(env.AI_COST_BUDGET_INR) <= 0) {
+      missing.push("AI_COST_BUDGET_INR");
+    }
+  }
 
   if (missing.length > 0) {
     return `Missing required secrets: ${missing.join(

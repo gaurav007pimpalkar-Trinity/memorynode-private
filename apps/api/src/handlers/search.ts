@@ -275,6 +275,7 @@ export function createSearchHandlers(
       return jsonResponse({ history: data ?? [] }, 200, rate.headers);
     },
 
+    // eslint-disable-next-line @typescript-eslint/no-unused-vars -- requestId reserved for future logging
     async handleReplaySearch(request, env, supabase, auditCtx, requestId = "", deps?) {
       void requestId;
       const d = (deps ?? defaultDeps) as SearchHandlerDeps;

@@ -102,7 +102,7 @@ describe("export limits and binary mode", () => {
     });
     const wantsZip = wantsZipResponse(req);
     expect(wantsZip).toBe(true);
-    const resp = makeExportResponse(outcome, wantsZip, auth, {});
+    const resp = makeExportResponse(outcome, wantsZip, auth, {}, {});
     expect(resp.status).toBe(200);
     expect(resp.headers.get("content-type")).toBe("application/zip");
     expect(resp.headers.get("content-disposition")).toMatch(/memorynode-export-ws1-\d{4}-\d{2}-\d{2}\.zip/);
