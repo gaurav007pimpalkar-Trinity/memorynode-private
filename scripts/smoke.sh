@@ -151,9 +151,9 @@ call_json() {
   local headers=("$@")
   local curl_headers=()
 
-  echo "==> $step | $method $url"
-  print_headers "${headers[@]}"
-  echo "  payload bytes: ${#payload}"
+  echo "==> $step | $method $url" >&2
+  print_headers "${headers[@]}" >&2
+  echo "  payload bytes: ${#payload}" >&2
 
   for h in "${headers[@]}"; do
     curl_headers+=(-H "$h")
@@ -165,18 +165,18 @@ call_json() {
       -X "$method" "${curl_headers[@]}" \
       ${payload:+-d "$payload"} \
       "$url" -w "\n%{http_code}")"; then
-    echo "error: curl failed for $step"
-    echo "curl output: ${response:0:400}"
+    echo "error: curl failed for $step" >&2
+    echo "curl output: ${response:0:400}" >&2
     exit 1
   fi
 
   status="${response##*$'\n'}"
   body="${response%$'\n'*}"
 
-  echo "<== $step | status: $status | resp bytes: ${#body} | preview: ${body:0:200}"
+  echo "<== $step | status: $status | resp bytes: ${#body} | preview: ${body:0:200}" >&2
 
   if [[ "$status" -ge 400 ]]; then
-    echo "error: $step returned $status"
+    echo "error: $step returned $status" >&2
     exit 1
   fi
 
