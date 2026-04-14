@@ -7,7 +7,7 @@
 }
 
 .shell {
-  max-width: 1080px;
+  max-width: 1280px;
   margin: 0 auto;
   padding: 32px 24px 48px;
   display: flex;
@@ -37,6 +37,7 @@
 .top-actions {
   display: flex;
   gap: 8px;
+  align-items: center;
 }
 
 .celebration-toast {
@@ -145,6 +146,11 @@ button.ghost {
   gap: 10px;
 }
 
+.grid {
+  display: grid;
+  gap: 12px;
+}
+
 .card {
   border: 1px solid var(--panel-border);
   border-radius: 12px;
@@ -231,4 +237,150 @@ details > summary {
   padding: 12px;
   border-radius: 10px;
   overflow-wrap: anywhere;
+}
+
+.empty-state {
+  min-height: 180px;
+  border: 1px dashed var(--panel-border);
+  border-radius: 12px;
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  align-items: center;
+  gap: 8px;
+  text-align: center;
+}
+
+.overview-cards {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+  gap: 10px;
+}
+
+.metric-card {
+  border: 1px solid var(--panel-border);
+  border-radius: 12px;
+  padding: 12px;
+  background: rgba(17, 24, 39, 0.6);
+}
+
+.metric-value {
+  font-size: 28px;
+  font-weight: 700;
+}
+
+.overview-quick-links {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+  gap: 10px;
+}
+
+.dropzone {
+  border: 1px dashed var(--panel-border);
+  border-radius: 12px;
+  padding: 24px;
+}
+
+.pricing-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(210px, 1fr));
+  gap: 10px;
+}
+
+.auth-layout {
+  min-height: 100vh;
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  background: #090b10;
+}
+
+.auth-left {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 48px;
+}
+
+.auth-card {
+  width: 100%;
+  max-width: 420px;
+}
+
+.auth-card h1 {
+  font-size: 36px;
+  line-height: 1.1;
+  margin: 0 0 8px;
+}
+
+.auth-form {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  margin-top: 20px;
+}
+
+.auth-divider {
+  text-align: center;
+  color: #7d8797;
+  font-size: 12px;
+  letter-spacing: 0.1em;
+}
+
+.auth-terms {
+  margin-top: 18px;
+}
+
+.auth-right {
+  display: grid;
+  grid-template-rows: 1fr auto;
+  border-left: 1px solid #151a24;
+}
+
+.auth-image {
+  background:
+    radial-gradient(circle at 80% 20%, rgba(126, 198, 255, 0.65), rgba(74, 116, 164, 0.18) 40%, rgba(10, 12, 20, 0.95) 82%),
+    linear-gradient(180deg, #1c4d83 0%, #24394d 55%, #0b0e13 100%);
+}
+
+.auth-brands {
+  padding: 28px 36px 34px;
+  border-top: 1px solid #151a24;
+  background: #06080d;
+}
+
+.auth-brands-title {
+  font-size: 11px;
+  color: #8b95a6;
+  letter-spacing: 0.12em;
+  margin-bottom: 16px;
+}
+
+.brand-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.brand-pill {
+  border: 1px solid #1d2534;
+  border-radius: 8px;
+  padding: 8px 10px;
+  text-align: center;
+  font-size: 14px;
+  color: #e8edf8;
+  background: rgba(16, 20, 31, 0.65);
+}
+
+@media (max-width: 960px) {
+  .auth-layout {
+    grid-template-columns: 1fr;
+  }
+  .auth-right {
+    border-left: 0;
+    border-top: 1px solid #151a24;
+    min-height: 320px;
+  }
+  .auth-left {
+    padding: 28px 20px;
+  }
 }

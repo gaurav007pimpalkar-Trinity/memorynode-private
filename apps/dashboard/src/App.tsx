@@ -6,18 +6,33 @@ import { loadWorkspaceId, persistWorkspaceId } from "./state";
 import { apiEnvError, apiGet, apiPost, ensureDashboardSession, dashboardLogout, setOnUnauthorized, userFacingErrorMessage } from "./apiClient";
 import { mapSearchResultsToRows, type MemorySearchRow, type SearchApiResult } from "./memorySearch";
 
-type Tab = "workspaces" | "keys" | "memories" | "usage" | "retrieval" | "activation" | "settings";
+type Tab =
+  | "overview"
+  | "documents"
+  | "container_tags"
+  | "requests"
+  | "insights"
+  | "import"
+  | "api_keys"
+  | "agents"
+  | "plugins"
+  | "team"
+  | "billing";
 
 const tabs: Array<{ key: Tab; label: string }> = [
-  { key: "workspaces", label: "Workspaces" },
-  { key: "keys", label: "API Keys" },
-  { key: "memories", label: "Memory Browser" },
-  { key: "usage", label: "Usage" },
-  { key: "retrieval", label: "Retrieval" },
-  { key: "activation", label: "Activation" },
-  { key: "settings", label: "Settings" },
+  { key: "overview", label: "Overview" },
+  { key: "documents", label: "Documents" },
+  { key: "container_tags", label: "Container Tags" },
+  { key: "requests", label: "Requests" },
+  { key: "insights", label: "User Insights" },
+  { key: "import", label: "Import" },
+  { key: "api_keys", label: "API Keys" },
+  { key: "agents", label: "Agents" },
+  { key: "plugins", label: "Plugins" },
+  { key: "team", label: "Team" },
+  { key: "billing", label: "Billing" },
 ];
-const tabsRequiringWorkspace: Tab[] = ["keys", "memories", "usage", "retrieval", "activation"];
+const tabsRequiringWorkspace: Tab[] = ["documents", "container_tags", "requests", "import", "api_keys", "team", "billing"];
 
 const activationEvents: Array<{ key: string; label: string }> = [
   { key: "api_key_created", label: "API key created" },
@@ -28,6 +43,21 @@ const activationEvents: Array<{ key: string; label: string }> = [
   { key: "checkout_started", label: "Checkout started" },
   { key: "upgrade_activated", label: "Upgrade activated" },
 ];
+
+function seatCapForPlan(planCode: string | null | undefined): number {
+  const normalized = (planCode ?? "free").toLowerCase();
+  if (normalized === "launch" || normalized === "build" || normalized === "free" || normalized === "pro" || normalized === "solo") {
+    return 1;
+  }
+  if (normalized === "deploy" || normalized === "scale" || normalized === "team") {
+    return 10;
+  }
+  // Legacy enterprise-like plans are tolerated for existing workspaces.
+  if (normalized === "scale_plus") {
+    return 25;
+  }
+  return 10;
+}
 
 interface ErrorBoundaryProps {
   children: React.ReactNode;
@@ -83,14 +113,13 @@ class ErrorBoundary extends Component<ErrorBoundaryProps, ErrorBoundaryState> {
 export function App(): JSX.Element {
   const [session, setSession] = useState<Session | null>(null);
   const [loadingSession, setLoadingSession] = useState(true);
-  const [tab, setTab] = useState<Tab>("workspaces");
+  const [tab, setTab] = useState<Tab>("overview");
   const [workspaceId, setWorkspaceId] = useState(() => loadWorkspaceId());
   const [workspaceSaving, setWorkspaceSaving] = useState(false);
   const [alert, setAlert] = useState<string | null>(null);
   const [sessionReady, setSessionReady] = useState(false);
   const [sessionError, setSessionError] = useState<string | null>(null);
   const [firstApiKeyCreated, setFirstApiKeyCreated] = useState(false);
-  const [firstSearchCompleted, setFirstSearchCompleted] = useState(false);
   const [celebrationShown, setCelebrationShown] = useState(false);
   const [celebrationMessage, setCelebrationMessage] = useState<string | null>(null);
 
@@ -191,19 +220,19 @@ export function App(): JSX.Element {
       { key: "workspace", label: "Create or select a workspace", done: workspaceReady },
       { key: "workspace-bind", label: "Set workspace in your session", done: Boolean(workspaceClaim?.trim()) },
       { key: "api-key", label: "Create your first API key", done: firstApiKeyCreated },
-      { key: "search", label: "Run your first memory search", done: firstSearchCompleted },
+      { key: "team", label: "Invite your team member(s)", done: false },
     ],
-    [workspaceReady, workspaceClaim, firstApiKeyCreated, firstSearchCompleted],
+    [workspaceReady, workspaceClaim, firstApiKeyCreated],
   );
   const completedSteps = onboardingSteps.filter((step) => step.done).length;
 
   useEffect(() => {
     if (celebrationShown) return;
-    if (firstApiKeyCreated && firstSearchCompleted) {
+    if (firstApiKeyCreated && workspaceReady) {
       setCelebrationShown(true);
-      setCelebrationMessage("Great job - your workspace is live. You created an API key and completed your first memory search.");
+      setCelebrationMessage("Great job - your workspace is live. Your first API key is ready.");
     }
-  }, [firstApiKeyCreated, firstSearchCompleted, celebrationShown]);
+  }, [firstApiKeyCreated, workspaceReady, celebrationShown]);
 
   if (missingEnv.length > 0) {
     return (
@@ -224,13 +253,7 @@ export function App(): JSX.Element {
   if (loadingSession) return <Shell><Panel title="Loading">Checking session…</Panel></Shell>;
 
   if (!session) {
-    return (
-      <Shell>
-        <Panel title="Sign in">
-          <AuthPanel />
-        </Panel>
-      </Shell>
-    );
+    return <AuthLanding />;
   }
 
   if (effectiveWorkspaceId && !sessionReady && !sessionError) {
@@ -262,19 +285,26 @@ export function App(): JSX.Element {
     <Shell>
       <header className="topbar">
         <div>
-          <div className="logo">MemoryNode Dashboard</div>
+          <div className="logo">MemoryNode Console</div>
           <div className="muted small">Signed in as {userEmail}</div>
         </div>
         <div className="top-actions">
           <a
-            href="https://github.com/gaurav007pimpalkar-Trinity/memorynode"
+            href="https://docs.memorynode.ai"
             target="_blank"
             rel="noopener noreferrer"
             className="muted small"
           >
-            Get started with the MemoryNode SDK
+            DOCS
           </a>
-          <span className="muted small">Session active</span>
+          <a
+            href="https://support.memorynode.ai"
+            target="_blank"
+            rel="noopener noreferrer"
+            className="muted small"
+          >
+            SUPPORT
+          </a>
           <button className="ghost" onClick={async () => { await dashboardLogout(); await supabase.auth.signOut(); }}>
             Sign out
           </button>
@@ -291,25 +321,31 @@ export function App(): JSX.Element {
         </div>
       )}
 
-      <Panel title="Getting started">
+      <Panel title="Quick setup">
         <div className="row-space">
-          <div className="muted small">Follow these steps to unlock the full dashboard experience.</div>
+          <div className="muted small">Select a workspace once to unlock console modules.</div>
           <span className="badge">
             {completedSteps}/{onboardingSteps.length} complete
           </span>
         </div>
-        <div className="list">
-          {onboardingSteps.map((step, index) => (
-            <div key={step.key} className={step.done ? "card onboarding-step done" : "card onboarding-step"}>
-              <div className="row-space">
-                <strong>
-                  {step.done ? "✓" : index + 1}. {step.label}
-                </strong>
-                <span className="muted small">{step.done ? "Done" : "Pending"}</span>
-              </div>
-            </div>
-          ))}
+        <label className="field">
+          <span>Workspace ID</span>
+          <input
+            value={workspaceId}
+            onChange={(e) => setWorkspaceId(e.target.value)}
+            placeholder="UUID"
+          />
+        </label>
+        <div className="row">
+          <button onClick={saveWorkspaceId} disabled={!workspaceId || workspaceSaving}>
+            {workspaceSaving ? "Setting workspace…" : "Set Workspace"}
+          </button>
+          <button className="ghost" onClick={() => setWorkspaceId(loadWorkspaceId())}>
+            Use Last Workspace
+          </button>
         </div>
+        {alert && <div className="badge">{alert}</div>}
+        <div className="muted small">Current workspace: {workspaceClaim || "No workspace selected yet"}</div>
       </Panel>
 
       <nav className="tabs">
@@ -326,44 +362,27 @@ export function App(): JSX.Element {
         ))}
       </nav>
 
-      <ErrorBoundary onBack={() => setTab("workspaces")}>
+      <ErrorBoundary onBack={() => setTab("overview")}>
       <div className="grid">
-        <Panel title="Your workspace">
-          <p className="muted small">
-            Choose a workspace once, then set it to unlock Usage, Retrieval, and Billing actions.
-          </p>
-          <label className="field">
-            <span>Workspace ID</span>
-            <input
-              value={workspaceId}
-              onChange={(e) => setWorkspaceId(e.target.value)}
-              placeholder="UUID"
-            />
-          </label>
-          <div className="row">
-            <button onClick={saveWorkspaceId} disabled={!workspaceId || workspaceSaving}>
-              {workspaceSaving ? "Setting workspace…" : "Set Workspace"}
-            </button>
-            <button className="ghost" onClick={() => setWorkspaceId(loadWorkspaceId())}>
-              Use Last Workspace
-            </button>
-          </div>
-          {alert && <div className="badge">{alert}</div>}
-          <div className="muted small">Current workspace: {workspaceClaim || "No workspace selected yet"}</div>
-        </Panel>
-
-        {tab === "workspaces" && (
-          <WorkspacesView
-            workspaceId={workspaceClaim || workspaceId}
-            sessionUserId={session.user.id}
-            onSelectWorkspace={(id) => {
-              setWorkspaceId(id);
-              persistWorkspaceId(id);
-              setAlert("Workspace selected. Click Set Workspace to activate all workspace-scoped tabs.");
-            }}
-          />
+        {tab === "overview" && (
+          <OverviewView />
         )}
-        {tab === "keys" && (
+        {tab === "documents" && (
+          <DocumentsView />
+        )}
+        {tab === "container_tags" && (
+          <ContainerTagsView />
+        )}
+        {tab === "requests" && (
+          <RequestsView workspaceId={effectiveWorkspaceId} />
+        )}
+        {tab === "insights" && (
+          <InsightsView />
+        )}
+        {tab === "import" && (
+          <ImportView />
+        )}
+        {tab === "api_keys" && (
           <ApiKeysView
             workspaceId={workspaceClaim || workspaceId}
             onApiKeyCreated={() => {
@@ -371,19 +390,24 @@ export function App(): JSX.Element {
             }}
           />
         )}
-        {tab === "memories" && (
-          <MemoryView
-            userId={session.user.id}
-            workspaceId={effectiveWorkspaceId}
-            onSearchCompleted={() => {
-              if (!firstSearchCompleted) setFirstSearchCompleted(true);
+        {tab === "agents" && (
+          <AgentsView />
+        )}
+        {tab === "plugins" && (
+          <PluginsView />
+        )}
+        {tab === "team" && (
+          <WorkspacesView
+            workspaceId={workspaceClaim || workspaceId}
+            sessionUserId={session.user.id}
+            onSelectWorkspace={(id) => {
+              setWorkspaceId(id);
+              persistWorkspaceId(id);
+              setAlert("Workspace selected. Click Set Workspace to activate console sections.");
             }}
           />
         )}
-        {tab === "usage" && <UsageView workspaceId={effectiveWorkspaceId} />}
-        {tab === "retrieval" && <RetrievalView userId={session.user.id} workspaceId={effectiveWorkspaceId} />}
-        {tab === "activation" && <ActivationView workspaceId={workspaceClaim || workspaceId} />}
-        {tab === "settings" && <SettingsView session={session} workspaceId={effectiveWorkspaceId} />}
+        {tab === "billing" && <BillingConsoleView workspaceId={effectiveWorkspaceId} />}
       </div>
       </ErrorBoundary>
     </Shell>
@@ -401,6 +425,236 @@ function Panel({ title, children }: { title: string; children: React.ReactNode }
       <div className="panel-body">{children}</div>
     </section>
   );
+}
+
+function AuthLanding() {
+  const showcaseCompanies = ["Nexora", "Bluepine", "Aptly", "Composio", "Pocket", "Cluely"];
+  return (
+    <div className="auth-layout">
+      <section className="auth-left">
+        <div className="auth-card">
+          <h1>Your memory layer awaits</h1>
+          <p className="muted">Sign in or create an account to get started.</p>
+          <AuthPanel />
+          <p className="auth-terms muted small">By continuing, you agree to our Terms and Privacy Policy.</p>
+        </div>
+      </section>
+      <section className="auth-right">
+        <div className="auth-image" />
+        <div className="auth-brands">
+          <div className="auth-brands-title">USED BY COMPANIES YOU (AND WE) LOVE</div>
+          <div className="brand-grid">
+            {showcaseCompanies.map((company) => (
+              <div key={company} className="brand-pill">
+                {company}
+              </div>
+            ))}
+          </div>
+        </div>
+      </section>
+    </div>
+  );
+}
+
+function EmptyState({ title, subtitle }: { title: string; subtitle: string }) {
+  return (
+    <div className="empty-state">
+      <strong>{title}</strong>
+      <p className="muted small">{subtitle}</p>
+    </div>
+  );
+}
+
+function OverviewView() {
+  const cards = [
+    { label: "Documents", value: "0" },
+    { label: "Memories", value: "0" },
+    { label: "Search Requests", value: "0" },
+    { label: "Container Tags", value: "0" },
+    { label: "Connectors", value: "0" },
+  ];
+
+  return (
+    <Panel title="Overview">
+      <div className="overview-cards">
+        {cards.map((card) => (
+          <div key={card.label} className="metric-card">
+            <div className="muted small">{card.label}</div>
+            <div className="metric-value">{card.value}</div>
+          </div>
+        ))}
+      </div>
+      <div className="overview-quick-links">
+        <a className="card muted small" href="https://docs.memorynode.ai" target="_blank" rel="noopener noreferrer">
+          Documentation
+        </a>
+        <a className="card muted small" href="https://docs.memorynode.ai/quickstart" target="_blank" rel="noopener noreferrer">
+          Quick Setup
+        </a>
+        <a className="card muted small" href="https://docs.memorynode.ai/playground" target="_blank" rel="noopener noreferrer">
+          Playground
+        </a>
+      </div>
+    </Panel>
+  );
+}
+
+function DocumentsView() {
+  return (
+    <Panel title="Documents">
+      <EmptyState title="No documents yet" subtitle="Import data or add documents via the API to get started." />
+    </Panel>
+  );
+}
+
+function ContainerTagsView() {
+  return (
+    <Panel title="Container Tags">
+      <EmptyState title="No container tags yet" subtitle="Import data or add documents via the API to get started." />
+    </Panel>
+  );
+}
+
+function RequestsView({ workspaceId }: { workspaceId: string }) {
+  return (
+    <Panel title="Requests">
+      <div className="row">
+        <button className="tab active">30d</button>
+        <button className="tab">All</button>
+      </div>
+      {workspaceId ? (
+        <UsageView workspaceId={workspaceId} embedded />
+      ) : (
+        <EmptyState title="No requests yet" subtitle="API requests will appear here once you start making calls." />
+      )}
+    </Panel>
+  );
+}
+
+function InsightsView() {
+  return (
+    <Panel title="User Insights">
+      <EmptyState title="Available on Scale" subtitle="Upgrade in Billing to unlock AI-powered user insights." />
+      <button>Upgrade</button>
+    </Panel>
+  );
+}
+
+function ImportView() {
+  const [url, setUrl] = useState("");
+  const [tag, setTag] = useState("");
+
+  return (
+    <Panel title="Import">
+      <div className="dropzone muted small">Drop files here or click to browse (TXT, PDF, PNG, JPG, MP4)</div>
+      <label className="field">
+        <span>Add URL</span>
+        <div className="row">
+          <input value={url} onChange={(e) => setUrl(e.target.value)} placeholder="https://example.com/article" />
+          <button className="ghost" disabled={!url.trim()}>Add</button>
+        </div>
+      </label>
+      <label className="field">
+        <span>Container Tag (optional)</span>
+        <input value={tag} onChange={(e) => setTag(e.target.value)} placeholder="Search or create tags…" />
+      </label>
+      <button disabled>Import 0 items</button>
+    </Panel>
+  );
+}
+
+function AgentsView() {
+  return (
+    <Panel title="Agents">
+      <EmptyState title="No agents connected" subtitle="Install the CLI and run login to connect an agent." />
+    </Panel>
+  );
+}
+
+function PluginsView() {
+  return (
+    <Panel title="Plugins">
+      <EmptyState title="Plugins require paid plan" subtitle="Connect external tools to enhance your workflow." />
+      <button>Upgrade</button>
+    </Panel>
+  );
+}
+
+function BillingConsoleView({ workspaceId }: { workspaceId: string }) {
+  const [billTab, setBillTab] = useState<"plans" | "usage" | "invoices">("plans");
+  return (
+    <Panel title="Billing">
+      <nav className="tabs">
+        <button className={billTab === "plans" ? "tab active" : "tab"} onClick={() => setBillTab("plans")}>Plans</button>
+        <button className={billTab === "usage" ? "tab active" : "tab"} onClick={() => setBillTab("usage")}>Usage</button>
+        <button className={billTab === "invoices" ? "tab active" : "tab"} onClick={() => setBillTab("invoices")}>Invoices</button>
+      </nav>
+      {billTab === "plans" && <PlansView workspaceId={workspaceId} />}
+      {billTab === "usage" && <UsageView workspaceId={workspaceId} embedded />}
+      {billTab === "invoices" && <InvoicesView />}
+    </Panel>
+  );
+}
+
+function PlansView({ workspaceId }: { workspaceId: string }) {
+  const plans = [
+    { id: "launch", label: "Solo Launch", price: "Rs 299 / 7 days", seats: "1 member" },
+    { id: "build", label: "Solo Build", price: "Rs 499 / month", seats: "1 member" },
+    { id: "deploy", label: "Team Deploy", price: "Rs 1999 / month", seats: "Up to 10 members" },
+    { id: "scale", label: "Team Scale", price: "Rs 4999 / month", seats: "Up to 10 members" },
+  ];
+  const [loadingPlan, setLoadingPlan] = useState<string | null>(null);
+  const [message, setMessage] = useState<string | null>(null);
+
+  const checkout = async (plan: string) => {
+    if (!workspaceId) return;
+    setLoadingPlan(plan);
+    setMessage(null);
+    try {
+      const res = await apiPost<{ url: string; method?: string; fields?: Record<string, string> }>("/v1/billing/checkout", { plan });
+      if ((res.method ?? "GET").toUpperCase() === "POST" && res.fields && Object.keys(res.fields).length > 0) {
+        const target = window.open("", "_blank", "noopener");
+        if (!target) {
+          setMessage("Popup blocked by browser. Allow popups and try again.");
+          return;
+        }
+        const html = `<!doctype html><html><body><form id="payu-form" method="POST" action="${res.url}">
+${Object.entries(res.fields).map(([k, v]) => `<input type="hidden" name="${k}" value="${String(v).replace(/"/g, "&quot;")}" />`).join("\n")}
+</form><script>document.getElementById("payu-form").submit();</script></body></html>`;
+        target.document.write(html);
+        target.document.close();
+      } else {
+        window.open(res.url, "_blank", "noopener");
+      }
+    } catch (err: unknown) {
+      setMessage(userFacingErrorMessage(err));
+    } finally {
+      setLoadingPlan(null);
+    }
+  };
+
+  return (
+    <div className="list">
+      {message && <div className="badge">{message}</div>}
+      {!workspaceId && <div className="badge">Set your workspace first to checkout a plan.</div>}
+      <div className="pricing-grid">
+        {plans.map((plan) => (
+          <div key={plan.id} className="card">
+            <strong>{plan.label}</strong>
+            <div>{plan.price}</div>
+            <div className="muted small">{plan.seats}</div>
+            <button disabled={!workspaceId || !!loadingPlan} onClick={() => checkout(plan.id)}>
+              {loadingPlan === plan.id ? "Opening checkout..." : "Upgrade"}
+            </button>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+function InvoicesView() {
+  return <EmptyState title="No invoices yet" subtitle="Invoices appear here once you have an active paid subscription." />;
 }
 
 function AuthPanel() {
@@ -423,16 +677,22 @@ function AuthPanel() {
     await supabase.auth.signInWithOAuth({ provider: "github", options: { redirectTo: window.location.origin } });
   };
 
+  const google = async () => {
+    await supabase.auth.signInWithOAuth({ provider: "google", options: { redirectTo: window.location.origin } });
+  };
+
   return (
-    <div className="stack">
-      <button onClick={github}>Continue with GitHub</button>
-      <div className="muted small">or</div>
-      <label className="field">
-        <span>Email for magic link</span>
-        <input value={email} onChange={(e) => setEmail(e.target.value)} placeholder="you@example.com" />
-      </label>
+    <div className="auth-form">
+      <input value={email} onChange={(e) => setEmail(e.target.value)} placeholder="Email address" />
       <button onClick={magic} disabled={!email || busy}>
-        {busy ? "Sending…" : "Send magic link"}
+        {busy ? "Sending..." : "Send magic link"}
+      </button>
+      <div className="auth-divider">OR</div>
+      <button className="ghost" onClick={google}>
+        Continue with Google
+      </button>
+      <button className="ghost" onClick={github}>
+        Continue with GitHub
       </button>
       {message && <div className="badge">{message}</div>}
     </div>
@@ -1042,13 +1302,13 @@ function RetrievalView({ userId, workspaceId }: { userId: string; workspaceId: s
   );
 }
 
-function UsageView({ workspaceId }: { workspaceId: string }) {
+function UsageView({ workspaceId, embedded = false }: { workspaceId: string; embedded?: boolean }) {
   const [usage, setUsage] = useState<UsageRow | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
   if (!workspaceId?.trim()) {
-    return (
+    return embedded ? <div className="badge">Set your workspace first to view usage and limits.</div> : (
       <Panel title="Usage">
         <div className="badge">Set your workspace first to view usage and limits.</div>
       </Panel>
@@ -1072,8 +1332,8 @@ function UsageView({ workspaceId }: { workspaceId: string }) {
     void load();
   }, []);
 
-  return (
-    <Panel title="Usage">
+  const content = (
+    <>
       <div className="muted small">Using session (workspace-scoped).</div>
       {loading && <div>Loading…</div>}
       {error && (
@@ -1115,8 +1375,9 @@ function UsageView({ workspaceId }: { workspaceId: string }) {
         </div>
       )}
       {!loading && !usage && !error && <div className="muted small">No usage yet.</div>}
-    </Panel>
+    </>
   );
+  return embedded ? content : <Panel title="Usage">{content}</Panel>;
 }
 
 function ActivationView({ workspaceId }: { workspaceId: string }) {
@@ -1324,6 +1585,8 @@ function SettingsView({ session, workspaceId }: { session: Session; workspaceId:
 function MembersView({ workspaceId, currentUserId }: { workspaceId: string; currentUserId: string }) {
   const [members, setMembers] = useState<Array<{ user_id: string; role: string; created_at: string }>>([]);
   const [invites, setInvites] = useState<InviteRow[]>([]);
+  const [seatCap, setSeatCap] = useState<number>(10);
+  const [effectivePlan, setEffectivePlan] = useState<string>("team");
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [newEmail, setNewEmail] = useState("");
@@ -1358,12 +1621,32 @@ function MembersView({ workspaceId, currentUserId }: { workspaceId: string; curr
       .finally(() => setLoading(false));
   }, [workspaceId]);
 
+  const loadSeatCap = useCallback(async () => {
+    if (!workspaceId) return;
+    try {
+      const billing = await apiGet<{ effective_plan?: string; plan?: string }>("/v1/billing/status");
+      const plan = billing.effective_plan ?? billing.plan ?? "free";
+      setEffectivePlan(plan);
+      setSeatCap(seatCapForPlan(plan));
+    } catch {
+      // Keep fallback seat cap when billing status is unavailable.
+      setEffectivePlan("team");
+      setSeatCap(10);
+    }
+  }, [workspaceId]);
+
   useEffect(() => {
     load();
-  }, [load]);
+    void loadSeatCap();
+  }, [load, loadSeatCap]);
 
   const createInvite = async () => {
     if (!workspaceId || !newEmail.trim()) return;
+    const currentSeats = members.length + invites.filter((invite) => !invite.accepted_at && !invite.revoked_at).length;
+    if (currentSeats >= seatCap) {
+      setError(`Seat cap reached for ${effectivePlan} plan (${seatCap} seats). Upgrade to add more members.`);
+      return;
+    }
     setBusy(true);
     setError(null);
     const { error } = await supabase.rpc("create_invite", {
@@ -1412,6 +1695,12 @@ function MembersView({ workspaceId, currentUserId }: { workspaceId: string; curr
   return (
     <div className="panel mt-md">
       <div className="panel-head">Members & Invites</div>
+      <div className="row-space">
+        <span className="muted small">Plan: {effectivePlan}</span>
+        <span className="badge">
+          Seats used: {members.length}/{seatCap}
+        </span>
+      </div>
       {error && <div className="badge">{error}</div>}
       {loading && <div>Loading…</div>}
 
@@ -1430,6 +1719,9 @@ function MembersView({ workspaceId, currentUserId }: { workspaceId: string; curr
           <button onClick={createInvite} disabled={!newEmail.trim() || busy}>
             {busy ? "Saving…" : "Send invite"}
           </button>
+        </div>
+        <div className="muted small">
+          Pending invites count toward seat limits. Solo plans allow 1 member. Team plans allow up to 10 members.
         </div>
       </div>
 
