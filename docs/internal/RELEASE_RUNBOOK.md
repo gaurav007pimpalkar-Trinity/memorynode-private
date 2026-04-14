@@ -75,7 +75,7 @@ RELEASE_INCLUDE_BUILD=1 pnpm release:gate
 CI trust gates always check CSP and security headers from config (`apps/dashboard/public/_headers` or `vercel.json`). To **verify that the deployed dashboard actually serves** those headers (e.g. after CDN/Pages), run once before go-live:
 
 ```bash
-G5_URL=https://app.memorynode.ai pnpm ci:trust-gates
+G5_URL=https://console.memorynode.ai pnpm ci:trust-gates
 ```
 
 Use your real dashboard URL (staging or production). If this fails, fix headers or CDN config before launch.
@@ -222,7 +222,7 @@ Dashboard (`apps/dashboard`) — workspace, API keys, memories. See `docs/intern
 
 ```bash
 pnpm --filter @memorynode/dashboard build
-# Deploy apps/dashboard/dist to Vercel or Cloudflare Pages (app.memorynode.ai)
+# Deploy apps/dashboard/dist to Vercel or Cloudflare Pages (console.memorynode.ai)
 ```
 
 ## 9) Go/No-Go

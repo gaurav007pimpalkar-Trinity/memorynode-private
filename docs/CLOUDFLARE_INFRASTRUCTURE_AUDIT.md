@@ -127,7 +127,7 @@ www.memorynode.ai (CNAME) → Pages: memorynode-website.pages.dev
 | https://api.memorynode.ai/healthz | 200 | OK |
 | https://api.memorynode.ai/ready | 404 | See recommendations below |
 | https://api-staging.memorynode.ai/healthz | 200 | OK |
-| https://app.memorynode.ai | 200 | OK |
+| https://console.memorynode.ai | 200 | OK |
 | https://memorynode.ai, https://www.memorynode.ai | 200 / 301 | OK |
 | memorynode-api*.workers.dev/healthz | 200 | OK |
 | memorynode-website.pages.dev | 200 | OK |
@@ -159,5 +159,5 @@ Ensure `CLOUDFLARE_API_TOKEN` is set (e.g. in repo root `.env` or environment). 
 
 1. Cloudflare Dashboard → **Workers & Pages** → **Pages**.
 2. Open project **memorynode** → **Deployments** to see latest status (build was failing → 522).
-3. If unused: **Settings** → delete project. If this project serves `app.memorynode.ai`, fix the build instead (dashboard is live at app.memorynode.ai from another host, so safe to delete this Pages project).
+3. If unused: **Settings** → delete project. If this project serves `console.memorynode.ai`, fix the build instead (console is live at console.memorynode.ai from another host, so safe to delete this Pages project).
 

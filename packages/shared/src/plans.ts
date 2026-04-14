@@ -22,6 +22,10 @@ export interface PlanLimits {
 export interface Plan {
   id: PlanId;
   label: string;
+  /** Positioning for console: "solo" or "team". */
+  audience: "solo" | "team" | "legacy";
+  /** Seat cap for workspace members. */
+  member_cap: number;
   price_inr: number;
   /** 7 for Launch, 30 for Build/Deploy/Scale, null for Scale+ (custom). */
   billing_period_days: number | null;
@@ -45,6 +49,8 @@ const PLANS: Plan[] = [
   {
     id: "launch",
     label: "Launch",
+    audience: "solo",
+    member_cap: 1,
     price_inr: 299,
     billing_period_days: 7,
     limits: {
@@ -59,6 +65,8 @@ const PLANS: Plan[] = [
   {
     id: "build",
     label: "Build",
+    audience: "solo",
+    member_cap: 1,
     price_inr: 499,
     billing_period_days: 30,
     limits: {
@@ -73,6 +81,8 @@ const PLANS: Plan[] = [
   {
     id: "deploy",
     label: "Deploy",
+    audience: "team",
+    member_cap: 10,
     price_inr: 1999,
     billing_period_days: 30,
     limits: {
@@ -87,6 +97,8 @@ const PLANS: Plan[] = [
   {
     id: "scale",
     label: "Scale",
+    audience: "team",
+    member_cap: 10,
     price_inr: 4999,
     billing_period_days: 30,
     limits: {
@@ -101,6 +113,8 @@ const PLANS: Plan[] = [
   {
     id: "scale_plus",
     label: "Scale+",
+    audience: "legacy",
+    member_cap: 25,
     price_inr: 0, // custom
     billing_period_days: null,
     limits: {
@@ -122,8 +136,8 @@ export const PLANS_BY_ID: Record<PlanId, Plan> = PLANS.reduce(
   {} as Record<PlanId, Plan>,
 );
 
-/** Plan ids accepted at checkout. Do not add pro/team; those are legacy internal DB-only labels. */
-export const CHECKOUT_PLAN_IDS: PlanId[] = ["launch", "build", "deploy", "scale", "scale_plus"];
+/** Plan ids accepted at checkout. Enterprise-like scale_plus is legacy-only. */
+export const CHECKOUT_PLAN_IDS: PlanId[] = ["launch", "build", "deploy", "scale"];
 
 export function getPlan(id: PlanId | string | null | undefined): Plan | null {
   if (!id || typeof id !== "string") return null;

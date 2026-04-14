@@ -56,7 +56,7 @@ PayU billing vars (required when billing/webhooks are enabled):
 
 Common optional vars:
 
-- [ ] `ALLOWED_ORIGINS` — **required in production** for dashboard CORS; release:gate fails if missing. Comma-separated origins (e.g. `https://app.memorynode.ai`).
+- [ ] `ALLOWED_ORIGINS` — **required in production** for dashboard CORS; release:gate fails if missing. Comma-separated origins (e.g. `https://console.memorynode.ai`).
 - [ ] `BUILD_VERSION`
 - [ ] `GIT_SHA`
 
@@ -136,7 +136,7 @@ pnpm --filter @memorynode/api exec wrangler secret put PAYU_MERCHANT_SALT --env 
 
 - [ ] `PAYU_VERIFY_URL` set in Worker vars (PayU verify API URL; e.g. `https://info.payu.in/merchant/postservice?form=2`)
 - [ ] `PAYU_BASE_URL` set in Worker vars (PayU checkout base URL)
-- [ ] `PUBLIC_APP_URL` set in Worker vars (e.g. `https://app.memorynode.ai`)
+- [ ] `PUBLIC_APP_URL` set in Worker vars (e.g. `https://console.memorynode.ai`)
 
 ### C3. Webhook endpoint & security controls
 
@@ -170,13 +170,13 @@ Recommended hostnames:
 
 - [ ] `api.memorynode.ai` -> Cloudflare Worker production route
 - [ ] `api-staging.memorynode.ai` -> Cloudflare Worker staging route
-- [ ] `app.memorynode.ai` -> dashboard hosting (see `docs/internal/DASHBOARD_DEPLOY.md`; Vercel or Cloudflare Pages)
+- [ ] `console.memorynode.ai` -> dashboard hosting (see `docs/internal/DASHBOARD_DEPLOY.md`; Vercel or Cloudflare Pages)
 
 Dashboard/API alignment:
 
 - [ ] `VITE_API_BASE_URL=https://api.memorynode.ai`
-- [ ] `PUBLIC_APP_URL=https://app.memorynode.ai`
-- [ ] `ALLOWED_ORIGINS` includes `https://app.memorynode.ai`
+- [ ] `PUBLIC_APP_URL=https://console.memorynode.ai`
+- [ ] `ALLOWED_ORIGINS` includes `https://console.memorynode.ai`
 
 ## E) Go-live order (manual release sequence)
 

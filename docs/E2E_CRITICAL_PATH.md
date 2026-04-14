@@ -7,7 +7,7 @@ Run this flow once before launch to confirm the full user journey works.
 ## Flow (in order)
 
 1. **Sign in to dashboard**  
-   Open the dashboard URL (e.g. `https://app.memorynode.ai`). Sign in with Supabase (magic link or GitHub OAuth).
+   Open the dashboard URL (e.g. `https://console.memorynode.ai`). Sign in with Supabase (magic link or GitHub OAuth).
 
 2. **Create or select workspace**  
    Create a workspace or pick an existing one. Ensure you’re in a workspace before creating an API key.

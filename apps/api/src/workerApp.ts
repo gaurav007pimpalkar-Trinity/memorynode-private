@@ -959,12 +959,12 @@ async function upsertWorkspaceEntitlementFromTransaction(
 function buildUpgradeUrl(env: Env): string {
   if (env.PUBLIC_APP_URL) {
     try {
-      return new URL("/settings/billing", env.PUBLIC_APP_URL).toString();
+      return new URL("/billing", env.PUBLIC_APP_URL).toString();
     } catch {
       /* ignore invalid URL */
     }
   }
-  return "/settings/billing";
+  return "/billing";
 }
 
 async function sha256HexString(value: string): Promise<string> {

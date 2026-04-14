@@ -8,7 +8,7 @@ import { MemoryNodeClient } from "@memorynodeai/sdk";
 
 const apiKey = process.env.API_KEY?.trim();
 if (!apiKey) {
-  console.error("Error: API_KEY is required. Get a key at https://app.memorynode.ai");
+  console.error("Error: API_KEY is required. Get a key at https://console.memorynode.ai");
   console.error("Usage: API_KEY=your_key [BASE_URL=https://api.memorynode.ai] node index.mjs");
   process.exit(1);
 }

@@ -14,7 +14,7 @@ Set via **Wrangler secrets** (never in repo or `[vars]`):
 - [ ] `API_KEY_SALT`, `MASTER_ADMIN_TOKEN`, `OPENAI_API_KEY`
 - [ ] `PAYU_MERCHANT_KEY`, `PAYU_MERCHANT_SALT` (if billing enabled)
 
-Production vars: [ ] `ENVIRONMENT=production`, [ ] `EMBEDDINGS_MODE=openai`, [ ] `RATE_LIMIT_MODE=on`, [ ] `ALLOWED_ORIGINS` includes `https://app.memorynode.ai`.
+Production vars: [ ] `ENVIRONMENT=production`, [ ] `EMBEDDINGS_MODE=openai`, [ ] `RATE_LIMIT_MODE=on`, [ ] `ALLOWED_ORIGINS` includes `https://console.memorynode.ai`.
 
 ## 3. Database (staging then production)
 - [ ] `DATABASE_URL=... pnpm db:migrate`
@@ -27,8 +27,8 @@ Production vars: [ ] `ENVIRONMENT=production`, [ ] `EMBEDDINGS_MODE=openai`, [ ]
 3. [ ] Production validate: `TARGET_ENV=production PROD_BASE_URL=https://api.memorynode.ai API_KEY=... pnpm release:prod:validate`
 
 ## 5. Dashboard & security (before prod traffic)
-- [ ] Dashboard deployed (e.g. `app.memorynode.ai`).
-- [ ] **G5 live check:** `G5_URL=https://app.memorynode.ai pnpm ci:trust-gates` (confirms CSP and security headers on live URL).
+- [ ] Dashboard deployed (e.g. `console.memorynode.ai`).
+- [ ] **G5 live check:** `G5_URL=https://console.memorynode.ai pnpm ci:trust-gates` (confirms CSP and security headers on live URL).
 
 ## 6. Post go-live (same day)
 - [ ] `GET https://api.memorynode.ai/healthz` → `status: ok`, `x-request-id` present. Optional: use `GET /ready` for LB readiness (returns 503 if DB unavailable).

@@ -42,7 +42,7 @@ Release is allowed only when every item below is green.
 
 ## 7) Security headers (G5 live check)
 
-- [ ] Before production go-live, run: `G5_URL=https://app.memorynode.ai pnpm ci:trust-gates` (use your dashboard URL). This verifies the deployed app serves CSP and security headers. See [RELEASE_RUNBOOK.md](RELEASE_RUNBOOK.md#g5-live-security-headers-before-production-go-live).
+- [ ] Before production go-live, run: `G5_URL=https://console.memorynode.ai pnpm ci:trust-gates` (use your dashboard URL). This verifies the deployed app serves CSP and security headers. See [RELEASE_RUNBOOK.md](RELEASE_RUNBOOK.md#g5-live-security-headers-before-production-go-live).
 
 ---
 

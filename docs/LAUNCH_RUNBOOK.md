@@ -28,7 +28,7 @@ One-page reference for deploy, migrations, health checks, and escalation. Use th
 
 - [ ] **Dashboard env (production Worker)**  
   In Cloudflare Worker → **Settings** → **Variables and Secrets**, ensure:
-  - `ALLOWED_ORIGINS` = e.g. `https://app.memorynode.ai` (comma-separated if multiple)
+  - `ALLOWED_ORIGINS` = e.g. `https://console.memorynode.ai` (comma-separated if multiple)
   - `SUPABASE_ANON_KEY` is set (required for dashboard session / Supabase Auth Get User)
 
 - [ ] **Database migrations**  

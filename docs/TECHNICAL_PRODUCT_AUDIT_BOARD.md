@@ -90,7 +90,7 @@
 - **Admin:** Low coverage (19%); critical for operations.
 - **Dashboard session flow:** Low coverage (dashboardSession.ts 15%); CSRF and cookie logic need more tests.
 - **Status page:** Removed (app deleted).
-- **memorynode Pages project:** Audit reports 522 (origin unreachable); second Pages project may be redundant if dashboard is on app.memorynode.ai elsewhere.
+- **memorynode Pages project:** Audit reports 522 (origin unreachable); second Pages project may be redundant if dashboard is on console.memorynode.ai elsewhere.
 - **worker.memorynode.ai:** CNAME to gaurav007pimpalkar.workers.dev; audit flags as "possible non-existent Worker".
 
 ### 2.3 Core Workflow End-to-End

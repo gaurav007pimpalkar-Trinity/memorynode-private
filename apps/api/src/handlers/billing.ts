@@ -9,7 +9,7 @@ import type { AuthContext } from "../auth.js";
 import { authenticate, rateLimit } from "../auth.js";
 import type { HandlerDeps } from "../router.js";
 
-const CHECKOUT_PLAN_IDS = ["launch", "build", "deploy", "scale", "scale_plus"] as const;
+const CHECKOUT_PLAN_IDS = ["launch", "build", "deploy", "scale"] as const;
 
 export interface BillingHandlerDeps extends HandlerDeps {
   safeParseJson: <T>(request: Request) => Promise<{ ok: true; data: T } | { ok: false; error: string }>;
@@ -169,7 +169,7 @@ export function createBillingHandlers(
           {
             error: {
               code: "PLAN_NOT_SUPPORTED",
-              message: `Allowed plans: ${CHECKOUT_PLAN_IDS.join(", ")}. Pro/team are no longer available; use platform plans.`,
+              message: `Allowed plans: ${CHECKOUT_PLAN_IDS.join(", ")}. Enterprise checkout is retired; use solo/team plans.`,
             },
           },
           400,

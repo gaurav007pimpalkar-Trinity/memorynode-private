@@ -413,7 +413,7 @@ Canonical deploy/rollback workflow: `docs/internal/RELEASE_RUNBOOK.md`, `docs/in
 
 Production deploy path for the MemoryNode dashboard (workspace, API keys, memories, usage, billing).
 
-**URL:** Production: `https://app.memorynode.ai` (or your configured domain). Local: `pnpm --filter @memorynode/dashboard dev` → http://localhost:5173.
+**URL:** Production: `https://console.memorynode.ai` (or your configured domain). Local: `pnpm --filter @memorynode/dashboard dev` → http://localhost:5173.
 
 ### Deploy (Cloudflare Pages)
 
@@ -422,7 +422,7 @@ Production deploy path for the MemoryNode dashboard (workspace, API keys, memori
 2. Select this repo and branch (e.g. `main`).  
 3. Build configuration: Root directory leave empty (repo root); Build command: `pnpm install && pnpm --filter @memorynode/dashboard build`; Build output directory: `apps/dashboard/dist`.  
 4. Environment variables (Settings → Environment variables → Production): `VITE_SUPABASE_URL`, `VITE_SUPABASE_ANON_KEY`, `VITE_API_BASE_URL` (e.g. `https://api.memorynode.ai`).  
-5. Custom domain: Add `app.memorynode.ai`.  
+5. Custom domain: Add `console.memorynode.ai`.
 6. DNS: CNAME for `app` (or `app.memorynode`) to the Pages URL.
 
 Security headers (CSP, X-Content-Type-Options, etc.) are in `apps/dashboard/public/_headers`.
@@ -432,9 +432,9 @@ From repo root: `pnpm install && pnpm --filter @memorynode/dashboard build`, the
 
 **Vercel (alternative):** Use `apps/dashboard/vercel.json`; `cd apps/dashboard && vercel --prod`; set same env vars and domain.
 
-**CORS:** Ensure `ALLOWED_ORIGINS` in the API Worker includes your dashboard URL (e.g. `https://app.memorynode.ai`).
+**CORS:** Ensure `ALLOWED_ORIGINS` in the API Worker includes your dashboard URL (e.g. `https://console.memorynode.ai`).
 
-**Post-deploy:** [ ] `https://app.memorynode.ai` loads; [ ] Sign in works; [ ] Session → workspace → API key flow works; [ ] API calls succeed (session cookie, CSRF).
+**Post-deploy:** [ ] `https://console.memorynode.ai` loads; [ ] Sign in works; [ ] Session → workspace → API key flow works; [ ] API calls succeed (session cookie, CSRF).
 
 ---
 

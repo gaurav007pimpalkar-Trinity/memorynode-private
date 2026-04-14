@@ -67,7 +67,7 @@ const STRICT_BASE = {
   DATABASE_URL: "postgres://user:pass@db.internal:5432/memorynode?sslmode=require",
   API_KEY_SALT: "api_key_salt_123",
   MASTER_ADMIN_TOKEN: "admin_token_123",
-  ALLOWED_ORIGINS: "https://app.memorynode.ai",
+  ALLOWED_ORIGINS: "https://console.memorynode.ai",
   EMBEDDINGS_MODE: "openai",
   OPENAI_API_KEY: "sk-test-1234567890",
   PAYU_MERCHANT_KEY: "payu_merchant_key_1234567890",
@@ -75,7 +75,7 @@ const STRICT_BASE = {
   PAYU_WEBHOOK_SECRET: "payu_webhook_secret_1234567890",
   PAYU_BASE_URL: "https://secure.payu.in",
   PAYU_VERIFY_URL: "https://info.payu.in/merchant/postservice?form=2",
-  PUBLIC_APP_URL: "https://app.memorynode.ai",
+  PUBLIC_APP_URL: "https://console.memorynode.ai",
   PAYU_SUCCESS_PATH: "/settings/billing?status=success",
   PAYU_CANCEL_PATH: "/settings/billing?status=canceled",
 };

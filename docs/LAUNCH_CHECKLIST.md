@@ -22,7 +22,7 @@ Do these yourself; they cannot be automated in the repo.
 | # | Step | How |
 |---|------|-----|
 | 1 | **Production API route** | Confirm in Cloudflare Dashboard that **api.memorynode.ai** is routed to your production Worker. (If you’ve already hooked the worker to api.memorynode.ai, mark this done.) |
-| 2 | **Dashboard env** | In Worker → Settings → Variables and Secrets, set `ALLOWED_ORIGINS` (e.g. `https://app.memorynode.ai`) and `SUPABASE_ANON_KEY`. |
+| 2 | **Dashboard env** | In Worker → Settings → Variables and Secrets, set `ALLOWED_ORIGINS` (e.g. `https://console.memorynode.ai`) and `SUPABASE_ANON_KEY`. |
 | 3 | **Migrations** | Run `pnpm db:migrate` or `pnpm db:check` with production DB URL (`SUPABASE_DB_URL` or `DATABASE_URL`) before or as part of first prod deploy. |
 | 4 | **Deploy** | `DEPLOY_CONFIRM=memorynode-prod pnpm deploy:prod` (with required env set). |
 | 5 | **Health/ready** | After deploy: `GET https://api.memorynode.ai/healthz` and `GET https://api.memorynode.ai/ready` both return 200. |

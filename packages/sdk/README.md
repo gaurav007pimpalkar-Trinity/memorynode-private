@@ -35,7 +35,7 @@ const results = await client.search({
 });
 ```
 
-Get an API key at [app.memorynode.ai](https://app.memorynode.ai).
+Get an API key at [console.memorynode.ai](https://console.memorynode.ai).
 
 ## Links
 

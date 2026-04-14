@@ -162,7 +162,7 @@ if (strictStage) {
     requireVar(
       errors,
       "ALLOWED_ORIGINS",
-      "Required for dashboard CORS. Set comma-separated origins (e.g. https://app.memorynode.ai).",
+      "Required for dashboard CORS. Set comma-separated origins (e.g. https://console.memorynode.ai).",
     );
     requireVar(
       errors,

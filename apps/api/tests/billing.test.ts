@@ -627,7 +627,7 @@ describe("billing checkout + portal", () => {
     expect(txn?.currency).toBe("INR");
   });
 
-  it("rejects pro/team and accepts only launch|build|deploy|scale|scale_plus", async () => {
+  it("rejects legacy pro/team and enterprise checkout plans", async () => {
     const res = await handleBillingCheckout(
       new Request("http://localhost/v1/billing/checkout", {
         method: "POST",
@@ -1008,7 +1008,7 @@ describe("cap enforcement upgrade path", () => {
     const json = await res.json();
     expect(json.error.code).toBe("PLAN_LIMIT_EXCEEDED");
     expect(json.error.limit).toBeDefined();
-    expect(json.error.upgrade_url).toContain("/settings/billing");
+    expect(json.error.upgrade_url).toContain("/billing");
   });
 
   it("memories cap uses effective plan when past_due", async () => {
@@ -1041,7 +1041,7 @@ describe("cap enforcement upgrade path", () => {
     const json = await res.json();
     expect(json.error.code).toBe("PLAN_LIMIT_EXCEEDED");
     expect(json.error.limit).toBe("writes");
-    expect(json.error.upgrade_url).toContain("/settings/billing");
+    expect(json.error.upgrade_url).toContain("/billing");
   });
 
   it("context cap uses effective plan when canceled", async () => {
