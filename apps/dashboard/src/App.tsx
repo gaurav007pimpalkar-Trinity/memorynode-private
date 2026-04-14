@@ -19,20 +19,50 @@ type Tab =
   | "team"
   | "billing";
 
-const tabs: Array<{ key: Tab; label: string }> = [
-  { key: "overview", label: "Overview" },
-  { key: "documents", label: "Documents" },
-  { key: "container_tags", label: "Container Tags" },
-  { key: "requests", label: "Requests" },
-  { key: "insights", label: "User Insights" },
-  { key: "import", label: "Import" },
-  { key: "api_keys", label: "API Keys" },
-  { key: "agents", label: "Agents" },
-  { key: "plugins", label: "Plugins" },
-  { key: "team", label: "Team" },
-  { key: "billing", label: "Billing" },
-];
 const tabsRequiringWorkspace: Tab[] = ["documents", "container_tags", "requests", "import", "api_keys", "team", "billing"];
+
+type SidebarNavEntry = { tab: Tab; label: string; showLock?: boolean };
+
+type SidebarGroup = { section: string; entries: SidebarNavEntry[] };
+
+const SIDEBAR_GROUPS: SidebarGroup[] = [
+  {
+    section: "Main",
+    entries: [
+      { tab: "overview", label: "Overview" },
+      { tab: "documents", label: "Documents" },
+      { tab: "container_tags", label: "Container Tags" },
+      { tab: "requests", label: "Requests" },
+    ],
+  },
+  {
+    section: "Analytics",
+    entries: [{ tab: "insights", label: "User Insights", showLock: true }],
+  },
+  {
+    section: "Data",
+    entries: [{ tab: "import", label: "Import" }],
+  },
+  {
+    section: "Developer",
+    entries: [
+      { tab: "api_keys", label: "API Keys" },
+      { tab: "agents", label: "Agents" },
+      { tab: "plugins", label: "Plugins" },
+    ],
+  },
+  {
+    section: "Organization",
+    entries: [
+      { tab: "team", label: "Team" },
+      { tab: "billing", label: "Billing" },
+    ],
+  },
+];
+
+const SIDEBAR_COMMANDS: Array<{ tab: Tab; label: string; section: string }> = SIDEBAR_GROUPS.flatMap((g) =>
+  g.entries.map((e) => ({ tab: e.tab, label: e.label, section: g.section })),
+);
 
 const activationEvents: Array<{ key: string; label: string }> = [
   { key: "api_key_created", label: "API key created" },
@@ -57,6 +87,51 @@ function seatCapForPlan(planCode: string | null | undefined): number {
     return 25;
   }
   return 10;
+}
+
+function userInitials(session: Session): string {
+  const meta = session.user.user_metadata as Record<string, unknown> | undefined;
+  const name = typeof meta?.full_name === "string" ? meta.full_name.trim() : "";
+  const email = session.user.email?.trim() ?? "";
+  const source = name || email || "?";
+  const parts = source.split(/\s+/).filter(Boolean);
+  if (parts.length >= 2) {
+    return (parts[0][0] + parts[1][0]).toUpperCase().slice(0, 2);
+  }
+  return source.slice(0, 2).toUpperCase() || "??";
+}
+
+function workspaceSwitcherLabel(session: Session, effectiveWorkspaceId: string, userEmail: string): string {
+  const meta = session.user.user_metadata as Record<string, unknown> | undefined;
+  const name = typeof meta?.full_name === "string" ? meta.full_name.trim() : "";
+  if (name) return name;
+  const local = userEmail.includes("@") ? userEmail.split("@")[0] : userEmail;
+  return local || "Account";
+}
+
+function shortWorkspaceId(id: string): string {
+  const t = id.trim();
+  if (!t) return "";
+  if (t.length <= 12) return t;
+  return `${t.slice(0, 8)}…${t.slice(-4)}`;
+}
+
+function devLog(payload: Record<string, unknown>): void {
+  if (!import.meta.env.DEV) return;
+  void fetch("http://127.0.0.1:7420/ingest/253793e2-9a0d-4620-b251-39382727da68", {
+    method: "POST",
+    headers: { "Content-Type": "application/json", "X-Debug-Session-Id": "aa3f1d" },
+    body: JSON.stringify(payload),
+  }).catch(() => {});
+}
+
+function LockIcon({ className }: { className?: string }): JSX.Element {
+  return (
+    <svg className={className} width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" aria-hidden>
+      <rect x="5" y="11" width="14" height="10" rx="2" />
+      <path d="M7 11V8a5 5 0 0 1 10 0v3" />
+    </svg>
+  );
 }
 
 interface ErrorBoundaryProps {
@@ -122,6 +197,13 @@ export function App(): JSX.Element {
   const [firstApiKeyCreated, setFirstApiKeyCreated] = useState(false);
   const [celebrationShown, setCelebrationShown] = useState(false);
   const [celebrationMessage, setCelebrationMessage] = useState<string | null>(null);
+  const [navDrawerOpen, setNavDrawerOpen] = useState(false);
+  const [onboardingCollapsed, setOnboardingCollapsed] = useState(false);
+  const [planBadge, setPlanBadge] = useState("FREE");
+  const consoleSearchRef = useRef<HTMLInputElement>(null);
+  const [paletteQuery, setPaletteQuery] = useState("");
+  const [paletteOpen, setPaletteOpen] = useState(false);
+  const [paletteIndex, setPaletteIndex] = useState(0);
 
   const missingEnv = useMemo(() => {
     const errs: string[] = [];
@@ -160,26 +242,81 @@ export function App(): JSX.Element {
   const workspaceReady = Boolean(effectiveWorkspaceId?.trim());
 
   useEffect(() => {
+    if (!workspaceReady) {
+      setPlanBadge("FREE");
+      return;
+    }
+    if (!sessionReady) return;
+    let cancelled = false;
+    void apiGet<{ effective_plan?: string; plan?: string }>("/v1/billing/status")
+      .then((res) => {
+        if (cancelled) return;
+        const p = (res.effective_plan ?? res.plan ?? "free").toString();
+        setPlanBadge(p ? p.toUpperCase() : "FREE");
+      })
+      .catch(() => {
+        if (!cancelled) setPlanBadge("FREE");
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [workspaceReady, sessionReady, effectiveWorkspaceId]);
+
+  useEffect(() => {
+    if (!workspaceReady) setOnboardingCollapsed(false);
+  }, [workspaceReady]);
+
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === "k") {
+        e.preventDefault();
+        setPaletteOpen(true);
+        consoleSearchRef.current?.focus();
+      }
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, []);
+
+  useEffect(() => {
     if (!session?.access_token || !effectiveWorkspaceId?.trim()) {
       setSessionReady(false);
       return;
     }
     let cancelled = false;
     setSessionError(null);
-    // #region agent log
-    fetch('http://127.0.0.1:7420/ingest/253793e2-9a0d-4620-b251-39382727da68',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'aa3f1d'},body:JSON.stringify({sessionId:'aa3f1d',runId:'pre-fix',hypothesisId:'H4',location:'apps/dashboard/src/App.tsx:134',message:'ensureDashboardSession start',data:{hasAccessToken:Boolean(session?.access_token),workspaceIdLength:effectiveWorkspaceId.trim().length},timestamp:Date.now()})}).catch(()=>{});
-    // #endregion
+    devLog({
+      sessionId: "aa3f1d",
+      runId: "pre-fix",
+      hypothesisId: "H4",
+      location: "apps/dashboard/src/App.tsx:ensureDashboardSession",
+      message: "ensureDashboardSession start",
+      data: { hasAccessToken: Boolean(session?.access_token), workspaceIdLength: effectiveWorkspaceId.trim().length },
+      timestamp: Date.now(),
+    });
     ensureDashboardSession(session.access_token, effectiveWorkspaceId)
       .then(() => {
-        // #region agent log
-        fetch('http://127.0.0.1:7420/ingest/253793e2-9a0d-4620-b251-39382727da68',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'aa3f1d'},body:JSON.stringify({sessionId:'aa3f1d',runId:'pre-fix',hypothesisId:'H4',location:'apps/dashboard/src/App.tsx:138',message:'ensureDashboardSession success',data:{workspaceIdLength:effectiveWorkspaceId.trim().length},timestamp:Date.now()})}).catch(()=>{});
-        // #endregion
+        devLog({
+          sessionId: "aa3f1d",
+          runId: "pre-fix",
+          hypothesisId: "H4",
+          location: "apps/dashboard/src/App.tsx:ensureDashboardSession",
+          message: "ensureDashboardSession success",
+          data: { workspaceIdLength: effectiveWorkspaceId.trim().length },
+          timestamp: Date.now(),
+        });
         if (!cancelled) setSessionReady(true);
       })
       .catch((err: unknown) => {
-        // #region agent log
-        fetch('http://127.0.0.1:7420/ingest/253793e2-9a0d-4620-b251-39382727da68',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'aa3f1d'},body:JSON.stringify({sessionId:'aa3f1d',runId:'pre-fix',hypothesisId:'H4',location:'apps/dashboard/src/App.tsx:143',message:'ensureDashboardSession failed',data:{errorMessage:err instanceof Error?err.message:String(err)},timestamp:Date.now()})}).catch(()=>{});
-        // #endregion
+        devLog({
+          sessionId: "aa3f1d",
+          runId: "pre-fix",
+          hypothesisId: "H4",
+          location: "apps/dashboard/src/App.tsx:ensureDashboardSession",
+          message: "ensureDashboardSession failed",
+          data: { errorMessage: err instanceof Error ? err.message : String(err) },
+          timestamp: Date.now(),
+        });
         if (!cancelled) {
           setSessionReady(false);
           setSessionError(err instanceof Error ? err.message : String(err));
@@ -225,6 +362,44 @@ export function App(): JSX.Element {
     [workspaceReady, workspaceClaim, firstApiKeyCreated],
   );
   const completedSteps = onboardingSteps.filter((step) => step.done).length;
+
+  const selectTab = useCallback(
+    (t: Tab) => {
+      if (!workspaceReady && tabsRequiringWorkspace.includes(t)) return;
+      setTab(t);
+      setNavDrawerOpen(false);
+    },
+    [workspaceReady],
+  );
+
+  const paletteMatches = useMemo(() => {
+    const q = paletteQuery.trim().toLowerCase();
+    if (!q) return SIDEBAR_COMMANDS;
+    return SIDEBAR_COMMANDS.filter(
+      (c) =>
+        c.label.toLowerCase().includes(q) ||
+        c.section.toLowerCase().includes(q) ||
+        `${c.section} ${c.label}`.toLowerCase().includes(q),
+    );
+  }, [paletteQuery]);
+
+  useEffect(() => {
+    setPaletteIndex((i) => {
+      if (paletteMatches.length === 0) return 0;
+      return Math.min(i, paletteMatches.length - 1);
+    });
+  }, [paletteMatches.length, paletteQuery]);
+
+  const runPaletteSelect = useCallback(
+    (t: Tab) => {
+      if (!workspaceReady && tabsRequiringWorkspace.includes(t)) return;
+      selectTab(t);
+      setPaletteQuery("");
+      setPaletteOpen(false);
+      consoleSearchRef.current?.blur();
+    },
+    [workspaceReady, selectTab],
+  );
 
   useEffect(() => {
     if (celebrationShown) return;
@@ -281,136 +456,291 @@ export function App(): JSX.Element {
     );
   }
 
+  const switcherTitle = workspaceSwitcherLabel(session, effectiveWorkspaceId, userEmail);
+
   return (
-    <Shell>
-      <header className="topbar">
-        <div>
-          <div className="logo">MemoryNode Console</div>
-          <div className="muted small">Signed in as {userEmail}</div>
-        </div>
-        <div className="top-actions">
-          <a
-            href="https://docs.memorynode.ai"
-            target="_blank"
-            rel="noopener noreferrer"
-            className="muted small"
-          >
-            DOCS
-          </a>
-          <a
-            href="https://support.memorynode.ai"
-            target="_blank"
-            rel="noopener noreferrer"
-            className="muted small"
-          >
-            SUPPORT
-          </a>
-          <button className="ghost" onClick={async () => { await dashboardLogout(); await supabase.auth.signOut(); }}>
-            Sign out
-          </button>
-        </div>
-      </header>
-
-      {celebrationMessage && (
-        <div className="celebration-toast" role="status" aria-live="polite">
-          <strong>Milestone unlocked</strong>
-          <span>{celebrationMessage}</span>
-          <button className="ghost" onClick={() => setCelebrationMessage(null)}>
-            Dismiss
-          </button>
-        </div>
-      )}
-
-      <Panel title="Quick setup">
-        <div className="row-space">
-          <div className="muted small">Select a workspace once to unlock console modules.</div>
-          <span className="badge">
-            {completedSteps}/{onboardingSteps.length} complete
+    <div className={`console-root${navDrawerOpen ? " console-root--nav-drawer-open" : ""}`}>
+      <aside className="console-sidebar" id="console-sidebar" aria-label="Console navigation">
+        <div className="console-brand">
+          <span className="console-brand-mark" aria-hidden>
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none">
+              <path
+                d="M12 2l2.2 6.8H21l-5.5 4 2.1 6.5L12 16.8 6.4 19.3l2.1-6.5L3 8.8h6.8L12 2z"
+                fill="currentColor"
+                opacity="0.9"
+              />
+            </svg>
           </span>
+          <span className="console-brand-text">MemoryNode</span>
         </div>
-        <label className="field">
-          <span>Workspace ID</span>
+        <div className={`console-search-wrap${paletteOpen ? " console-search-wrap--open" : ""}`}>
           <input
-            value={workspaceId}
-            onChange={(e) => setWorkspaceId(e.target.value)}
-            placeholder="UUID"
+            ref={consoleSearchRef}
+            type="search"
+            className="console-search-input"
+            placeholder="Jump to…"
+            aria-label="Jump to page"
+            aria-expanded={paletteOpen}
+            aria-controls="console-command-list"
+            autoComplete="off"
+            value={paletteQuery}
+            onChange={(e) => {
+              setPaletteQuery(e.target.value);
+              setPaletteOpen(true);
+            }}
+            onFocus={() => setPaletteOpen(true)}
+            onBlur={() => {
+              window.setTimeout(() => setPaletteOpen(false), 120);
+            }}
+            onKeyDown={(e) => {
+              if (e.key === "ArrowDown") {
+                e.preventDefault();
+                setPaletteIndex((i) => Math.min(Math.max(0, paletteMatches.length - 1), i + 1));
+              } else if (e.key === "ArrowUp") {
+                e.preventDefault();
+                setPaletteIndex((i) => Math.max(0, i - 1));
+              } else if (e.key === "Enter") {
+                const pick = paletteMatches[paletteIndex];
+                if (pick) {
+                  e.preventDefault();
+                  runPaletteSelect(pick.tab);
+                }
+              } else if (e.key === "Escape") {
+                e.preventDefault();
+                setPaletteOpen(false);
+                setPaletteQuery("");
+                consoleSearchRef.current?.blur();
+              }
+            }}
           />
-        </label>
-        <div className="row">
-          <button onClick={saveWorkspaceId} disabled={!workspaceId || workspaceSaving}>
-            {workspaceSaving ? "Setting workspace…" : "Set Workspace"}
-          </button>
-          <button className="ghost" onClick={() => setWorkspaceId(loadWorkspaceId())}>
-            Use Last Workspace
-          </button>
+          <kbd className="console-search-kbd">⌘K</kbd>
+          {paletteOpen && (
+            <div
+              id="console-command-list"
+              className="console-search-results"
+              role="listbox"
+              aria-label="Console pages"
+              onMouseDown={(ev) => ev.preventDefault()}
+            >
+              {paletteMatches.length === 0 ? (
+                <div className="console-search-empty muted small">No matching pages</div>
+              ) : (
+                paletteMatches.map((c, i) => {
+                  const locked = !workspaceReady && tabsRequiringWorkspace.includes(c.tab);
+                  return (
+                    <button
+                      key={`${c.section}-${c.tab}`}
+                      type="button"
+                      role="option"
+                      aria-selected={i === paletteIndex}
+                      className={
+                        i === paletteIndex ? "console-search-item console-search-item--active" : "console-search-item"
+                      }
+                      disabled={locked}
+                      title={locked ? "Set your workspace first to unlock this page." : c.label}
+                      onMouseEnter={() => setPaletteIndex(i)}
+                      onClick={() => runPaletteSelect(c.tab)}
+                    >
+                      <span className="console-search-item-label">{c.label}</span>
+                      <span className="console-search-item-section muted small">{c.section}</span>
+                    </button>
+                  );
+                })
+              )}
+            </div>
+          )}
         </div>
-        {alert && <div className="badge">{alert}</div>}
-        <div className="muted small">Current workspace: {workspaceClaim || "No workspace selected yet"}</div>
-      </Panel>
+        <nav className="console-sidebar-nav">
+          {SIDEBAR_GROUPS.map((g) => (
+            <div key={g.section} className="console-nav-section">
+              <div className="console-nav-section-label">{g.section}</div>
+              <div className="console-nav-section-items">
+                {g.entries.map((entry) => {
+                  const locked = !workspaceReady && tabsRequiringWorkspace.includes(entry.tab);
+                  return (
+                    <button
+                      key={entry.tab}
+                      type="button"
+                      className={tab === entry.tab ? "console-nav-item console-nav-item--active" : "console-nav-item"}
+                      disabled={locked}
+                      title={locked ? "Set your workspace first to unlock this tab." : entry.label}
+                      onClick={() => selectTab(entry.tab)}
+                    >
+                      <span className="console-nav-item-label">{entry.label}</span>
+                      {entry.showLock ? <LockIcon className="console-nav-lock" /> : null}
+                    </button>
+                  );
+                })}
+              </div>
+            </div>
+          ))}
+        </nav>
+      </aside>
 
-      <nav className="tabs">
-        {tabs.map((t) => (
+      <button
+        type="button"
+        className="console-sidebar-backdrop"
+        aria-label="Close navigation"
+        tabIndex={-1}
+        onClick={() => setNavDrawerOpen(false)}
+      />
+
+      <div className="console-main-column">
+        <header className="console-header">
           <button
-            key={t.key}
-            className={tab === t.key ? "tab active" : "tab"}
-            disabled={!workspaceReady && tabsRequiringWorkspace.includes(t.key)}
-            onClick={() => setTab(t.key)}
-            title={!workspaceReady && tabsRequiringWorkspace.includes(t.key) ? "Set your workspace first to unlock this tab." : t.label}
+            type="button"
+            className="console-menu-toggle"
+            aria-label="Open navigation"
+            aria-expanded={navDrawerOpen}
+            aria-controls="console-sidebar"
+            onClick={() => setNavDrawerOpen((open) => !open)}
           >
-            {t.label}
+            <span className="console-menu-bar" />
+            <span className="console-menu-bar" />
+            <span className="console-menu-bar" />
           </button>
-        ))}
-      </nav>
+          <div className="console-header-primary">
+            <div className="console-header-workspace">
+              <span className="console-header-name">{switcherTitle}</span>
+              <span className="console-plan-badge">{planBadge}</span>
+            </div>
+            <div className="console-header-sub muted small">
+              {workspaceReady
+                ? shortWorkspaceId(effectiveWorkspaceId)
+                : "No workspace selected — use Quick setup below"}
+            </div>
+          </div>
+          <div className="console-header-actions">
+            <a
+              href="https://docs.memorynode.ai"
+              target="_blank"
+              rel="noopener noreferrer"
+              className="console-header-link"
+            >
+              DOCS <span className="console-external" aria-hidden>↗</span>
+            </a>
+            <a
+              href="https://support.memorynode.ai"
+              target="_blank"
+              rel="noopener noreferrer"
+              className="console-header-link"
+            >
+              SUPPORT
+            </a>
+            <button
+              type="button"
+              className="ghost console-header-signout"
+              onClick={async () => {
+                await dashboardLogout();
+                await supabase.auth.signOut();
+              }}
+            >
+              Sign out
+            </button>
+            <div className="console-avatar" title={userEmail}>
+              {userInitials(session)}
+            </div>
+          </div>
+        </header>
 
-      <ErrorBoundary onBack={() => setTab("overview")}>
-      <div className="grid">
-        {tab === "overview" && (
-          <OverviewView />
-        )}
-        {tab === "documents" && (
-          <DocumentsView />
-        )}
-        {tab === "container_tags" && (
-          <ContainerTagsView />
-        )}
-        {tab === "requests" && (
-          <RequestsView workspaceId={effectiveWorkspaceId} />
-        )}
-        {tab === "insights" && (
-          <InsightsView />
-        )}
-        {tab === "import" && (
-          <ImportView />
-        )}
-        {tab === "api_keys" && (
-          <ApiKeysView
-            workspaceId={workspaceClaim || workspaceId}
-            onApiKeyCreated={() => {
-              if (!firstApiKeyCreated) setFirstApiKeyCreated(true);
-            }}
-          />
-        )}
-        {tab === "agents" && (
-          <AgentsView />
-        )}
-        {tab === "plugins" && (
-          <PluginsView />
-        )}
-        {tab === "team" && (
-          <WorkspacesView
-            workspaceId={workspaceClaim || workspaceId}
-            sessionUserId={session.user.id}
-            onSelectWorkspace={(id) => {
-              setWorkspaceId(id);
-              persistWorkspaceId(id);
-              setAlert("Workspace selected. Click Set Workspace to activate console sections.");
-            }}
-          />
-        )}
-        {tab === "billing" && <BillingConsoleView workspaceId={effectiveWorkspaceId} />}
+        <div className="console-scroll">
+          {celebrationMessage && (
+            <div className="celebration-toast console-celebration" role="status" aria-live="polite">
+              <strong>Milestone unlocked</strong>
+              <span>{celebrationMessage}</span>
+              <button type="button" className="ghost" onClick={() => setCelebrationMessage(null)}>
+                Dismiss
+              </button>
+            </div>
+          )}
+
+          {(!workspaceReady || !onboardingCollapsed) && (
+            <section className="console-onboarding panel">
+              <div className="panel-head row-space">
+                <span>Quick setup</span>
+                <span className="badge">
+                  {completedSteps}/{onboardingSteps.length} complete
+                </span>
+              </div>
+              <div className="panel-body">
+                <div className="muted small">Select a workspace once to unlock console modules.</div>
+                <label className="field">
+                  <span>Workspace ID</span>
+                  <input
+                    value={workspaceId}
+                    onChange={(e) => setWorkspaceId(e.target.value)}
+                    placeholder="UUID"
+                  />
+                </label>
+                <div className="row">
+                  <button type="button" onClick={saveWorkspaceId} disabled={!workspaceId || workspaceSaving}>
+                    {workspaceSaving ? "Setting workspace…" : "Set Workspace"}
+                  </button>
+                  <button type="button" className="ghost" onClick={() => setWorkspaceId(loadWorkspaceId())}>
+                    Use Last Workspace
+                  </button>
+                </div>
+                {alert && <div className="badge">{alert}</div>}
+                <div className="muted small">Current workspace: {workspaceClaim || "No workspace selected yet"}</div>
+                {workspaceReady && (
+                  <button type="button" className="ghost console-onboarding-collapse" onClick={() => setOnboardingCollapsed(true)}>
+                    Collapse
+                  </button>
+                )}
+              </div>
+            </section>
+          )}
+
+          {workspaceReady && onboardingCollapsed && (
+            <button type="button" className="console-onboarding-collapsed ghost" onClick={() => setOnboardingCollapsed(false)}>
+              Workspace active · {shortWorkspaceId(effectiveWorkspaceId)} — Show setup
+            </button>
+          )}
+
+          <ErrorBoundary onBack={() => setTab("overview")}>
+            <div className="console-content grid">
+              {tab === "overview" && (
+                <OverviewView
+                  workspaceReady={workspaceReady}
+                  sessionReady={sessionReady}
+                  onQuickSetup={() => {
+                    setOnboardingCollapsed(false);
+                    selectTab("team");
+                  }}
+                />
+              )}
+              {tab === "documents" && <DocumentsView />}
+              {tab === "container_tags" && <ContainerTagsView />}
+              {tab === "requests" && <RequestsView workspaceId={effectiveWorkspaceId} />}
+              {tab === "insights" && <InsightsView />}
+              {tab === "import" && <ImportView />}
+              {tab === "api_keys" && (
+                <ApiKeysView
+                  workspaceId={workspaceClaim || workspaceId}
+                  onApiKeyCreated={() => {
+                    if (!firstApiKeyCreated) setFirstApiKeyCreated(true);
+                  }}
+                />
+              )}
+              {tab === "agents" && <AgentsView />}
+              {tab === "plugins" && <PluginsView />}
+              {tab === "team" && (
+                <WorkspacesView
+                  workspaceId={workspaceClaim || workspaceId}
+                  sessionUserId={session.user.id}
+                  onSelectWorkspace={(id) => {
+                    setWorkspaceId(id);
+                    persistWorkspaceId(id);
+                    setAlert("Workspace selected. Click Set Workspace to activate console sections.");
+                  }}
+                />
+              )}
+              {tab === "billing" && <BillingConsoleView workspaceId={effectiveWorkspaceId} />}
+            </div>
+          </ErrorBoundary>
+        </div>
       </div>
-      </ErrorBoundary>
-    </Shell>
+    </div>
   );
 }
 
@@ -454,18 +784,115 @@ function EmptyState({ title, subtitle }: { title: string; subtitle: string }) {
   );
 }
 
-function OverviewView() {
+function OverviewChevron(): JSX.Element {
+  return (
+    <span className="explore-tile-chevron" aria-hidden>
+      <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+        <path d="M7 17L17 7M17 7H9M17 7V15" />
+      </svg>
+    </span>
+  );
+}
+
+type OverviewStatsResponse = {
+  range: string;
+  documents: number;
+  memories: number;
+  search_requests: number;
+  container_tags: number;
+};
+
+function OverviewView({
+  workspaceReady,
+  sessionReady,
+  onQuickSetup,
+}: {
+  workspaceReady: boolean;
+  sessionReady: boolean;
+  onQuickSetup: () => void;
+}): JSX.Element {
+  const [range, setRange] = useState<"1d" | "7d" | "30d" | "all">("all");
+  const [stats, setStats] = useState<OverviewStatsResponse | null>(null);
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (!workspaceReady || !sessionReady) {
+      setStats(null);
+      setError(null);
+      setLoading(false);
+      return;
+    }
+    let cancelled = false;
+    setLoading(true);
+    setError(null);
+    void apiGet<OverviewStatsResponse>(`/v1/dashboard/overview-stats?range=${encodeURIComponent(range)}`)
+      .then((data) => {
+        if (!cancelled) setStats(data);
+      })
+      .catch((err: unknown) => {
+        if (!cancelled) setError(userFacingErrorMessage(err));
+      })
+      .finally(() => {
+        if (!cancelled) setLoading(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [workspaceReady, sessionReady, range]);
+
+  const fmt = (n: number) => n.toLocaleString("en-US");
+  const dash = "—";
   const cards = [
-    { label: "Documents", value: "0" },
-    { label: "Memories", value: "0" },
-    { label: "Search Requests", value: "0" },
-    { label: "Container Tags", value: "0" },
-    { label: "Connectors", value: "0" },
+    {
+      label: "Documents",
+      value: !workspaceReady || !sessionReady ? dash : loading ? "…" : fmt(stats?.documents ?? 0),
+    },
+    {
+      label: "Memories",
+      value: !workspaceReady || !sessionReady ? dash : loading ? "…" : fmt(stats?.memories ?? 0),
+    },
+    {
+      label: "Search Requests",
+      value: !workspaceReady || !sessionReady ? dash : loading ? "…" : fmt(stats?.search_requests ?? 0),
+    },
+    {
+      label: "Container Tags",
+      value: !workspaceReady || !sessionReady ? dash : loading ? "…" : fmt(stats?.container_tags ?? 0),
+    },
   ];
 
   return (
-    <Panel title="Overview">
-      <div className="overview-cards">
+    <div className="overview-page">
+      <div className="overview-page-head">
+        <h1 className="overview-page-title">Overview</h1>
+        <div className="timeframe-toggle" role="group" aria-label="Time range">
+          {(["1d", "7d", "30d", "all"] as const).map((r) => (
+            <button
+              key={r}
+              type="button"
+              className={range === r ? "timeframe-btn timeframe-btn--active" : "timeframe-btn"}
+              onClick={() => setRange(r)}
+              disabled={!workspaceReady || !sessionReady}
+              title={!workspaceReady ? "Set a workspace to load metrics." : undefined}
+            >
+              {r === "all" ? "All" : r}
+            </button>
+          ))}
+        </div>
+      </div>
+      <p className="overview-range-hint muted small">
+        Counts for <strong>{range === "all" ? "all time" : range}</strong>
+        {!workspaceReady || !sessionReady
+          ? " — set a workspace to load live numbers."
+          : " — documents are memory rows; memories are chunks; search requests sum API reads in the window."}
+      </p>
+      {error && (
+        <div className="badge" role="alert">
+          {error}
+        </div>
+      )}
+      <div className="overview-cards overview-cards--hero">
         {cards.map((card) => (
           <div key={card.label} className="metric-card">
             <div className="muted small">{card.label}</div>
@@ -473,18 +900,64 @@ function OverviewView() {
           </div>
         ))}
       </div>
-      <div className="overview-quick-links">
-        <a className="card muted small" href="https://docs.memorynode.ai" target="_blank" rel="noopener noreferrer">
-          Documentation
+
+      <h2 className="overview-explore-title">Explore the platform</h2>
+      <div className="explore-grid">
+        <button type="button" className="explore-tile" onClick={onQuickSetup}>
+          <OverviewChevron />
+          <span className="explore-tile-icon" aria-hidden>
+            <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8">
+              <path d="M12 3v3M12 18v3M5.6 5.6l2.1 2.1M16.3 16.3l2.1 2.1M3 12h3M18 12h3M5.6 18.4l2.1-2.1M16.3 7.7l2.1-2.1" />
+              <circle cx="12" cy="12" r="3.2" />
+            </svg>
+          </span>
+          <span className="explore-tile-title">Quick setup</span>
+          <span className="explore-tile-desc muted small">Create or bind a workspace and unlock the console.</span>
+        </button>
+        <a
+          className="explore-tile"
+          href="https://docs.memorynode.ai/quickstart"
+          target="_blank"
+          rel="noopener noreferrer"
+        >
+          <OverviewChevron />
+          <span className="explore-tile-icon" aria-hidden>
+            <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8">
+              <path d="M8 5v14l11-7-11-7z" fill="currentColor" stroke="none" />
+            </svg>
+          </span>
+          <span className="explore-tile-title">Live demo</span>
+          <span className="explore-tile-desc muted small">See MemoryNode in action in the quickstart.</span>
         </a>
-        <a className="card muted small" href="https://docs.memorynode.ai/quickstart" target="_blank" rel="noopener noreferrer">
-          Quick Setup
+        <a
+          className="explore-tile"
+          href="https://docs.memorynode.ai/playground"
+          target="_blank"
+          rel="noopener noreferrer"
+        >
+          <OverviewChevron />
+          <span className="explore-tile-icon" aria-hidden>
+            <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8">
+              <circle cx="12" cy="12" r="9" />
+              <path d="M3 12h6m12 0h-6M12 3a10 10 0 0 1 0 18" />
+            </svg>
+          </span>
+          <span className="explore-tile-title">Playground</span>
+          <span className="explore-tile-desc muted small">Test the API interactively.</span>
         </a>
-        <a className="card muted small" href="https://docs.memorynode.ai/playground" target="_blank" rel="noopener noreferrer">
-          Playground
+        <a className="explore-tile" href="https://docs.memorynode.ai" target="_blank" rel="noopener noreferrer">
+          <OverviewChevron />
+          <span className="explore-tile-icon" aria-hidden>
+            <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8">
+              <path d="M7 4h7l3 3v13a1 1 0 0 1-1 1H7a1 1 0 0 1-1-1V5a1 1 0 0 1 1-1z" />
+              <path d="M14 4v4h4M9 12h6M9 16h6" />
+            </svg>
+          </span>
+          <span className="explore-tile-title">Documentation</span>
+          <span className="explore-tile-desc muted small">Read the full API reference.</span>
         </a>
       </div>
-    </Panel>
+    </div>
   );
 }
 
@@ -731,11 +1204,29 @@ function AuthPanel() {
   };
 
   const github = async () => {
-    await supabase.auth.signInWithOAuth({ provider: "github", options: { redirectTo: window.location.origin } });
+    setBusy(true);
+    setErrorMessage(null);
+    const { error } = await supabase.auth.signInWithOAuth({
+      provider: "github",
+      options: { redirectTo: window.location.origin },
+    });
+    setBusy(false);
+    if (error) {
+      setErrorMessage(error.message);
+    }
   };
 
   const google = async () => {
-    await supabase.auth.signInWithOAuth({ provider: "google", options: { redirectTo: window.location.origin } });
+    setBusy(true);
+    setErrorMessage(null);
+    const { error } = await supabase.auth.signInWithOAuth({
+      provider: "google",
+      options: { redirectTo: window.location.origin },
+    });
+    setBusy(false);
+    if (error) {
+      setErrorMessage(error.message);
+    }
   };
 
   return (
@@ -752,17 +1243,17 @@ function AuthPanel() {
         {busy ? "Sending magic link..." : magicSent ? "Sent" : "Send magic link"}
       </button>
       <div className="auth-divider">OR</div>
-      <button className="auth-provider-btn auth-google-btn" onClick={google}>
+      <button className="auth-provider-btn auth-google-btn" onClick={google} disabled={busy}>
         <span className="provider-icon" aria-hidden="true">
           <GoogleIcon />
         </span>
-        Continue with Google
+        {busy ? "Opening Google…" : "Continue with Google"}
       </button>
-      <button className="auth-provider-btn auth-github-btn" onClick={github}>
+      <button className="auth-provider-btn auth-github-btn" onClick={github} disabled={busy}>
         <span className="provider-icon" aria-hidden="true">
           <GitHubIcon />
         </span>
-        Continue with GitHub
+        {busy ? "Opening GitHub…" : "Continue with GitHub"}
       </button>
       {errorMessage && <div className="badge">{errorMessage}</div>}
     </div>
@@ -848,12 +1339,21 @@ function WorkspacesView({
               </div>
               <div className="row">
                 <span className="badge">{w.role}</span>
-                <button className="ghost" onClick={() => {
-                  // #region agent log
-                  fetch('http://127.0.0.1:7420/ingest/253793e2-9a0d-4620-b251-39382727da68',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'aa3f1d'},body:JSON.stringify({sessionId:'aa3f1d',runId:'pre-fix',hypothesisId:'H1',location:'apps/dashboard/src/App.tsx:425',message:'set workspace clicked',data:{selectedWorkspaceId:w.id,currentWorkspaceId:workspaceId},timestamp:Date.now()})}).catch(()=>{});
-                  // #endregion
-                  onSelectWorkspace(w.id);
-                }}>
+                <button
+                  className="ghost"
+                  onClick={() => {
+                    devLog({
+                      sessionId: "aa3f1d",
+                      runId: "pre-fix",
+                      hypothesisId: "H1",
+                      location: "apps/dashboard/src/App.tsx:workspace",
+                      message: "set workspace clicked",
+                      data: { selectedWorkspaceId: w.id, currentWorkspaceId: workspaceId },
+                      timestamp: Date.now(),
+                    });
+                    onSelectWorkspace(w.id);
+                  }}
+                >
                   Use this workspace
                 </button>
               </div>
@@ -1680,9 +2180,15 @@ function MembersView({ workspaceId, currentUserId }: { workspaceId: string; curr
         .order("created_at", { ascending: false }),
     ])
       .then(([mem, inv]) => {
-        // #region agent log
-        fetch('http://127.0.0.1:7420/ingest/253793e2-9a0d-4620-b251-39382727da68',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'aa3f1d'},body:JSON.stringify({sessionId:'aa3f1d',runId:'pre-fix',hypothesisId:'H2',location:'apps/dashboard/src/App.tsx:1198',message:'members and invites query settled',data:{memberError:mem.error?.message??null,inviteError:inv.error?.message??null},timestamp:Date.now()})}).catch(()=>{});
-        // #endregion
+        devLog({
+          sessionId: "aa3f1d",
+          runId: "pre-fix",
+          hypothesisId: "H2",
+          location: "apps/dashboard/src/App.tsx:members",
+          message: "members and invites query settled",
+          data: { memberError: mem.error?.message ?? null, inviteError: inv.error?.message ?? null },
+          timestamp: Date.now(),
+        });
         const nextError = mem.error?.message ?? inv.error?.message ?? null;
         if (nextError) setError(nextError);
         setMembers(mem.data ?? []);

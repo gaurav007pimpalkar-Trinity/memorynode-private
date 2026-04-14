@@ -45,6 +45,7 @@ import {
 } from "./handlers/search.js";
 import { createContextHandlers } from "./handlers/context.js";
 import { createUsageHandlers, type UsageHandlerDeps } from "./handlers/usage.js";
+import { createDashboardOverviewHandlers } from "./handlers/dashboardOverview.js";
 import { createBillingHandlers, type BillingHandlerDeps } from "./handlers/billing.js";
 import { createWebhookHandlers, type WebhookHandlerDeps } from "./handlers/webhooks.js";
 import { createAdminHandlers, type AdminHandlerDeps } from "./handlers/admin.js";
@@ -1220,6 +1221,7 @@ const KNOWN_PATH_ALLOWED_METHODS: Array<{ test: (path: string) => boolean; allow
   { test: (p) => p === "/v1/search", allow: "POST" },
   { test: (p) => p === "/v1/context", allow: "POST" },
   { test: (p) => p === "/v1/usage/today", allow: "GET" },
+  { test: (p) => p === "/v1/dashboard/overview-stats", allow: "GET" },
   { test: (p) => p === "/v1/billing/status", allow: "GET" },
   { test: (p) => p === "/v1/billing/checkout", allow: "POST" },
   { test: (p) => p === "/v1/billing/portal", allow: "POST" },
@@ -1655,6 +1657,7 @@ async function handleRequestImpl(request: Request, env: Env): Promise<Response> 
       const searchHandlers = createSearchHandlers(handlerDeps, defaultSearchHandlerDeps);
       const contextHandlers = createContextHandlers(handlerDeps, defaultSearchHandlerDeps);
       const usageHandlers = createUsageHandlers(handlerDeps, defaultUsageHandlerDeps);
+      const dashboardOverviewHandlers = createDashboardOverviewHandlers(handlerDeps, defaultDashboardOverviewDeps);
       const billingHandlers = createBillingHandlers(handlerDeps, defaultBillingHandlerDeps);
       const webhookHandlers = createWebhookHandlers(handlerDeps, defaultWebhookHandlerDeps);
       const adminHandlers = createAdminHandlers(handlerDeps, defaultAdminHandlerDeps);
@@ -1670,6 +1673,7 @@ async function handleRequestImpl(request: Request, env: Env): Promise<Response> 
           ...searchHandlers,
           ...contextHandlers,
           ...usageHandlers,
+          ...dashboardOverviewHandlers,
           ...billingHandlers,
           ...webhookHandlers,
           ...adminHandlers,
@@ -1751,6 +1755,7 @@ function classifyRouteGroup(pathname: string): string {
   if (pathname === "/v1/search" || pathname === "/v1/search/history" || pathname === "/v1/search/replay") return "search";
   if (pathname === "/v1/context") return "context";
   if (pathname === "/v1/usage/today") return "usage";
+  if (pathname.startsWith("/v1/dashboard/")) return "dashboard";
   if (pathname.startsWith("/v1/billing/")) return "billing";
   if (pathname === "/v1/workspaces") return "workspaces";
   if (pathname.startsWith("/v1/api-keys")) return "api_keys";
@@ -2165,6 +2170,66 @@ function createStubSupabase(env: Env) {
               score: 1 / (idx + 1),
             }));
           return Promise.resolve({ data: results, error: null });
+        }
+        case "dashboard_console_overview_stats": {
+          const ws = params.p_workspace_id as string;
+          const memSince = params.p_memories_since as string | null | undefined;
+          const dayMin = params.p_usage_day_min as string | null | undefined;
+          const memSinceMs = memSince ? Date.parse(memSince) : null;
+
+          let documents = 0;
+          for (const m of db.memories) {
+            if ((m as { workspace_id?: string }).workspace_id !== ws) continue;
+            if (memSinceMs != null && Number.isFinite(memSinceMs)) {
+              const ca = Date.parse(String((m as { created_at?: string }).created_at ?? ""));
+              if (!Number.isFinite(ca) || ca < memSinceMs) continue;
+            }
+            documents++;
+          }
+
+          let memories = 0;
+          for (const c of db.memory_chunks) {
+            if ((c as { workspace_id?: string }).workspace_id !== ws) continue;
+            if (memSinceMs != null && Number.isFinite(memSinceMs)) {
+              const ca = Date.parse(String((c as { created_at?: string }).created_at ?? ""));
+              if (!Number.isFinite(ca) || ca < memSinceMs) continue;
+            }
+            memories++;
+          }
+
+          let search_requests = 0;
+          for (const u of db.usage_daily) {
+            if ((u as { workspace_id?: string }).workspace_id !== ws) continue;
+            if (dayMin) {
+              const ud = String((u as { day?: string }).day ?? "").slice(0, 10);
+              if (ud < dayMin) continue;
+            }
+            search_requests += Number((u as { reads?: number }).reads ?? 0) || 0;
+          }
+
+          const tagSet = new Set<string>();
+          for (const m of db.memories) {
+            if ((m as { workspace_id?: string }).workspace_id !== ws) continue;
+            if (memSinceMs != null && Number.isFinite(memSinceMs)) {
+              const ca = Date.parse(String((m as { created_at?: string }).created_at ?? ""));
+              if (!Number.isFinite(ca) || ca < memSinceMs) continue;
+            }
+            const meta = ((m as { metadata?: Record<string, unknown> }).metadata ?? {}) as Record<string, unknown>;
+            const ct = meta.container_tag;
+            const cn = meta.container;
+            if (typeof ct === "string" && ct.trim()) tagSet.add(ct.trim());
+            if (typeof cn === "string" && cn.trim()) tagSet.add(cn.trim());
+          }
+
+          return Promise.resolve({
+            data: {
+              documents,
+              memories,
+              search_requests,
+              container_tags: tagSet.size,
+            },
+            error: null,
+          });
         }
         default:
           return Promise.resolve({ data: null, error: null });
@@ -3506,6 +3571,14 @@ const defaultUsageHandlerDeps: UsageHandlerDeps = {
 };
 const usageHandlersDefault = createUsageHandlers(defaultUsageHandlerDeps, defaultUsageHandlerDeps);
 
+const defaultDashboardOverviewDeps: HandlerDeps = {
+  jsonResponse: simpleJsonResponse,
+};
+const dashboardOverviewHandlersDefault = createDashboardOverviewHandlers(
+  defaultDashboardOverviewDeps,
+  defaultDashboardOverviewDeps,
+);
+
 /** Full deps for billing handlers (PayU logic remains in index). */
 const defaultBillingHandlerDeps: BillingHandlerDeps = {
   jsonResponse: simpleJsonResponse,
@@ -3622,6 +3695,7 @@ export const handleCreateEpisode = episodeHandlersDefault.handleCreateEpisode;
 export const handleListEpisodes = episodeHandlersDefault.handleListEpisodes;
 export const handleContext = contextHandlersDefault.handleContext;
 export const handleUsageToday = usageHandlersDefault.handleUsageToday;
+export const handleDashboardOverviewStats = dashboardOverviewHandlersDefault.handleDashboardOverviewStats;
 export const handleBillingStatus = billingHandlersDefault.handleBillingStatus;
 export const handleBillingCheckout = billingHandlersDefault.handleBillingCheckout;
 export const handleBillingPortal = billingHandlersDefault.handleBillingPortal;

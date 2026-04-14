@@ -67,4 +67,9 @@ describe("critical flows integration", () => {
     const res = await api.fetch(new Request("http://localhost/v1/usage/today"), baseEnv);
     expect(res.status).toBe(401);
   });
+
+  it("GET /v1/dashboard/overview-stats without auth returns 401", async () => {
+    const res = await api.fetch(new Request("http://localhost/v1/dashboard/overview-stats"), baseEnv);
+    expect(res.status).toBe(401);
+  });
 });

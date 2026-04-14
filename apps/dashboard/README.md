@@ -1,6 +1,8 @@
 # MemoryNode Console
 
-Minimal console MVP with Supabase Auth (GitHub OAuth + magic link) and RLS-safe views for workspaces, API keys, team management, and billing.
+Minimal console MVP with Supabase Auth (Google + GitHub OAuth + magic link) and RLS-safe views for workspaces, API keys, team management, and billing.
+
+**Production Google login:** operators must enable the Google provider and redirect allowlist in Supabase — see [`docs/internal/SUPABASE_GOOGLE_OAUTH_SETUP.md`](../../docs/internal/SUPABASE_GOOGLE_OAUTH_SETUP.md).
 Worker API billing controls are wired to PayU checkout using your normal API key (stored locally).
 
 ## Run locally
@@ -51,6 +53,13 @@ Use the **anon** (not service-role) key so browser traffic is RLS-enforced.
 - Buttons:
   - **Upgrade to Pro (PayU)** → opens checkout in a new tab.
 - Query params `?status=success|canceled` render a small banner after returning from checkout.
+
+## Production build (local or CI)
+
+`vite build` requires a **non-localhost** `VITE_API_BASE_URL` in production mode.
+
+- **CI:** set `VITE_API_BASE_URL` in the workflow or host (see root `.github/workflows/ci.yml`).
+- **Local:** copy [`.env.production.example`](./.env.production.example) to **`.env.production`** in this folder (gitignored), set your real API origin, then run `pnpm build` from `apps/dashboard` or `pnpm --filter @memorynode/dashboard build` from the repo root.
 
 ## Commands
 

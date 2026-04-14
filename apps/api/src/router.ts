@@ -76,6 +76,14 @@ export interface RouterHandlers {
     auditCtx: AuditCtx,
     deps: HandlerDeps,
   ) => Promise<Response>;
+  handleDashboardOverviewStats: (
+    request: Request,
+    env: Env,
+    supabase: SupabaseClient,
+    url: URL,
+    auditCtx: AuditCtx,
+    deps: HandlerDeps,
+  ) => Promise<Response>;
   handleBillingStatus: (
     request: Request,
     env: Env,
@@ -297,6 +305,10 @@ export async function route(
 
   if (request.method === "GET" && url.pathname === "/v1/usage/today") {
     return handlers.handleUsageToday(request, env, supabase, auditCtx, handlerDeps);
+  }
+
+  if (request.method === "GET" && url.pathname === "/v1/dashboard/overview-stats") {
+    return handlers.handleDashboardOverviewStats(request, env, supabase, url, auditCtx, handlerDeps);
   }
 
   if (request.method === "GET" && url.pathname === "/v1/billing/status") {

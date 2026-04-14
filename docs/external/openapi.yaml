@@ -255,6 +255,30 @@ components:
         - reads
         - embeds
         - caps
+    DashboardOverviewResponse:
+      type: object
+      properties:
+        range:
+          type: string
+          enum:
+            - 1d
+            - 7d
+            - 30d
+            - all
+        documents:
+          type: integer
+        memories:
+          type: integer
+        search_requests:
+          type: integer
+        container_tags:
+          type: integer
+      required:
+        - range
+        - documents
+        - memories
+        - search_requests
+        - container_tags
     ExportResponse:
       type: object
       properties:
@@ -702,6 +726,32 @@ paths:
                 $ref: "#/components/schemas/UsageResponse"
         "401":
           description: Unauthorized
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+  /v1/dashboard/overview-stats:
+    get:
+      summary: "Console overview aggregates for the authenticated workspace. Optional query: range=1d|7d|30d|all (default all)."
+      tags:
+        - Dashboard
+      security:
+        - BearerAuth: []
+      responses:
+        "200":
+          description: Aggregate counts
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/DashboardOverviewResponse"
+        "401":
+          description: Unauthorized
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "500":
+          description: Server error
           content:
             application/json:
               schema:

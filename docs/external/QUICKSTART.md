@@ -48,4 +48,4 @@ To let AI agents read/write memory via MCP tools:
 
 See [packages/mcp-server](packages/mcp-server) and [API usage](API_USAGE.md) for full request/response shapes.
 
-<!-- Migration manifest (CI-checked): MIGRATIONS_TOTAL=34; MIGRATIONS_LATEST=032_small_team_member_caps.sql -->
+<!-- Migration manifest (CI-checked): MIGRATIONS_TOTAL=35; MIGRATIONS_LATEST=033_dashboard_console_overview_stats.sql -->

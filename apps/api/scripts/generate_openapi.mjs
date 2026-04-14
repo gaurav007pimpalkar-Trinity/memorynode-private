@@ -204,6 +204,16 @@ const UsageResponse = z
   })
   .openapi("UsageResponse");
 
+const DashboardOverviewResponse = z
+  .object({
+    range: z.enum(["1d", "7d", "30d", "all"]),
+    documents: z.number().int(),
+    memories: z.number().int(),
+    search_requests: z.number().int(),
+    container_tags: z.number().int(),
+  })
+  .openapi("DashboardOverviewResponse");
+
 // ── Billing schemas ─────────────────────────────────────────────────────────
 const BillingStatusResponse = z
   .object({
@@ -482,6 +492,23 @@ registry.registerPath({
       content: { "application/json": { schema: UsageResponse } },
     },
     401: errorRef("Unauthorized"),
+  },
+});
+
+registry.registerPath({
+  method: "get",
+  path: "/v1/dashboard/overview-stats",
+  summary:
+    "Console overview aggregates for the authenticated workspace. Optional query: range=1d|7d|30d|all (default all).",
+  tags: ["Dashboard"],
+  security: [{ [bearerAuth.name]: [] }],
+  responses: {
+    200: {
+      description: "Aggregate counts",
+      content: { "application/json": { schema: DashboardOverviewResponse } },
+    },
+    401: errorRef("Unauthorized"),
+    500: errorRef("Server error"),
   },
 });
 
