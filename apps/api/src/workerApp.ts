@@ -170,7 +170,6 @@ const DEFAULT_MAX_EXPORT_BYTES = 10_000_000; // 10 MB
 const MEMORIES_MAX_BODY_BYTES = 1_000_000; // 1 MB for ingest
 const SEARCH_MAX_BODY_BYTES = 200_000; // 200 KB for search/context
 const ADMIN_MAX_BODY_BYTES = 100_000; // 100 KB for admin/control plane ops
-const EXPORT_MAX_BODY_BYTES = 100_000; // exports carry no payload; keep tight
 const RRF_K = 60;
 const DEFAULT_SUCCESS_PATH = "/settings/billing?status=success";
 const DEFAULT_CANCEL_PATH = "/settings/billing?status=canceled";
