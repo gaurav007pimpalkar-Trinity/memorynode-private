@@ -8,6 +8,22 @@
 
 import fs from "node:fs";
 
+async function debugLog(runId, hypothesisId, location, message, data) {
+  await fetch("http://127.0.0.1:7420/ingest/253793e2-9a0d-4620-b251-39382727da68", {
+    method: "POST",
+    headers: { "Content-Type": "application/json", "X-Debug-Session-Id": "065062" },
+    body: JSON.stringify({
+      sessionId: "065062",
+      runId,
+      hypothesisId,
+      location,
+      message,
+      data,
+      timestamp: Date.now(),
+    }),
+  }).catch(() => {});
+}
+
 function loadEnvFile(path) {
   if (!fs.existsSync(path)) return;
   const lines = fs.readFileSync(path, "utf8").split(/\r?\n/);
@@ -47,8 +63,24 @@ async function req(baseUrl, path, init = {}) {
 }
 
 async function main() {
-  loadEnvFile(".env.staging.smoke");
-  loadEnvFile(".env.gate");
+  const runId = "staging-smoke";
+  const stagingEnvPath = ".env.staging.smoke";
+  const gateEnvPath = ".env.gate";
+  const hasStagingEnvFile = fs.existsSync(stagingEnvPath);
+  const hasGateEnvFile = fs.existsSync(gateEnvPath);
+  loadEnvFile(stagingEnvPath);
+  loadEnvFile(gateEnvPath);
+
+  // #region agent log
+  await debugLog(runId, "H1", "scripts/smoke_staging.mjs:72", "smoke env preflight", {
+    hasStagingEnvFile,
+    hasGateEnvFile,
+    hasStagingBaseUrl: Boolean(process.env.STAGING_BASE_URL),
+    hasBaseUrl: Boolean(process.env.BASE_URL),
+    hasStagingApiKey: Boolean(process.env.STAGING_API_KEY),
+    hasMemoryNodeApiKey: Boolean(process.env.MEMORYNODE_API_KEY),
+  });
+  // #endregion
 
   const baseUrl = requireEnv(["STAGING_BASE_URL", "BASE_URL"]);
   const apiKey = requireEnv(["STAGING_API_KEY", "MEMORYNODE_API_KEY"]);
@@ -62,6 +94,14 @@ async function main() {
   const user = "smoke-user";
   const text1 = `smoke check one ${suffix}`;
   const text2 = `smoke check two ${suffix}`;
+
+  // #region agent log
+  await debugLog(runId, "H1", "scripts/smoke_staging.mjs:82", "staging smoke initialized", {
+    baseUrlHost: new URL(baseUrl).host,
+    namespace,
+    user,
+  });
+  // #endregion
 
   console.log("[smoke] GET /healthz");
   await req(baseUrl, "/healthz");
@@ -87,6 +127,12 @@ async function main() {
     body: JSON.stringify({ user_id: user, namespace, query: "smoke check", top_k: 5 }),
   });
   const hits = Array.isArray(search.json?.results) ? search.json.results.length : 0;
+  // #region agent log
+  await debugLog(runId, "H2", "scripts/smoke_staging.mjs:107", "api search response observed", {
+    hits,
+    hasResultsArray: Array.isArray(search.json?.results),
+  });
+  // #endregion
   if (hits < 1) throw new Error("Search returned 0 results");
 
   console.log("[smoke] POST /v1/context");
@@ -102,10 +148,22 @@ async function main() {
   console.log("[smoke] GET /v1/usage/today");
   await req(baseUrl, "/v1/usage/today", { headers: { authorization: `Bearer ${apiKey}` } });
 
+  // #region agent log
+  await debugLog(runId, "H4", "scripts/smoke_staging.mjs:125", "staging smoke completed", {
+    passed: true,
+    endpointCount: 6,
+  });
+  // #endregion
+
   console.log("✅ staging smoke passed");
 }
 
-main().catch((err) => {
+main().catch(async (err) => {
+  // #region agent log
+  await debugLog("staging-smoke", "H1", "scripts/smoke_staging.mjs:136", "staging smoke failed", {
+    errorMessage: err instanceof Error ? err.message : String(err),
+  });
+  // #endregion
   console.error("❌ staging smoke failed:", err.message);
-  process.exit(1);
+  process.exitCode = 1;
 });

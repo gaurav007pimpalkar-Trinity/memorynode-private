@@ -112,7 +112,8 @@ export function parseAllowedOrigins(raw?: string): string[] | null {
 
 export function isOriginAllowed(origin: string, allowlist: string[] | null): boolean {
   if (!allowlist) return true;
-  if (!origin) return false;
+  // Non-browser clients usually omit Origin; allow those requests.
+  if (!origin) return true;
   if (allowlist.includes("*")) return true;
   return allowlist.some((allowed) => allowed === origin);
 }

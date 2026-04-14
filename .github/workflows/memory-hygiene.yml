@@ -30,11 +30,11 @@ jobs:
           echo "$out" | sed 's/HTTP_CODE:.*/HTTP_CODE:<redacted>/'
           if [[ -z "$code" || "$code" = "000" ]]; then
             echo "Result: API unreachable (connection failed or timeout). Set repo secret MEMORY_HYGIENE_BASE_URL if your API is at a different URL."
-            exit 0
+            exit 1
           fi
           if [[ "$code" -ge 200 && "$code" -lt 300 ]]; then
             echo "Result: Dry-run completed successfully (HTTP $code)."
             exit 0
           fi
           echo "Result: API returned HTTP $code. Check token, workspace_id, and MEMORY_HYGIENE_BASE_URL."
-          exit 0
+          exit 1

@@ -48,16 +48,24 @@ export class ApiClientError extends Error {
 /** User-facing message for common API errors (Phase 4.3). */
 export function userFacingErrorMessage(err: unknown): string {
   if (err instanceof ApiClientError) {
+    const code = (err.code ?? "").toUpperCase();
     if (err.code === "METHOD_NOT_ALLOWED")
       return "That action isn't allowed. Try a different request.";
-    if (err.code === "rate_limited") return "Too many requests. Please wait a moment and try again.";
-    if (err.code === "payload_too_large") return "Request too large. Try a smaller payload.";
+    if (code === "RATE_LIMITED" || code === "RATE_LIMIT_UNAVAILABLE")
+      return "Too many requests right now. Please wait a moment and try again.";
+    if (code === "PAYLOAD_TOO_LARGE") return "Request too large. Try a smaller payload.";
+    if (code === "CONFIG" || code === "CONFIG_ERROR")
+      return "App configuration is incomplete. Contact support or check env settings.";
+    if (code === "CORS_DENY") return "This app URL is not allowed by API CORS settings.";
     if (err.status === 401) return "Session expired or invalid. Please sign in again.";
     if (err.status === 403) return "You don't have permission for this action.";
     if (err.status === 404) return "Not found.";
     if (err.status === 402) return "Over daily cap. Upgrade or try again later.";
     if (err.status >= 500) return "Something went wrong. Please try again.";
     return err.message || `Request failed (${err.status})`;
+  }
+  if (err instanceof TypeError) {
+    return "Unable to reach the server. Check your connection and API URL, then retry.";
   }
   return err instanceof Error ? err.message : String(err);
 }
@@ -83,6 +91,9 @@ async function fetchJson<T>(path: string, init: RequestInit): Promise<T> {
       onUnauthorized?.();
     }
     const err = (json as ApiError | null)?.error;
+    // #region agent log
+    fetch('http://127.0.0.1:7420/ingest/253793e2-9a0d-4620-b251-39382727da68',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'aa3f1d'},body:JSON.stringify({sessionId:'aa3f1d',runId:'pre-fix',hypothesisId:'H3',location:'apps/dashboard/src/apiClient.ts:90',message:'api response not ok',data:{path,status:res.status,errorCode:err?.code??null},timestamp:Date.now()})}).catch(()=>{});
+    // #endregion
     throw new ApiClientError(res.status, err?.code, err?.message ?? `Request failed: ${res.status}`);
   }
   return (json as T) ?? ({} as T);
@@ -108,6 +119,9 @@ export async function ensureDashboardSession(accessToken: string, workspaceId: s
       /* ignore */
     }
     const err = (json as ApiError | null)?.error;
+    // #region agent log
+    fetch('http://127.0.0.1:7420/ingest/253793e2-9a0d-4620-b251-39382727da68',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'aa3f1d'},body:JSON.stringify({sessionId:'aa3f1d',runId:'pre-fix',hypothesisId:'H4',location:'apps/dashboard/src/apiClient.ts:116',message:'ensureDashboardSession response not ok',data:{status:res.status,errorCode:err?.code??null},timestamp:Date.now()})}).catch(()=>{});
+    // #endregion
     throw new ApiClientError(res.status, err?.code, err?.message ?? `Session failed: ${res.status}`);
   }
   const data = (await res.json()) as { csrf_token?: string };

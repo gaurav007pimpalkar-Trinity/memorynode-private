@@ -54,6 +54,7 @@
     "prod:gate": "node scripts/prod_gate.mjs",
     "prod:gate:self-test": "node scripts/prod_gate_self_test.mjs",
     "smoke:staging": "node scripts/smoke_staging.mjs",
+    "smoke:staging:dashboard": "node scripts/dashboard_staging_smoke.mjs",
     "staging:verify": "node scripts/verify_staging.mjs",
     "beta:verify": "node scripts/beta_verify.mjs",
     "smoke:prod": "node scripts/smoke_prod.mjs",

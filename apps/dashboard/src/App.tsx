@@ -3,7 +3,8 @@ import { Session, type AuthChangeEvent } from "@supabase/supabase-js";
 import { supabase, supabaseEnvError } from "./supabaseClient";
 import { ApiKeyRow, InviteRow, MemoryRow, UsageRow } from "./types";
 import { loadWorkspaceId, persistWorkspaceId } from "./state";
-import { ApiClientError, apiEnvError, apiGet, apiPost, ensureDashboardSession, dashboardLogout, setOnUnauthorized, userFacingErrorMessage } from "./apiClient";
+import { apiEnvError, apiGet, apiPost, ensureDashboardSession, dashboardLogout, setOnUnauthorized, userFacingErrorMessage } from "./apiClient";
+import { mapSearchResultsToRows, type MemorySearchRow, type SearchApiResult } from "./memorySearch";
 
 type Tab = "workspaces" | "keys" | "memories" | "usage" | "retrieval" | "activation" | "settings";
 
@@ -16,6 +17,7 @@ const tabs: Array<{ key: Tab; label: string }> = [
   { key: "activation", label: "Activation" },
   { key: "settings", label: "Settings" },
 ];
+const tabsRequiringWorkspace: Tab[] = ["keys", "memories", "usage", "retrieval", "activation"];
 
 const activationEvents: Array<{ key: string; label: string }> = [
   { key: "api_key_created", label: "API key created" },
@@ -87,6 +89,10 @@ export function App(): JSX.Element {
   const [alert, setAlert] = useState<string | null>(null);
   const [sessionReady, setSessionReady] = useState(false);
   const [sessionError, setSessionError] = useState<string | null>(null);
+  const [firstApiKeyCreated, setFirstApiKeyCreated] = useState(false);
+  const [firstSearchCompleted, setFirstSearchCompleted] = useState(false);
+  const [celebrationShown, setCelebrationShown] = useState(false);
+  const [celebrationMessage, setCelebrationMessage] = useState<string | null>(null);
 
   const missingEnv = useMemo(() => {
     const errs: string[] = [];
@@ -122,6 +128,7 @@ export function App(): JSX.Element {
     return (root as string) ?? (claims?.workspace_id as string) ?? "";
   }, [session]);
   const effectiveWorkspaceId = workspaceClaim || workspaceId;
+  const workspaceReady = Boolean(effectiveWorkspaceId?.trim());
 
   useEffect(() => {
     if (!session?.access_token || !effectiveWorkspaceId?.trim()) {
@@ -130,11 +137,20 @@ export function App(): JSX.Element {
     }
     let cancelled = false;
     setSessionError(null);
+    // #region agent log
+    fetch('http://127.0.0.1:7420/ingest/253793e2-9a0d-4620-b251-39382727da68',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'aa3f1d'},body:JSON.stringify({sessionId:'aa3f1d',runId:'pre-fix',hypothesisId:'H4',location:'apps/dashboard/src/App.tsx:134',message:'ensureDashboardSession start',data:{hasAccessToken:Boolean(session?.access_token),workspaceIdLength:effectiveWorkspaceId.trim().length},timestamp:Date.now()})}).catch(()=>{});
+    // #endregion
     ensureDashboardSession(session.access_token, effectiveWorkspaceId)
       .then(() => {
+        // #region agent log
+        fetch('http://127.0.0.1:7420/ingest/253793e2-9a0d-4620-b251-39382727da68',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'aa3f1d'},body:JSON.stringify({sessionId:'aa3f1d',runId:'pre-fix',hypothesisId:'H4',location:'apps/dashboard/src/App.tsx:138',message:'ensureDashboardSession success',data:{workspaceIdLength:effectiveWorkspaceId.trim().length},timestamp:Date.now()})}).catch(()=>{});
+        // #endregion
         if (!cancelled) setSessionReady(true);
       })
       .catch((err: unknown) => {
+        // #region agent log
+        fetch('http://127.0.0.1:7420/ingest/253793e2-9a0d-4620-b251-39382727da68',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'aa3f1d'},body:JSON.stringify({sessionId:'aa3f1d',runId:'pre-fix',hypothesisId:'H4',location:'apps/dashboard/src/App.tsx:143',message:'ensureDashboardSession failed',data:{errorMessage:err instanceof Error?err.message:String(err)},timestamp:Date.now()})}).catch(()=>{});
+        // #endregion
         if (!cancelled) {
           setSessionReady(false);
           setSessionError(err instanceof Error ? err.message : String(err));
@@ -165,10 +181,29 @@ export function App(): JSX.Element {
     } else {
       persistWorkspaceId(workspaceId);
       await supabase.auth.refreshSession();
-      setAlert("Workspace saved to JWT; RLS will scope queries.");
+      setAlert("Workspace is set. Your dashboard tabs are now fully active.");
     }
     setWorkspaceSaving(false);
   };
+
+  const onboardingSteps = useMemo(
+    () => [
+      { key: "workspace", label: "Create or select a workspace", done: workspaceReady },
+      { key: "workspace-bind", label: "Set workspace in your session", done: Boolean(workspaceClaim?.trim()) },
+      { key: "api-key", label: "Create your first API key", done: firstApiKeyCreated },
+      { key: "search", label: "Run your first memory search", done: firstSearchCompleted },
+    ],
+    [workspaceReady, workspaceClaim, firstApiKeyCreated, firstSearchCompleted],
+  );
+  const completedSteps = onboardingSteps.filter((step) => step.done).length;
+
+  useEffect(() => {
+    if (celebrationShown) return;
+    if (firstApiKeyCreated && firstSearchCompleted) {
+      setCelebrationShown(true);
+      setCelebrationMessage("Great job - your workspace is live. You created an API key and completed your first memory search.");
+    }
+  }, [firstApiKeyCreated, firstSearchCompleted, celebrationShown]);
 
   if (missingEnv.length > 0) {
     return (
@@ -246,12 +281,45 @@ export function App(): JSX.Element {
         </div>
       </header>
 
+      {celebrationMessage && (
+        <div className="celebration-toast" role="status" aria-live="polite">
+          <strong>Milestone unlocked</strong>
+          <span>{celebrationMessage}</span>
+          <button className="ghost" onClick={() => setCelebrationMessage(null)}>
+            Dismiss
+          </button>
+        </div>
+      )}
+
+      <Panel title="Getting started">
+        <div className="row-space">
+          <div className="muted small">Follow these steps to unlock the full dashboard experience.</div>
+          <span className="badge">
+            {completedSteps}/{onboardingSteps.length} complete
+          </span>
+        </div>
+        <div className="list">
+          {onboardingSteps.map((step, index) => (
+            <div key={step.key} className={step.done ? "card onboarding-step done" : "card onboarding-step"}>
+              <div className="row-space">
+                <strong>
+                  {step.done ? "✓" : index + 1}. {step.label}
+                </strong>
+                <span className="muted small">{step.done ? "Done" : "Pending"}</span>
+              </div>
+            </div>
+          ))}
+        </div>
+      </Panel>
+
       <nav className="tabs">
         {tabs.map((t) => (
           <button
             key={t.key}
             className={tab === t.key ? "tab active" : "tab"}
+            disabled={!workspaceReady && tabsRequiringWorkspace.includes(t.key)}
             onClick={() => setTab(t.key)}
+            title={!workspaceReady && tabsRequiringWorkspace.includes(t.key) ? "Set your workspace first to unlock this tab." : t.label}
           >
             {t.label}
           </button>
@@ -260,10 +328,9 @@ export function App(): JSX.Element {
 
       <ErrorBoundary onBack={() => setTab("workspaces")}>
       <div className="grid">
-        <Panel title="Workspace scope">
+        <Panel title="Your workspace">
           <p className="muted small">
-            RLS is enforced via your JWT claim <code>workspace_id</code>. Set it below (stored in user metadata +
-            local storage).
+            Choose a workspace once, then set it to unlock Usage, Retrieval, and Billing actions.
           </p>
           <label className="field">
             <span>Workspace ID</span>
@@ -275,25 +342,48 @@ export function App(): JSX.Element {
           </label>
           <div className="row">
             <button onClick={saveWorkspaceId} disabled={!workspaceId || workspaceSaving}>
-              {workspaceSaving ? "Saving…" : "Save & refresh token"}
+              {workspaceSaving ? "Setting workspace…" : "Set Workspace"}
             </button>
             <button className="ghost" onClick={() => setWorkspaceId(loadWorkspaceId())}>
-              Load from local storage
+              Use Last Workspace
             </button>
           </div>
           {alert && <div className="badge">{alert}</div>}
-          <div className="muted small">Current claim: {workspaceClaim || "not set"}</div>
+          <div className="muted small">Current workspace: {workspaceClaim || "No workspace selected yet"}</div>
         </Panel>
 
         {tab === "workspaces" && (
-          <WorkspacesView workspaceId={workspaceClaim || workspaceId} sessionUserId={session.user.id} />
+          <WorkspacesView
+            workspaceId={workspaceClaim || workspaceId}
+            sessionUserId={session.user.id}
+            onSelectWorkspace={(id) => {
+              setWorkspaceId(id);
+              persistWorkspaceId(id);
+              setAlert("Workspace selected. Click Set Workspace to activate all workspace-scoped tabs.");
+            }}
+          />
         )}
-        {tab === "keys" && <ApiKeysView workspaceId={workspaceClaim || workspaceId} />}
-        {tab === "memories" && <MemoryView userId={session.user.id} />}
-        {tab === "usage" && <UsageView />}
-        {tab === "retrieval" && <RetrievalView userId={session.user.id} />}
+        {tab === "keys" && (
+          <ApiKeysView
+            workspaceId={workspaceClaim || workspaceId}
+            onApiKeyCreated={() => {
+              if (!firstApiKeyCreated) setFirstApiKeyCreated(true);
+            }}
+          />
+        )}
+        {tab === "memories" && (
+          <MemoryView
+            userId={session.user.id}
+            workspaceId={effectiveWorkspaceId}
+            onSearchCompleted={() => {
+              if (!firstSearchCompleted) setFirstSearchCompleted(true);
+            }}
+          />
+        )}
+        {tab === "usage" && <UsageView workspaceId={effectiveWorkspaceId} />}
+        {tab === "retrieval" && <RetrievalView userId={session.user.id} workspaceId={effectiveWorkspaceId} />}
         {tab === "activation" && <ActivationView workspaceId={workspaceClaim || workspaceId} />}
-        {tab === "settings" && <SettingsView session={session} />}
+        {tab === "settings" && <SettingsView session={session} workspaceId={effectiveWorkspaceId} />}
       </div>
       </ErrorBoundary>
     </Shell>
@@ -349,7 +439,15 @@ function AuthPanel() {
   );
 }
 
-function WorkspacesView({ workspaceId, sessionUserId }: { workspaceId: string; sessionUserId: string }) {
+function WorkspacesView({
+  workspaceId,
+  sessionUserId,
+  onSelectWorkspace,
+}: {
+  workspaceId: string;
+  sessionUserId: string;
+  onSelectWorkspace: (workspaceId: string) => void;
+}) {
   const [list, setList] = useState<{ id: string; name: string; role: string }[]>([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -389,7 +487,9 @@ function WorkspacesView({ workspaceId, sessionUserId }: { workspaceId: string; s
     }
     setNewName("");
     if (data?.[0]?.workspace_id) {
-      setList([{ id: data[0].workspace_id as string, name: data[0].name as string, role: "owner" }, ...list]);
+      const createdWorkspaceId = data[0].workspace_id as string;
+      setList([{ id: createdWorkspaceId, name: data[0].name as string, role: "owner" }, ...list]);
+      onSelectWorkspace(createdWorkspaceId);
     } else {
       load();
     }
@@ -418,8 +518,13 @@ function WorkspacesView({ workspaceId, sessionUserId }: { workspaceId: string; s
               </div>
               <div className="row">
                 <span className="badge">{w.role}</span>
-                <button className="ghost" onClick={() => persistWorkspaceId(w.id)}>
-                  Set as current
+                <button className="ghost" onClick={() => {
+                  // #region agent log
+                  fetch('http://127.0.0.1:7420/ingest/253793e2-9a0d-4620-b251-39382727da68',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'aa3f1d'},body:JSON.stringify({sessionId:'aa3f1d',runId:'pre-fix',hypothesisId:'H1',location:'apps/dashboard/src/App.tsx:425',message:'set workspace clicked',data:{selectedWorkspaceId:w.id,currentWorkspaceId:workspaceId},timestamp:Date.now()})}).catch(()=>{});
+                  // #endregion
+                  onSelectWorkspace(w.id);
+                }}>
+                  Use this workspace
                 </button>
               </div>
             </div>
@@ -431,7 +536,13 @@ function WorkspacesView({ workspaceId, sessionUserId }: { workspaceId: string; s
   );
 }
 
-function ApiKeysView({ workspaceId }: { workspaceId: string }) {
+function ApiKeysView({
+  workspaceId,
+  onApiKeyCreated,
+}: {
+  workspaceId: string;
+  onApiKeyCreated: () => void;
+}) {
   const [keys, setKeys] = useState<ApiKeyRow[]>([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -470,19 +581,23 @@ function ApiKeysView({ workspaceId }: { workspaceId: string }) {
       const row = Array.isArray(data) ? (data[0] as { api_key?: string }) : undefined;
       if (row?.api_key) {
         setPlaintextKey(row.api_key);
+        onApiKeyCreated();
       }
       setNewName("");
       load();
     } catch (err: unknown) {
-      const msg = err instanceof Error ? err.message : String(err);
-      setError(msg);
+      setError(userFacingErrorMessage(err));
     } finally {
       setCreating(false);
     }
   };
 
   const revoke = async (id: string) => {
-    await supabase.rpc("revoke_api_key", { p_key_id: id });
+    const { error } = await supabase.rpc("revoke_api_key", { p_key_id: id });
+    if (error) {
+      setError(error.message);
+      return;
+    }
     load();
   };
 
@@ -556,8 +671,16 @@ function ApiKeysView({ workspaceId }: { workspaceId: string }) {
   );
 }
 
-function MemoryView({ userId }: { userId: string }) {
-  const [rows, setRows] = useState<MemoryRow[]>([]);
+function MemoryView({
+  userId,
+  workspaceId,
+  onSearchCompleted,
+}: {
+  userId: string;
+  workspaceId: string;
+  onSearchCompleted: () => void;
+}) {
+  const [rows, setRows] = useState<MemorySearchRow[]>([]);
   const [total, setTotal] = useState<number | null>(null);
   const [hasMore, setHasMore] = useState(false);
   const [loading, setLoading] = useState(false);
@@ -571,6 +694,15 @@ function MemoryView({ userId }: { userId: string }) {
   const [pageSize] = useState(10);
   const [selected, setSelected] = useState<MemoryRow | null>(null);
   const [saveToHistory, setSaveToHistory] = useState(false);
+
+  if (!workspaceId?.trim()) {
+    return (
+      <Panel title="Memory Browser">
+        <div className="badge">Set your workspace first to search and open memories.</div>
+        <div className="muted small">Tip: Choose a workspace in the Workspaces tab, then click Set Workspace.</div>
+      </Panel>
+    );
+  }
 
   const parseMetadata = (): Record<string, unknown> | undefined => {
     if (!metadata.trim()) return undefined;
@@ -618,14 +750,16 @@ function MemoryView({ userId }: { userId: string }) {
         body.filters.end_time = end || undefined;
       }
 
-      const res = await apiPost<{ results: MemoryRow[]; total?: number; has_more?: boolean }>(
+      const res = await apiPost<{ results: SearchApiResult[]; total?: number; has_more?: boolean }>(
         "/v1/search",
         body,
         saveToHistory ? { "x-save-history": "true" } : undefined,
       );
-      setRows(resetPage ? res.results : [...rows, ...res.results]);
+      const mappedRows = mapSearchResultsToRows(res.results ?? []);
+      setRows((prev) => (resetPage ? mappedRows : [...prev, ...mappedRows]));
       setTotal(res.total ?? null);
       setHasMore(res.has_more ?? false);
+      onSearchCompleted();
     } catch (err: unknown) {
       setError(userFacingErrorMessage(err));
     } finally {
@@ -684,22 +818,15 @@ function MemoryView({ userId }: { userId: string }) {
       {rows.length === 0 && !loading && <div className="muted small">No results.</div>}
       <div className="list">
         {rows.map((r) => (
-          <div key={r.id} className="card clickable" onClick={() => openMemory(r.id)}>
+          <div key={r.key} className="card clickable" onClick={() => openMemory(r.memoryId)}>
             <div className="row-space">
-              <strong>{r.namespace}</strong>
-              <span className="muted small">{new Date(r.created_at).toLocaleString()}</span>
+              <strong>Memory {r.memoryId.slice(0, 8)}…</strong>
+              <span className="muted small">Chunk #{r.chunkIndex}</span>
             </div>
             <div className="muted small">
-              Score: {r.score ?? "n/a"}
-              {r.memory_type != null && r.memory_type !== "" && (
-                <> · Type: <span className="badge">{r.memory_type}</span></>
-              )}
-              {r.source_memory_id != null && r.source_memory_id !== "" && (
-                <> · Source: <span className="muted">{r.source_memory_id.slice(0, 8)}…</span></>
-              )}
+              Score: {r.score.toFixed(3)} · Chunk: <code>{r.chunkId}</code>
             </div>
             <p>{r.text.slice(0, 240)}</p>
-            <div className="muted small">{JSON.stringify(r.metadata)}</div>
           </div>
         ))}
       </div>
@@ -743,7 +870,7 @@ function MemoryView({ userId }: { userId: string }) {
   );
 }
 
-function RetrievalView({ userId }: { userId: string }) {
+function RetrievalView({ userId, workspaceId }: { userId: string; workspaceId: string }) {
   const [evalSets, setEvalSets] = useState<Array<{ id: string; name: string; created_at: string }>>([]);
   const [history, setHistory] = useState<Array<{ id: string; query: string; created_at: string }>>([]);
   const [newEvalName, setNewEvalName] = useState("");
@@ -753,6 +880,15 @@ function RetrievalView({ userId }: { userId: string }) {
   const [replayResult, setReplayResult] = useState<{ previous: { total: number }; current: { total: number } } | null>(null);
   const [runningEvalId, setRunningEvalId] = useState<string | null>(null);
   const [replayingId, setReplayingId] = useState<string | null>(null);
+
+  if (!workspaceId?.trim()) {
+    return (
+      <Panel title="Retrieval Quality">
+        <div className="badge">Set your workspace first to use eval sets and replay history.</div>
+        <div className="muted small">After setting a workspace, run a search and enable “Save to history”.</div>
+      </Panel>
+    );
+  }
 
   const loadEvalSets = async () => {
     setLoading(true);
@@ -906,10 +1042,18 @@ function RetrievalView({ userId }: { userId: string }) {
   );
 }
 
-function UsageView() {
+function UsageView({ workspaceId }: { workspaceId: string }) {
   const [usage, setUsage] = useState<UsageRow | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+
+  if (!workspaceId?.trim()) {
+    return (
+      <Panel title="Usage">
+        <div className="badge">Set your workspace first to view usage and limits.</div>
+      </Panel>
+    );
+  }
 
   const load = async () => {
     setLoading(true);
@@ -1045,7 +1189,7 @@ function ActivationView({ workspaceId }: { workspaceId: string }) {
   );
 }
 
-function BillingView() {
+function BillingView({ workspaceId }: { workspaceId: string }) {
   const [status, setStatus] = useState<{
     plan: string;
     plan_status: string;
@@ -1063,6 +1207,14 @@ function BillingView() {
     return null;
   });
 
+  if (!workspaceId?.trim()) {
+    return (
+      <div className="stack mt-lg">
+        <div className="badge">Set your workspace first to load billing status and checkout options.</div>
+      </div>
+    );
+  }
+
   const load = async () => {
     setLoading(true);
     setError(null);
@@ -1077,12 +1229,7 @@ function BillingView() {
       setStatus(res);
       setBanner(null);
     } catch (err) {
-      if (err instanceof ApiClientError) {
-        if (err.status === 401) setError("API key required");
-        else setError(err.message);
-      } else {
-        setError(err instanceof Error ? err.message : String(err));
-      }
+      setError(userFacingErrorMessage(err));
     } finally {
       setLoading(false);
     }
@@ -1114,8 +1261,7 @@ ${Object.entries(res.fields)
         window.open(res.url, "_blank", "noopener");
       }
     } catch (err) {
-      if (err instanceof ApiClientError) setError(err.message);
-      else setError(err instanceof Error ? err.message : String(err));
+      setError(userFacingErrorMessage(err));
     }
   };
 
@@ -1158,16 +1304,19 @@ ${Object.entries(res.fields)
   );
 }
 
-function SettingsView({ session }: { session: Session }) {
+function SettingsView({ session, workspaceId }: { session: Session; workspaceId: string }) {
   return (
     <Panel title="Settings">
       <div className="muted small">User ID: {session.user.id}</div>
       <div className="muted small">Role: {session.user.role}</div>
       <div className="muted small">Issued: {new Date(session.user.created_at).toLocaleString()}</div>
-      <div className="muted small">
-        Claims: <code>{JSON.stringify(session.user.user_metadata)}</code>
-      </div>
-      <BillingView />
+      <details>
+        <summary className="muted small">Developer details</summary>
+        <div className="muted small mt-sm">
+          Claims: <code>{JSON.stringify(session.user.user_metadata)}</code>
+        </div>
+      </details>
+      <BillingView workspaceId={workspaceId} />
     </Panel>
   );
 }
@@ -1198,8 +1347,11 @@ function MembersView({ workspaceId, currentUserId }: { workspaceId: string; curr
         .order("created_at", { ascending: false }),
     ])
       .then(([mem, inv]) => {
-        if (mem.error) setError(mem.error.message);
-        if (inv.error) setError(inv.error?.message ?? null);
+        // #region agent log
+        fetch('http://127.0.0.1:7420/ingest/253793e2-9a0d-4620-b251-39382727da68',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'aa3f1d'},body:JSON.stringify({sessionId:'aa3f1d',runId:'pre-fix',hypothesisId:'H2',location:'apps/dashboard/src/App.tsx:1198',message:'members and invites query settled',data:{memberError:mem.error?.message??null,inviteError:inv.error?.message??null},timestamp:Date.now()})}).catch(()=>{});
+        // #endregion
+        const nextError = mem.error?.message ?? inv.error?.message ?? null;
+        if (nextError) setError(nextError);
         setMembers(mem.data ?? []);
         setInvites(inv.data as InviteRow[] ?? []);
       })

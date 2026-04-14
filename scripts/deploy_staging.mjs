@@ -75,6 +75,22 @@ function runWrangler(args, extraEnv = {}) {
   execSync(cmd, { stdio: "inherit", cwd: "apps/api", env: { ...process.env, ...extraEnv } });
 }
 
+function resolveBuildVersion() {
+  const fromEnv = (process.env.BUILD_VERSION ?? "").trim();
+  if (fromEnv) return fromEnv;
+  const timestamp = new Date().toISOString();
+  const fromGitSha = (process.env.GIT_SHA ?? "").trim();
+  if (fromGitSha) return `${timestamp}-${fromGitSha}`;
+  try {
+    const sha = execSync("git rev-parse --short HEAD", { stdio: ["ignore", "pipe", "ignore"] })
+      .toString()
+      .trim();
+    return sha ? `${timestamp}-${sha}` : timestamp;
+  } catch {
+    return timestamp;
+  }
+}
+
 async function getHealth(baseUrl) {
   try {
     const res = await fetch(`${baseUrl}/healthz`);
@@ -165,7 +181,7 @@ async function main() {
     fail(formatMissing(missing, "staging"));
   }
 
-  const buildVersion = new Date().toISOString();
+  const buildVersion = resolveBuildVersion();
   const expectedStage = "staging";
   process.env.BUILD_VERSION = buildVersion;
   const wranglerConfig = injectBuildVersionIntoWrangler("staging", buildVersion);

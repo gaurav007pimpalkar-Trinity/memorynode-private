@@ -16,6 +16,15 @@ const baseEnv = {
 type FetchEnv = Parameters<(typeof api)["fetch"]>[1];
 
 describe("CORS strict allowlist", () => {
+  it("requests without origin are allowed for non-browser clients", async () => {
+    const res = await api.fetch(
+      new Request("http://localhost/healthz"),
+      baseEnv as unknown as FetchEnv,
+    );
+    expect(res.status).toBe(200);
+    expect(res.headers.get("access-control-allow-origin")).toBeNull();
+  });
+
   it("allowed origin gets CORS headers", async () => {
     const res = await api.fetch(
       new Request("http://localhost/healthz", { headers: { origin: "https://allowed.com" } }),

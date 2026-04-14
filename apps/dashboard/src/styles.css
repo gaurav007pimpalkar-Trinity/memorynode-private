@@ -39,6 +39,21 @@
   gap: 8px;
 }
 
+.celebration-toast {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  background: linear-gradient(135deg, rgba(16, 185, 129, 0.18), rgba(56, 189, 248, 0.2));
+  border: 1px solid rgba(16, 185, 129, 0.5);
+  border-radius: 12px;
+  padding: 10px 12px;
+}
+
+.celebration-toast strong {
+  color: #6ee7b7;
+}
+
 .tabs {
   display: flex;
   gap: 8px;
@@ -56,6 +71,11 @@
 .tab.active {
   border-color: var(--accent);
   box-shadow: 0 0 0 1px #0ea5e9 inset;
+}
+
+.tab:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
 }
 
 .panel {
@@ -132,6 +152,10 @@ button.ghost {
   background: rgba(17, 24, 39, 0.6);
 }
 
+.onboarding-step.done {
+  border-color: rgba(56, 189, 248, 0.45);
+}
+
 .card.clickable {
   cursor: pointer;
 }
@@ -174,6 +198,10 @@ button.ghost {
   display: flex;
   flex-direction: column;
   gap: 10px;
+}
+
+details > summary {
+  cursor: pointer;
 }
 
 .modal {
