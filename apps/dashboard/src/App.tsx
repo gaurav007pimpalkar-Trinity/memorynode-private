@@ -428,13 +428,14 @@ function Panel({ title, children }: { title: string; children: React.ReactNode }
 }
 
 function AuthLanding() {
-  const showcaseCompanies = ["Nexora", "Bluepine", "Aptly", "Composio", "Pocket", "Cluely"];
+  const showcaseCompanies = ["Nexora", "Bluepine", "Aptly", "Lumic", "Packetly", "Orbital"];
   return (
     <div className="auth-layout">
       <section className="auth-left">
         <div className="auth-card">
-          <h1>Your memory layer awaits</h1>
-          <p className="muted">Sign in or create an account to get started.</p>
+          <div className="auth-chip">MemoryNode Console</div>
+          <h1>Your AI memory layer awaits</h1>
+          <p className="muted">Sign in to continue building context-aware products with persistent memory.</p>
           <AuthPanel />
           <p className="auth-terms muted small">By continuing, you agree to our Terms and Privacy Policy.</p>
         </div>
