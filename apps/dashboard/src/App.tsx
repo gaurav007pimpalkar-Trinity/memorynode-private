@@ -27,34 +27,34 @@ type SidebarGroup = { section: string; entries: SidebarNavEntry[] };
 
 const SIDEBAR_GROUPS: SidebarGroup[] = [
   {
-    section: "Main",
+    section: "Home",
     entries: [
       { tab: "overview", label: "Overview" },
-      { tab: "documents", label: "Documents" },
-      { tab: "container_tags", label: "Container Tags" },
-      { tab: "requests", label: "Requests" },
+      { tab: "documents", label: "Knowledge" },
+      { tab: "container_tags", label: "Collections" },
+      { tab: "requests", label: "Activity" },
     ],
   },
   {
-    section: "Analytics",
+    section: "Insights",
     entries: [{ tab: "insights", label: "User Insights", showLock: true }],
   },
   {
     section: "Data",
-    entries: [{ tab: "import", label: "Import" }],
+    entries: [{ tab: "import", label: "Import Data" }],
   },
   {
-    section: "Developer",
+    section: "Integrations",
     entries: [
-      { tab: "api_keys", label: "API Keys" },
+      { tab: "api_keys", label: "API Access" },
       { tab: "agents", label: "Agents" },
       { tab: "plugins", label: "Plugins" },
     ],
   },
   {
-    section: "Organization",
+    section: "Account",
     entries: [
-      { tab: "team", label: "Team" },
+      { tab: "team", label: "Workspace & Team" },
       { tab: "billing", label: "Billing" },
     ],
   },
@@ -204,6 +204,7 @@ export function App(): JSX.Element {
   const [paletteQuery, setPaletteQuery] = useState("");
   const [paletteOpen, setPaletteOpen] = useState(false);
   const [paletteIndex, setPaletteIndex] = useState(0);
+  const workspaceBootstrapAttemptedRef = useRef(false);
 
   const missingEnv = useMemo(() => {
     const errs: string[] = [];
@@ -240,6 +241,56 @@ export function App(): JSX.Element {
   }, [session]);
   const effectiveWorkspaceId = workspaceClaim || workspaceId;
   const workspaceReady = Boolean(effectiveWorkspaceId?.trim());
+
+  // Non-negotiable invariants for safety:
+  // 1) Workspace-gated tabs stay locked unless a workspace context exists.
+  // 2) Dashboard session bootstrap always requires access token + workspace ID.
+  // 3) Unauthorized responses clear local workspace context before retry.
+
+  useEffect(() => {
+    workspaceBootstrapAttemptedRef.current = false;
+  }, [session?.user.id]);
+
+  useEffect(() => {
+    if (!session || workspaceReady || workspaceBootstrapAttemptedRef.current) return;
+    workspaceBootstrapAttemptedRef.current = true;
+    let cancelled = false;
+    const bootstrapWorkspace = async () => {
+      try {
+        const { data: memberships, error: listError } = await supabase
+          .from("workspace_members")
+          .select("workspace_id")
+          .order("created_at", { ascending: false })
+          .limit(1);
+        if (listError) throw listError;
+
+        const existingWorkspaceId = (memberships?.[0] as { workspace_id?: string } | undefined)?.workspace_id?.trim() ?? "";
+        if (existingWorkspaceId) {
+          if (cancelled) return;
+          setWorkspaceId(existingWorkspaceId);
+          persistWorkspaceId(existingWorkspaceId);
+          setAlert("We selected your latest workspace so you can continue.");
+          return;
+        }
+
+        const { data: created, error: createError } = await supabase.rpc("create_workspace", { p_name: "My Workspace" });
+        if (createError) throw createError;
+        const createdWorkspaceId = (created?.[0] as { workspace_id?: string } | undefined)?.workspace_id?.trim() ?? "";
+        if (!createdWorkspaceId || cancelled) return;
+        setWorkspaceId(createdWorkspaceId);
+        persistWorkspaceId(createdWorkspaceId);
+        setAlert("Your first workspace is ready. You're good to go.");
+      } catch {
+        if (!cancelled) {
+          setAlert("We couldn't finish setup automatically. You can complete it below.");
+        }
+      }
+    };
+    void bootstrapWorkspace();
+    return () => {
+      cancelled = true;
+    };
+  }, [session, workspaceReady]);
 
   useEffect(() => {
     if (!workspaceReady) {
@@ -329,6 +380,7 @@ export function App(): JSX.Element {
 
   useEffect(() => {
     setOnUnauthorized(() => {
+      workspaceBootstrapAttemptedRef.current = false;
       setSessionReady(false);
       setSessionError("Session expired or access denied. Please sign in again or select workspace.");
       persistWorkspaceId("");
@@ -347,19 +399,19 @@ export function App(): JSX.Element {
     } else {
       persistWorkspaceId(workspaceId);
       await supabase.auth.refreshSession();
-      setAlert("Workspace is set. Your dashboard tabs are now fully active.");
+      setAlert("Workspace connected. All sections are now ready.");
     }
     setWorkspaceSaving(false);
   };
 
   const onboardingSteps = useMemo(
     () => [
-      { key: "workspace", label: "Create or select a workspace", done: workspaceReady },
-      { key: "workspace-bind", label: "Set workspace in your session", done: Boolean(workspaceClaim?.trim()) },
+      { key: "workspace", label: "Pick your workspace", done: workspaceReady },
+      { key: "workspace-bind", label: "Connect this browser", done: Boolean(workspaceClaim?.trim() || workspaceId.trim()) },
       { key: "api-key", label: "Create your first API key", done: firstApiKeyCreated },
-      { key: "team", label: "Invite your team member(s)", done: false },
+      { key: "team", label: "Invite a teammate (optional)", done: false },
     ],
-    [workspaceReady, workspaceClaim, firstApiKeyCreated],
+    [workspaceReady, workspaceClaim, workspaceId, firstApiKeyCreated],
   );
   const completedSteps = onboardingSteps.filter((step) => step.done).length;
 
@@ -537,7 +589,7 @@ export function App(): JSX.Element {
                         i === paletteIndex ? "console-search-item console-search-item--active" : "console-search-item"
                       }
                       disabled={locked}
-                      title={locked ? "Set your workspace first to unlock this page." : c.label}
+                      title={locked ? "Finish workspace setup to open this page." : c.label}
                       onMouseEnter={() => setPaletteIndex(i)}
                       onClick={() => runPaletteSelect(c.tab)}
                     >
@@ -563,7 +615,7 @@ export function App(): JSX.Element {
                       type="button"
                       className={tab === entry.tab ? "console-nav-item console-nav-item--active" : "console-nav-item"}
                       disabled={locked}
-                      title={locked ? "Set your workspace first to unlock this tab." : entry.label}
+                      title={locked ? "Finish workspace setup to open this section." : entry.label}
                       onClick={() => selectTab(entry.tab)}
                     >
                       <span className="console-nav-item-label">{entry.label}</span>
@@ -606,8 +658,8 @@ export function App(): JSX.Element {
             </div>
             <div className="console-header-sub muted small">
               {workspaceReady
-                ? shortWorkspaceId(effectiveWorkspaceId)
-                : "No workspace selected — use Quick setup below"}
+                ? "Workspace connected"
+                : "Finish setup below to unlock all sections"}
             </div>
           </div>
           <div className="console-header-actions">
@@ -617,7 +669,7 @@ export function App(): JSX.Element {
               rel="noopener noreferrer"
               className="console-header-link"
             >
-              DOCS <span className="console-external" aria-hidden>↗</span>
+              Docs <span className="console-external" aria-hidden>↗</span>
             </a>
             <a
               href="https://support.memorynode.ai"
@@ -625,7 +677,7 @@ export function App(): JSX.Element {
               rel="noopener noreferrer"
               className="console-header-link"
             >
-              SUPPORT
+              Help
             </a>
             <button
               type="button"
@@ -657,34 +709,40 @@ export function App(): JSX.Element {
           {(!workspaceReady || !onboardingCollapsed) && (
             <section className="console-onboarding panel">
               <div className="panel-head row-space">
-                <span>Quick setup</span>
+                <span>Get started</span>
                 <span className="badge">
                   {completedSteps}/{onboardingSteps.length} complete
                 </span>
               </div>
               <div className="panel-body">
-                <div className="muted small">Select a workspace once to unlock console modules.</div>
+                <div className="muted small">We keep setup short so you can start quickly.</div>
                 <label className="field">
-                  <span>Workspace ID</span>
+                  <span>Workspace ID (optional)</span>
                   <input
                     value={workspaceId}
                     onChange={(e) => setWorkspaceId(e.target.value)}
-                    placeholder="UUID"
+                    placeholder="Paste an existing workspace ID"
                   />
                 </label>
                 <div className="row">
                   <button type="button" onClick={saveWorkspaceId} disabled={!workspaceId || workspaceSaving}>
-                    {workspaceSaving ? "Setting workspace…" : "Set Workspace"}
+                    {workspaceSaving ? "Connecting…" : "Connect workspace"}
                   </button>
                   <button type="button" className="ghost" onClick={() => setWorkspaceId(loadWorkspaceId())}>
-                    Use Last Workspace
+                    Use last saved workspace
                   </button>
                 </div>
                 {alert && <div className="badge">{alert}</div>}
-                <div className="muted small">Current workspace: {workspaceClaim || "No workspace selected yet"}</div>
+                <div className="muted small">Current workspace: {workspaceClaim || workspaceId || "Not selected yet"}</div>
+                {workspaceReady && (
+                  <details className="console-advanced-details">
+                    <summary className="muted small">Advanced details</summary>
+                    <div className="muted small mt-sm">Workspace ID: {effectiveWorkspaceId}</div>
+                  </details>
+                )}
                 {workspaceReady && (
                   <button type="button" className="ghost console-onboarding-collapse" onClick={() => setOnboardingCollapsed(true)}>
-                    Collapse
+                    Hide setup
                   </button>
                 )}
               </div>
@@ -693,7 +751,7 @@ export function App(): JSX.Element {
 
           {workspaceReady && onboardingCollapsed && (
             <button type="button" className="console-onboarding-collapsed ghost" onClick={() => setOnboardingCollapsed(false)}>
-              Workspace active · {shortWorkspaceId(effectiveWorkspaceId)} — Show setup
+              Setup complete · {shortWorkspaceId(effectiveWorkspaceId)} — Show setup
             </button>
           )}
 
@@ -731,7 +789,7 @@ export function App(): JSX.Element {
                   onSelectWorkspace={(id) => {
                     setWorkspaceId(id);
                     persistWorkspaceId(id);
-                    setAlert("Workspace selected. Click Set Workspace to activate console sections.");
+                    setAlert("Workspace selected. Click Connect workspace to finish.");
                   }}
                 />
               )}
@@ -885,7 +943,7 @@ function OverviewView({
         Counts for <strong>{range === "all" ? "all time" : range}</strong>
         {!workspaceReady || !sessionReady
           ? " — set a workspace to load live numbers."
-          : " — documents are memory rows; memories are chunks; search requests sum API reads in the window."}
+          : " — numbers update for this selected time range."}
       </p>
       {error && (
         <div className="badge" role="alert">
@@ -901,7 +959,7 @@ function OverviewView({
         ))}
       </div>
 
-      <h2 className="overview-explore-title">Explore the platform</h2>
+      <h2 className="overview-explore-title">Start here</h2>
       <div className="explore-grid">
         <button type="button" className="explore-tile" onClick={onQuickSetup}>
           <OverviewChevron />
@@ -912,7 +970,7 @@ function OverviewView({
             </svg>
           </span>
           <span className="explore-tile-title">Quick setup</span>
-          <span className="explore-tile-desc muted small">Create or bind a workspace and unlock the console.</span>
+          <span className="explore-tile-desc muted small">Connect your workspace and unlock the console.</span>
         </button>
         <a
           className="explore-tile"
@@ -963,23 +1021,23 @@ function OverviewView({
 
 function DocumentsView() {
   return (
-    <Panel title="Documents">
-      <EmptyState title="No documents yet" subtitle="Import data or add documents via the API to get started." />
+    <Panel title="Knowledge">
+      <EmptyState title="No content yet" subtitle="Import data or add content with the API to get started." />
     </Panel>
   );
 }
 
 function ContainerTagsView() {
   return (
-    <Panel title="Container Tags">
-      <EmptyState title="No container tags yet" subtitle="Import data or add documents via the API to get started." />
+    <Panel title="Collections">
+      <EmptyState title="No collections yet" subtitle="Create tags while importing so content stays organized." />
     </Panel>
   );
 }
 
 function RequestsView({ workspaceId }: { workspaceId: string }) {
   return (
-    <Panel title="Requests">
+    <Panel title="Activity">
       <div className="row">
         <button className="tab active">30d</button>
         <button className="tab">All</button>
@@ -1007,7 +1065,7 @@ function ImportView() {
   const [tag, setTag] = useState("");
 
   return (
-    <Panel title="Import">
+    <Panel title="Import Data">
       <div className="dropzone muted small">Drop files here or click to browse (TXT, PDF, PNG, JPG, MP4)</div>
       <label className="field">
         <span>Add URL</span>
@@ -1273,6 +1331,7 @@ function WorkspacesView({
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [newName, setNewName] = useState("");
+  const hasWorkspaceSwitcher = list.length > 1;
 
   const load = async () => {
     setLoading(true);
@@ -1317,9 +1376,9 @@ function WorkspacesView({
   };
 
   return (
-    <Panel title="Workspaces">
+    <Panel title="Workspace & Team">
       <p className="muted small">
-        Creation and listing are RLS-safe: membership is required. New workspaces automatically add you as <b>owner</b>.
+        Create a workspace or pick one you already belong to.
       </p>
       <div className="row">
         <input value={newName} onChange={(e) => setNewName(e.target.value)} placeholder="New workspace name" />
@@ -1327,6 +1386,10 @@ function WorkspacesView({
           Create workspace
         </button>
       </div>
+      {!hasWorkspaceSwitcher && list.length === 1 && (
+        <div className="muted small">You have one workspace. Create another only if you need separate teams or environments.</div>
+      )}
+      {hasWorkspaceSwitcher && <div className="muted small">Switching appears because you now have multiple workspaces.</div>}
       {loading && <div>Loading…</div>}
       {error && <div className="badge">{error}</div>}
       <ul className="list">
@@ -1335,7 +1398,10 @@ function WorkspacesView({
             <div className="row-space">
               <div>
                 <strong>{w.name}</strong>
-                <div className="muted small">{w.id}</div>
+                <details className="console-advanced-details">
+                  <summary className="muted small">Advanced details</summary>
+                  <div className="muted small mt-sm">Workspace ID: {w.id}</div>
+                </details>
               </div>
               <div className="row">
                 <span className="badge">{w.role}</span>
@@ -1432,30 +1498,28 @@ function ApiKeysView({
   };
 
   return (
-    <Panel title="API Keys">
-      {!workspaceId && <div className="muted small">Set a workspace to load keys.</div>}
+    <Panel title="API Access">
+      {!workspaceId && <div className="muted small">Connect a workspace to load keys.</div>}
+      <div className="muted small">Create an access key for your app. You can revoke keys anytime.</div>
       <div className="row">
         <input
           value={newName}
           onChange={(e) => setNewName(e.target.value)}
-          placeholder="Key name (e.g., cli-dev)"
+          placeholder="Key name (for example, production-app)"
         />
         <button disabled={!workspaceId || !newName.trim() || creating} onClick={createKey}>
-          {creating ? "Creating…" : "Create key"}
+          {creating ? "Creating…" : "Create access key"}
         </button>
       </div>
       {loading && <div>Loading…</div>}
       {error && <div className="badge">{error}</div>}
-      {!loading && keys.length === 0 && <div className="muted small">No keys found.</div>}
+      {!loading && keys.length === 0 && <div className="muted small">No keys yet.</div>}
       <ul className="list">
         {keys.map((k) => (
           <li key={k.id} className="card">
             <div className="row-space">
               <div>
-                <strong>{k.name}</strong>{" "}
-                <span className="muted small">
-                  {k.key_prefix ?? "mn_live"}…{k.key_last4 ?? "****"}
-                </span>
+                <strong>{k.name}</strong>
                 <div className="muted small">Created {new Date(k.created_at).toLocaleString()}</div>
                 {k.last_used_at && (
                   <div className="muted small">
@@ -1463,6 +1527,12 @@ function ApiKeysView({
                     {k.last_used_ip ? ` from ${k.last_used_ip}` : ""}
                   </div>
                 )}
+                <details className="console-advanced-details mt-sm">
+                  <summary className="muted small">Advanced details</summary>
+                  <div className="muted small mt-sm">
+                    Key preview: {k.key_prefix ?? "mn_live"}…{k.key_last4 ?? "****"}
+                  </div>
+                </details>
               </div>
               <div className="row">
                 <span className="badge">{k.revoked_at ? "revoked" : "active"}</span>
@@ -1479,8 +1549,8 @@ function ApiKeysView({
       {plaintextKey && (
         <div className="modal">
           <div className="modal-card">
-            <h3>Save your API key</h3>
-            <p className="muted small">This is shown only once. Copy and store it securely.</p>
+            <h3>Save this key now</h3>
+            <p className="muted small">For safety, we only show it once. Copy it to your secrets manager.</p>
             <code className="code-block">{plaintextKey}</code>
             <div className="row">
               <button
