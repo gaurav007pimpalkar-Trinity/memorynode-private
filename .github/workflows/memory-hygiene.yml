@@ -1,3 +1,4 @@
+# yaml-language-server: disable
 # Weekly memory-hygiene dry-run. Calls POST /admin/memory-hygiene with dry_run=true.
 # Required repo secrets: MEMORY_HYGIENE_ADMIN_TOKEN, MEMORY_HYGIENE_WORKSPACE_ID
 # Optional: MEMORY_HYGIENE_BASE_URL (default https://api.memorynode.ai)

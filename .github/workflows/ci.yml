@@ -1,3 +1,4 @@
+# yaml-language-server: disable
 name: CI
 
 on:
