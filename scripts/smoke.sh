@@ -149,15 +149,20 @@ call_json() {
   local url="$1"; shift
   local payload="$1"; shift
   local headers=("$@")
+  local curl_headers=()
 
   echo "==> $step | $method $url"
   print_headers "${headers[@]}"
   echo "  payload bytes: ${#payload}"
 
+  for h in "${headers[@]}"; do
+    curl_headers+=(-H "$h")
+  done
+
   local response
   local status
   if ! response="$(curl --silent --show-error --fail-with-body --connect-timeout 5 --max-time "$STEP_TIMEOUT" \
-      -X "$method" "${headers[@]/#/-H }" \
+      -X "$method" "${curl_headers[@]}" \
       ${payload:+-d "$payload"} \
       "$url" -w "\n%{http_code}")"; then
     echo "error: curl failed for $step"
