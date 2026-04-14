@@ -65,4 +65,11 @@ as $$
 $$;
 
 revoke all on function public.dashboard_console_overview_stats(uuid, timestamptz, date) from public;
-grant execute on function public.dashboard_console_overview_stats(uuid, timestamptz, date) to service_role;
+
+-- Supabase defines role `service_role`; vanilla Postgres (e.g. CI drift DB) does not.
+do $$
+begin
+  if exists (select 1 from pg_roles where rolname = 'service_role') then
+    execute 'grant execute on function public.dashboard_console_overview_stats(uuid, timestamptz, date) to service_role';
+  end if;
+end $$;
