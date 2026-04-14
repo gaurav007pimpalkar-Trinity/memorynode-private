@@ -432,10 +432,6 @@ function AuthLanding() {
     <div className="auth-layout">
       <section className="auth-stage">
         <div className="auth-showcase">
-          <div className="auth-accent auth-accent-top" aria-hidden="true" />
-          <div className="auth-accent auth-accent-right" aria-hidden="true" />
-          <div className="auth-accent auth-accent-bottom" aria-hidden="true" />
-          <div className="auth-accent auth-accent-ring" aria-hidden="true" />
           <div className="auth-card">
             <div className="auth-chip">MemoryNode</div>
             <h1>Your AI memory layer awaits</h1>

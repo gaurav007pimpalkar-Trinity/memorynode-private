@@ -306,37 +306,12 @@ details > summary {
 
 .auth-showcase {
   position: relative;
-  border-radius: 30px;
-  border: 1px solid rgba(126, 164, 255, 0.26);
   min-height: 760px;
   display: flex;
   align-items: center;
   justify-content: center;
   padding: 40px 28px;
-  background:
-    linear-gradient(180deg, rgba(8, 30, 65, 0.25) 0%, rgba(2, 10, 27, 0.55) 100%),
-    url("/auth/hero-image.png");
-  background-size: cover;
-  background-position: center;
-  overflow: hidden;
-  box-shadow: 0 40px 120px rgba(2, 9, 26, 0.68), inset 0 1px 0 rgba(186, 216, 255, 0.18);
-}
-
-.auth-showcase::before {
-  content: "";
-  position: absolute;
-  inset: 0;
-  background: linear-gradient(180deg, rgba(10, 28, 57, 0.18) 10%, rgba(4, 10, 24, 0.76) 100%);
-}
-
-.auth-showcase::after {
-  content: "";
-  position: absolute;
-  inset: 0;
-  background:
-    radial-gradient(circle at 20% 18%, rgba(166, 225, 255, 0.22), transparent 36%),
-    radial-gradient(circle at 82% 24%, rgba(141, 117, 255, 0.18), transparent 34%);
-  mix-blend-mode: screen;
+  background: transparent;
 }
 
 .auth-card {
@@ -408,52 +383,6 @@ details > summary {
 .auth-terms {
   margin-top: 18px;
   color: rgba(205, 220, 247, 0.86);
-}
-
-.auth-accent {
-  z-index: 3;
-  pointer-events: none;
-  position: absolute;
-  border-radius: 999px;
-}
-
-.auth-accent-top {
-  top: 70px;
-  left: 90px;
-  width: 180px;
-  height: 30px;
-  border: 1px solid rgba(145, 194, 255, 0.36);
-  background: linear-gradient(90deg, rgba(140, 195, 255, 0.18), rgba(64, 116, 220, 0.12));
-  box-shadow: 0 16px 28px rgba(3, 13, 38, 0.46);
-}
-
-.auth-accent-right {
-  right: 120px;
-  top: 180px;
-  width: 120px;
-  height: 120px;
-  border: 1px solid rgba(120, 166, 251, 0.35);
-  background: radial-gradient(circle, rgba(117, 177, 255, 0.26), rgba(44, 74, 170, 0.15));
-  filter: blur(0.5px);
-}
-
-.auth-accent-bottom {
-  left: 120px;
-  bottom: 130px;
-  width: 220px;
-  height: 70px;
-  border: 1px solid rgba(118, 177, 255, 0.28);
-  background: linear-gradient(120deg, rgba(87, 161, 255, 0.2), rgba(87, 161, 255, 0));
-}
-
-.auth-accent-ring {
-  right: 210px;
-  top: 52px;
-  width: 84px;
-  height: 84px;
-  border: 12px solid rgba(78, 170, 255, 0.38);
-  background: transparent;
-  box-shadow: 0 10px 24px rgba(3, 20, 56, 0.45);
 }
 
 .auth-provider-btn {
@@ -564,11 +493,5 @@ details > summary {
   .auth-chip {
     font-size: 13px;
     padding: 8px 14px;
-  }
-  .auth-accent-top,
-  .auth-accent-right,
-  .auth-accent-bottom,
-  .auth-accent-ring {
-    display: none;
   }
 }
