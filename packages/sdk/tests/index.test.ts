@@ -79,23 +79,24 @@ describe("MemoryNodeClient request mapping", () => {
     expect(fetchMock).toHaveBeenCalled();
   });
 
-  it("requests binary export when using exportMemoriesZip", async () => {
-    const bytes = new TextEncoder().encode("zip-bytes");
+  it("posts artifact payload when using importMemories", async () => {
     fetchMock.mockReturnValue(
       Promise.resolve({
         ok: true,
         status: 200,
-        arrayBuffer: async () => bytes.buffer,
+        json: async () => ({ imported_memories: 1, imported_chunks: 2 }),
       } as Response),
     );
 
     const client = new MemoryNodeClient({ apiKey: "test-key" });
-    const data = await client.exportMemoriesZip();
-    expect(data).toEqual(bytes);
+    const data = await client.importMemories("artifact-b64", "upsert");
+    expect(data.imported_memories).toBe(1);
+    expect(data.imported_chunks).toBe(2);
     const [url, init] = fetchMock.mock.calls[0];
-    expect((url as string)).toContain("format=zip");
-    const headers = (init as RequestInit).headers as Record<string, string>;
-    expect(headers.accept).toBe("application/zip");
+    expect((url as string)).toContain("/v1/import");
+    const body = JSON.parse((init as RequestInit).body as string);
+    expect(body.artifact_base64).toBe("artifact-b64");
+    expect(body.mode).toBe("upsert");
   });
 
   it("parses API error shape { error: { code, message } } and throws MemoryNodeApiError", async () => {
