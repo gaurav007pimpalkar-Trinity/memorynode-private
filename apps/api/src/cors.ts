@@ -95,8 +95,7 @@ export function buildSecurityHeaders(path: string): Record<string, string> {
     path.startsWith("/v1/workspaces") ||
     path.startsWith("/v1/usage") ||
     path.startsWith("/v1/dashboard/") ||
-    path.startsWith("/v1/import") ||
-    path.startsWith("/v1/export");
+    path.startsWith("/v1/import");
 
   base["cache-control"] = sensitive ? "no-store" : "private, no-cache, must-revalidate";
   return base;

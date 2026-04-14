@@ -11,6 +11,7 @@ import { z } from "zod";
 const MEMORYNODE_API_KEY = process.env.MEMORYNODE_API_KEY;
 const MEMORYNODE_BASE_URL = process.env.MEMORYNODE_BASE_URL;
 const MEMORYNODE_USER_ID = process.env.MEMORYNODE_USER_ID ?? "default";
+const MEMORYNODE_NAMESPACE = process.env.MEMORYNODE_NAMESPACE ?? "default";
 
 if (!MEMORYNODE_API_KEY || typeof MEMORYNODE_API_KEY !== "string" || !MEMORYNODE_API_KEY.trim()) {
   console.error("MEMORYNODE_API_KEY is required. Set it in your environment or .env.");
@@ -99,6 +100,7 @@ async function doSearch(query: string, limit: number): Promise<string> {
     method: "POST",
     body: {
       user_id: MEMORYNODE_USER_ID,
+      namespace: MEMORYNODE_NAMESPACE,
       query: query.trim(),
       top_k: limit,
     },
@@ -131,6 +133,7 @@ async function doInsert(content: string, metadata?: Record<string, unknown>): Pr
   }
   const body: Record<string, unknown> = {
     user_id: MEMORYNODE_USER_ID,
+    namespace: MEMORYNODE_NAMESPACE,
     text: content,
   };
   if (metadata && Object.keys(metadata).length > 0) {
@@ -144,6 +147,30 @@ async function doInsert(content: string, metadata?: Record<string, unknown>): Pr
     const code = mapRestStatusToMcpCode(out.status);
     throw new Error(JSON.stringify({ code, message: out.error ?? "Insert failed" }));
   }
+}
+
+async function doContext(query: string, limit: number): Promise<string> {
+  const out = await restFetch("/v1/context", {
+    method: "POST",
+    body: {
+      user_id: MEMORYNODE_USER_ID,
+      namespace: MEMORYNODE_NAMESPACE,
+      query: query.trim(),
+      top_k: limit,
+    },
+  });
+  if (!out.ok) {
+    const code = mapRestStatusToMcpCode(out.status);
+    throw new Error(JSON.stringify({ code, message: out.error ?? "Context failed" }));
+  }
+  const data = (out.data ?? {}) as { context_text?: string; citations?: Array<{ text?: string }> };
+  const context = typeof data.context_text === "string" ? data.context_text.trim() : "";
+  if (context) return context;
+  const citations = Array.isArray(data.citations) ? data.citations : [];
+  return citations
+    .map((c, i) => `Result ${i + 1}: ${typeof c.text === "string" ? c.text : ""}`)
+    .join("\n")
+    .trim();
 }
 
 // --- MCP server ---
@@ -178,6 +205,23 @@ server.registerTool(
   }
 );
 
+server.registerTool(
+  "memory_context",
+  {
+    description: "Build prompt-ready context text from persistent memory.",
+    inputSchema: {
+      query: z.string().min(1).describe("Context query (required)"),
+      limit: z.number().int().min(SEARCH_LIMIT_MIN).max(SEARCH_LIMIT_MAX).optional().default(SEARCH_LIMIT_DEFAULT).describe("Max snippets (default 5, max 20)"),
+    },
+  },
+  async ({ query, limit }) => {
+    const limitVal = limit ?? SEARCH_LIMIT_DEFAULT;
+    const capped = Math.min(SEARCH_LIMIT_MAX, Math.max(SEARCH_LIMIT_MIN, limitVal));
+    const text = await doContext(query, capped);
+    return { content: [{ type: "text" as const, text: text || "No context found." }] };
+  }
+);
+
 // Tool: memory_insert
 server.registerTool(
   "memory_insert",
@@ -209,6 +253,7 @@ server.registerResource(
       method: "POST",
       body: {
         user_id: MEMORYNODE_USER_ID,
+        namespace: MEMORYNODE_NAMESPACE,
         query: String(q).trim(),
         top_k: limit,
       },

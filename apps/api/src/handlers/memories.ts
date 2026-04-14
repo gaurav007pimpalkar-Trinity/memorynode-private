@@ -126,6 +126,8 @@ export interface MemoryHandlerDeps extends HandlerDeps {
 export interface QuotaResolutionLike {
   planLimits: PlanLimits;
   blocked: boolean;
+  /** launch|build|deploy|scale|scale_plus|free — from workspace entitlements when present */
+  effectivePlan?: string;
   errorCode?: string;
   message?: string;
   expiredAt?: string | null;

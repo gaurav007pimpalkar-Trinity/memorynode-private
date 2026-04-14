@@ -279,35 +279,18 @@ components:
         - memories
         - search_requests
         - container_tags
-    ExportResponse:
-      type: object
-      properties:
-        artifact_base64:
-          type: string
-        bytes:
-          type: integer
-        sha256:
-          type: string
-      required:
-        - artifact_base64
-        - bytes
-        - sha256
     ImportResponse:
       type: object
       properties:
-        imported:
+        imported_memories:
           type: integer
           example: 42
-        skipped:
+        imported_chunks:
           type: integer
-          example: 0
-        errors:
-          type: integer
-          example: 0
+          example: 126
       required:
-        - imported
-        - skipped
-        - errors
+        - imported_memories
+        - imported_chunks
     ImportMode:
       type: string
       enum:
@@ -756,31 +739,11 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/ErrorResponse"
-  /v1/export:
-    post:
-      summary: Export memories (JSON or ZIP)
-      tags:
-        - Export / Import
-      security:
-        - BearerAuth: []
-      responses:
-        "200":
-          description: Export artifact
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/ExportResponse"
-        "401":
-          description: Unauthorized
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/ErrorResponse"
   /v1/import:
     post:
-      summary: Import memories from export artifact
+      summary: Import memories from artifact (paid plans)
       tags:
-        - Export / Import
+        - Import
       security:
         - BearerAuth: []
       requestBody:
@@ -804,6 +767,12 @@ paths:
                 $ref: "#/components/schemas/ErrorResponse"
         "401":
           description: Unauthorized
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "402":
+          description: Upgrade required for import
           content:
             application/json:
               schema:

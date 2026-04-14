@@ -86,10 +86,10 @@ Returns how much you’ve used today and your plan’s limits. Use it to show us
 
 ---
 
-## Export and import
+## Import (paid plans)
 
-- **POST /v1/export** — Get a copy of your memories (artifact or ZIP).
-- **POST /v1/import** — Restore from an export. Body: `{"artifact_base64": "...", "mode": "upsert" | "skip_existing" | ...}`.
+- **POST /v1/import** — Import from an artifact. Body: `{"artifact_base64": "...", "mode": "upsert" | "skip_existing" | ...}`.
+- Free plans receive **402 `UPGRADE_REQUIRED`**.
 
 ---
 
@@ -108,4 +108,4 @@ Responses use: `{"error": {"code": "...", "message": "..."}, "request_id": "..."
 
 ## SDK
 
-The TypeScript SDK exposes the same operations: `addMemory`, `search`, `context`, `listMemories`, `getMemory`, `deleteMemory`, `exportMemories`, `importMemories`, `getUsageToday`. Use your API key when you create the client. It supports Phase 6 options: `memory_type` and `extract` on add; `search_mode`, `min_score`, and filter `memory_type` / `filter_mode` on search and context; `memoryType` query param on list.
+The TypeScript SDK exposes the same operations: `addMemory`, `search`, `context`, `listMemories`, `getMemory`, `deleteMemory`, `importMemories`, `getUsageToday`. Use your API key when you create the client. It supports Phase 6 options: `memory_type` and `extract` on add; `search_mode`, `min_score`, and filter `memory_type` / `filter_mode` on search and context; `memoryType` query param on list.

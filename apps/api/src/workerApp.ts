@@ -49,12 +49,9 @@ import { createDashboardOverviewHandlers } from "./handlers/dashboardOverview.js
 import { createBillingHandlers, type BillingHandlerDeps } from "./handlers/billing.js";
 import { createWebhookHandlers, type WebhookHandlerDeps } from "./handlers/webhooks.js";
 import { createAdminHandlers, type AdminHandlerDeps } from "./handlers/admin.js";
-import { createExportHandlers, type ExportHandlerDeps } from "./handlers/export.js";
 import { createImportHandlers, type ImportHandlerDeps, type ImportMode } from "./handlers/import.js";
 import { createWorkspacesHandlers, type WorkspacesHandlerDeps } from "./handlers/workspaces.js";
 import { createApiKeysHandlers, type ApiKeysHandlerDeps } from "./handlers/apiKeys.js";
-import { createEvalHandlers, type EvalHandlerDeps } from "./handlers/eval.js";
-import { createEpisodeHandlers } from "./handlers/episodes.js";
 import {
   createDashboardSession,
   deleteDashboardSession,
@@ -1201,13 +1198,9 @@ function resolveBodyLimit(method: string, path: string, env: Env): number {
   if (method === "POST" && path === "/v1/memories") return Math.min(base, MEMORIES_MAX_BODY_BYTES);
   if (method === "POST" && (path === "/v1/search" || path === "/v1/context"))
     return Math.min(base, SEARCH_MAX_BODY_BYTES);
-  if (method === "POST" && path === "/v1/export")
-    return Math.min(Number(env.MAX_EXPORT_BYTES ?? DEFAULT_MAX_EXPORT_BYTES), EXPORT_MAX_BODY_BYTES);
   if (method === "POST" && path === "/v1/import") return Number(env.MAX_IMPORT_BYTES ?? DEFAULT_MAX_IMPORT_BYTES);
   if (method === "POST" && (path === "/v1/workspaces" || path === "/v1/api-keys" || path === "/v1/api-keys/revoke"))
     return Math.min(base, ADMIN_MAX_BODY_BYTES);
-  if (method === "POST" && (path === "/v1/eval/run" || path === "/v1/search/replay"))
-    return Math.min(base, SEARCH_MAX_BODY_BYTES);
   return base;
 }
 
@@ -1229,7 +1222,6 @@ const KNOWN_PATH_ALLOWED_METHODS: Array<{ test: (path: string) => boolean; allow
   { test: (p) => p === "/v1/workspaces", allow: "POST" },
   { test: (p) => p === "/v1/api-keys", allow: "GET, POST" },
   { test: (p) => p === "/v1/api-keys/revoke", allow: "POST" },
-  { test: (p) => p === "/v1/export", allow: "POST" },
   { test: (p) => p === "/v1/import", allow: "POST" },
   { test: (p) => p === "/v1/admin/billing/health", allow: "GET" },
   { test: (p) => p === "/admin/webhooks/reprocess", allow: "POST" },
@@ -1237,12 +1229,6 @@ const KNOWN_PATH_ALLOWED_METHODS: Array<{ test: (path: string) => boolean; allow
   { test: (p) => p === "/admin/memory-hygiene", allow: "POST" },
   { test: (p) => p === "/v1/dashboard/session", allow: "POST" },
   { test: (p) => p === "/v1/dashboard/logout", allow: "POST" },
-  { test: (p) => p === "/v1/search/history", allow: "GET" },
-  { test: (p) => p === "/v1/search/replay", allow: "POST" },
-  { test: (p) => p === "/v1/eval/sets", allow: "GET, POST" },
-  { test: (p) => /^\/v1\/eval\/sets\/[^/]+\/items$/.test(p), allow: "POST" },
-  { test: (p) => p === "/v1/eval/run", allow: "POST" },
-  { test: (p) => p === "/v1/episodes", allow: "GET, POST" },
 ];
 
 /** If path is known but method is not allowed, returns Allow header value; otherwise null (use 404). */
@@ -1587,7 +1573,7 @@ async function handleRequestImpl(request: Request, env: Env): Promise<Response> 
         return response;
       }
 
-      const handlerDeps: HandlerDeps & MemoryHandlerDeps & SearchHandlerDeps & UsageHandlerDeps & BillingHandlerDeps & WebhookHandlerDeps & AdminHandlerDeps & ExportHandlerDeps & ImportHandlerDeps & WorkspacesHandlerDeps & ApiKeysHandlerDeps & EvalHandlerDeps = {
+      const handlerDeps: HandlerDeps & MemoryHandlerDeps & SearchHandlerDeps & UsageHandlerDeps & BillingHandlerDeps & WebhookHandlerDeps & AdminHandlerDeps & ImportHandlerDeps & WorkspacesHandlerDeps & ApiKeysHandlerDeps = {
         jsonResponse,
         safeParseJson,
         chunkText,
@@ -1641,11 +1627,6 @@ async function handleRequestImpl(request: Request, env: Env): Promise<Response> 
         rateLimitWorkspace,
         defaultWebhookReprocessLimit: DEFAULT_WEBHOOK_REPROCESS_LIMIT,
         resolvePayUVerifyTimeoutMs,
-        wantsZipResponse,
-        buildExportArtifact: buildExportArtifact as ExportHandlerDeps["buildExportArtifact"],
-        makeExportResponse: (outcome, wantsZip, auth, rateHeaders) =>
-          makeExportResponse(outcome, wantsZip, auth, rateHeaders, buildResponseHeaders(ctx)),
-        defaultMaxExportBytes: DEFAULT_MAX_EXPORT_BYTES,
         importArtifact: importArtifact as ImportHandlerDeps["importArtifact"],
         defaultMaxImportBytes: DEFAULT_MAX_IMPORT_BYTES,
         generateApiKey,
@@ -1661,12 +1642,9 @@ async function handleRequestImpl(request: Request, env: Env): Promise<Response> 
       const billingHandlers = createBillingHandlers(handlerDeps, defaultBillingHandlerDeps);
       const webhookHandlers = createWebhookHandlers(handlerDeps, defaultWebhookHandlerDeps);
       const adminHandlers = createAdminHandlers(handlerDeps, defaultAdminHandlerDeps);
-      const exportHandlers = createExportHandlers(handlerDeps, defaultExportHandlerDeps);
       const importHandlers = createImportHandlers(handlerDeps, defaultImportHandlerDeps);
       const workspacesHandlers = createWorkspacesHandlers(handlerDeps, defaultWorkspacesHandlerDeps);
       const apiKeysHandlers = createApiKeysHandlers(handlerDeps, defaultApiKeysHandlerDeps);
-      const evalHandlers = createEvalHandlers(handlerDeps, defaultEvalHandlerDeps);
-      const episodeHandlers = createEpisodeHandlers(handlerDeps, defaultEpisodeHandlerDeps);
       const routed = await route(request, env, supabase, url, auditCtx, requestId, {
         handlers: {
           ...memoryHandlers,
@@ -1677,12 +1655,9 @@ async function handleRequestImpl(request: Request, env: Env): Promise<Response> 
           ...billingHandlers,
           ...webhookHandlers,
           ...adminHandlers,
-          ...exportHandlers,
           ...importHandlers,
           ...workspacesHandlers,
           ...apiKeysHandlers,
-          ...evalHandlers,
-          ...episodeHandlers,
         },
         handlerDeps,
       });
@@ -1752,14 +1727,13 @@ function classifyRouteGroup(pathname: string): string {
   if (pathname === "/healthz" || pathname === "/ready" || pathname === "/ready/") return "health";
   if (pathname === "/v1/health") return "health";
   if (pathname === "/v1/memories" || /^\/v1\/memories\/[^/]+$/.test(pathname)) return "memories";
-  if (pathname === "/v1/search" || pathname === "/v1/search/history" || pathname === "/v1/search/replay") return "search";
+  if (pathname === "/v1/search") return "search";
   if (pathname === "/v1/context") return "context";
   if (pathname === "/v1/usage/today") return "usage";
   if (pathname.startsWith("/v1/dashboard/")) return "dashboard";
   if (pathname.startsWith("/v1/billing/")) return "billing";
   if (pathname === "/v1/workspaces") return "workspaces";
   if (pathname.startsWith("/v1/api-keys")) return "api_keys";
-  if (pathname === "/v1/export") return "export";
   if (pathname === "/v1/import") return "import";
   if (pathname.startsWith("/v1/admin/") || pathname.startsWith("/admin/")) return "admin";
   return "unknown";
@@ -3546,22 +3520,6 @@ const defaultSearchHandlerDeps: SearchHandlerDeps = {
 const searchHandlersDefault = createSearchHandlers(defaultSearchHandlerDeps, defaultSearchHandlerDeps);
 const contextHandlersDefault = createContextHandlers(defaultSearchHandlerDeps, defaultSearchHandlerDeps);
 
-const defaultEvalHandlerDeps: EvalHandlerDeps = {
-  jsonResponse: simpleJsonResponse,
-  resolveQuotaForWorkspace,
-  rateLimitWorkspace,
-  reserveQuotaAndMaybeRespond,
-  todayUtc,
-  estimateEmbedTokens,
-  performSearch,
-};
-const evalHandlersDefault = createEvalHandlers(defaultEvalHandlerDeps, defaultEvalHandlerDeps);
-
-const defaultEpisodeHandlerDeps: HandlerDeps = {
-  jsonResponse: simpleJsonResponse,
-};
-const episodeHandlersDefault = createEpisodeHandlers(defaultEpisodeHandlerDeps, defaultEpisodeHandlerDeps);
-
 /** Full deps for usage handler when called directly (e.g. from tests). */
 const defaultUsageHandlerDeps: UsageHandlerDeps = {
   jsonResponse: simpleJsonResponse,
@@ -3642,17 +3600,6 @@ const defaultAdminHandlerDeps: AdminHandlerDeps = {
 };
 const adminHandlersDefault = createAdminHandlers(defaultAdminHandlerDeps, defaultAdminHandlerDeps);
 
-const defaultExportHandlerDeps: ExportHandlerDeps = {
-  jsonResponse: simpleJsonResponse,
-  safeParseJson,
-  wantsZipResponse,
-  buildExportArtifact: buildExportArtifact as ExportHandlerDeps["buildExportArtifact"],
-  makeExportResponse: (outcome, wantsZip, auth, rateHeaders) =>
-    makeExportResponse(outcome, wantsZip, auth, rateHeaders, {}),
-  defaultMaxExportBytes: DEFAULT_MAX_EXPORT_BYTES,
-};
-const exportHandlersDefault = createExportHandlers(defaultExportHandlerDeps, defaultExportHandlerDeps);
-
 const defaultImportHandlerDeps: ImportHandlerDeps = {
   jsonResponse: simpleJsonResponse,
   safeParseJson,
@@ -3691,8 +3638,6 @@ export const handleListMemories = memoryHandlersDefault.handleListMemories;
 export const handleGetMemory = memoryHandlersDefault.handleGetMemory;
 export const handleDeleteMemory = memoryHandlersDefault.handleDeleteMemory;
 export const handleSearch = searchHandlersDefault.handleSearch;
-export const handleCreateEpisode = episodeHandlersDefault.handleCreateEpisode;
-export const handleListEpisodes = episodeHandlersDefault.handleListEpisodes;
 export const handleContext = contextHandlersDefault.handleContext;
 export const handleUsageToday = usageHandlersDefault.handleUsageToday;
 export const handleDashboardOverviewStats = dashboardOverviewHandlersDefault.handleDashboardOverviewStats;
@@ -3704,9 +3649,7 @@ export const handleReprocessDeferredWebhooks = adminHandlersDefault.handleReproc
 export const handleAdminBillingHealth = adminHandlersDefault.handleAdminBillingHealth;
 export const handleCleanupExpiredSessions = adminHandlersDefault.handleCleanupExpiredSessions;
 export const handleMemoryHygiene = adminHandlersDefault.handleMemoryHygiene;
-export const handleExport = exportHandlersDefault.handleExport;
 export const handleImport = importHandlersDefault.handleImport;
-export const handleRunEval = evalHandlersDefault.handleRunEval;
 export const handleCreateWorkspace = workspacesHandlersDefault.handleCreateWorkspace;
 export const handleCreateApiKey = apiKeysHandlersDefault.handleCreateApiKey;
 export const handleListApiKeys = apiKeysHandlersDefault.handleListApiKeys;

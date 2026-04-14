@@ -106,11 +106,10 @@ describe("abuse protection", () => {
     await expectRateLimitedResponse(ingestSecond);
   });
 
-  it("applies limiter consistently on context/export/import and resists query-param bypass", async () => {
+  it("applies limiter consistently on context/import and resists query-param bypass", async () => {
     const routes: Array<{ path: string; body: unknown; firstStatus: number }> = [
       { path: "/v1/context", body: { user_id: "u1", query: "hello", top_k: 3 }, firstStatus: 200 },
-      { path: "/v1/export", body: {}, firstStatus: 200 },
-      { path: "/v1/import", body: {}, firstStatus: 400 },
+      { path: "/v1/import", body: { artifact_base64: "aGVsbG8=", mode: "upsert" }, firstStatus: 402 },
     ];
 
     for (const route of routes) {

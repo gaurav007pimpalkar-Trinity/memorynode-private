@@ -8,18 +8,15 @@ import { mapSearchResultsToRows, type MemorySearchRow, type SearchApiResult } fr
 
 type Tab =
   | "overview"
-  | "documents"
-  | "container_tags"
-  | "requests"
-  | "insights"
+  | "memories"
+  | "usage"
   | "import"
   | "api_keys"
-  | "agents"
-  | "plugins"
+  | "mcp"
   | "team"
   | "billing";
 
-const tabsRequiringWorkspace: Tab[] = ["documents", "container_tags", "requests", "import", "api_keys", "team", "billing"];
+const tabsRequiringWorkspace: Tab[] = ["memories", "usage", "import", "api_keys", "team", "billing"];
 
 type SidebarNavEntry = { tab: Tab; label: string; showLock?: boolean };
 
@@ -27,34 +24,20 @@ type SidebarGroup = { section: string; entries: SidebarNavEntry[] };
 
 const SIDEBAR_GROUPS: SidebarGroup[] = [
   {
-    section: "Home",
+    section: "Build",
     entries: [
       { tab: "overview", label: "Overview" },
-      { tab: "documents", label: "Knowledge" },
-      { tab: "container_tags", label: "Collections" },
-      { tab: "requests", label: "Activity" },
-    ],
-  },
-  {
-    section: "Insights",
-    entries: [{ tab: "insights", label: "User Insights", showLock: true }],
-  },
-  {
-    section: "Data",
-    entries: [{ tab: "import", label: "Import Data" }],
-  },
-  {
-    section: "Integrations",
-    entries: [
+      { tab: "memories", label: "Memories" },
+      { tab: "usage", label: "Usage" },
+      { tab: "import", label: "Import (Paid)" },
       { tab: "api_keys", label: "API Access" },
-      { tab: "agents", label: "Agents" },
-      { tab: "plugins", label: "Plugins" },
+      { tab: "mcp", label: "MCP" },
     ],
   },
   {
     section: "Account",
     entries: [
-      { tab: "team", label: "Workspace & Team" },
+      { tab: "team", label: "Team" },
       { tab: "billing", label: "Billing" },
     ],
   },
@@ -63,16 +46,6 @@ const SIDEBAR_GROUPS: SidebarGroup[] = [
 const SIDEBAR_COMMANDS: Array<{ tab: Tab; label: string; section: string }> = SIDEBAR_GROUPS.flatMap((g) =>
   g.entries.map((e) => ({ tab: e.tab, label: e.label, section: g.section })),
 );
-
-const activationEvents: Array<{ key: string; label: string }> = [
-  { key: "api_key_created", label: "API key created" },
-  { key: "first_ingest_success", label: "First ingest success" },
-  { key: "first_search_success", label: "First search success" },
-  { key: "first_context_success", label: "First context success" },
-  { key: "cap_exceeded", label: "Cap exceeded" },
-  { key: "checkout_started", label: "Checkout started" },
-  { key: "upgrade_activated", label: "Upgrade activated" },
-];
 
 function seatCapForPlan(planCode: string | null | undefined): number {
   const normalized = (planCode ?? "free").toLowerCase();
@@ -767,11 +740,9 @@ export function App(): JSX.Element {
                   }}
                 />
               )}
-              {tab === "documents" && <DocumentsView />}
-              {tab === "container_tags" && <ContainerTagsView />}
-              {tab === "requests" && <RequestsView workspaceId={effectiveWorkspaceId} />}
-              {tab === "insights" && <InsightsView />}
-              {tab === "import" && <ImportView />}
+              {tab === "memories" && <MemoryBrowserView userId={session.user.id} workspaceId={effectiveWorkspaceId} onSearchCompleted={() => {}} />}
+              {tab === "usage" && <RequestsView workspaceId={effectiveWorkspaceId} />}
+              {tab === "import" && <ImportView isPaid={planBadge !== "FREE"} />}
               {tab === "api_keys" && (
                 <ApiKeysView
                   workspaceId={workspaceClaim || workspaceId}
@@ -780,8 +751,7 @@ export function App(): JSX.Element {
                   }}
                 />
               )}
-              {tab === "agents" && <AgentsView />}
-              {tab === "plugins" && <PluginsView />}
+              {tab === "mcp" && <McpView />}
               {tab === "team" && (
                 <WorkspacesView
                   workspaceId={workspaceClaim || workspaceId}
@@ -1019,25 +989,9 @@ function OverviewView({
   );
 }
 
-function DocumentsView() {
-  return (
-    <Panel title="Knowledge">
-      <EmptyState title="No content yet" subtitle="Import data or add content with the API to get started." />
-    </Panel>
-  );
-}
-
-function ContainerTagsView() {
-  return (
-    <Panel title="Collections">
-      <EmptyState title="No collections yet" subtitle="Create tags while importing so content stays organized." />
-    </Panel>
-  );
-}
-
 function RequestsView({ workspaceId }: { workspaceId: string }) {
   return (
-    <Panel title="Activity">
+    <Panel title="Usage">
       <div className="row">
         <button className="tab active">30d</button>
         <button className="tab">All</button>
@@ -1051,51 +1005,83 @@ function RequestsView({ workspaceId }: { workspaceId: string }) {
   );
 }
 
-function InsightsView() {
-  return (
-    <Panel title="User Insights">
-      <EmptyState title="Available on Scale" subtitle="Upgrade in Billing to unlock AI-powered user insights." />
-      <button>Upgrade</button>
-    </Panel>
-  );
-}
-
-function ImportView() {
+function ImportView({ isPaid }: { isPaid: boolean }) {
   const [url, setUrl] = useState("");
   const [tag, setTag] = useState("");
+  const [artifactBase64, setArtifactBase64] = useState("");
+  const [mode, setMode] = useState<"upsert" | "skip_existing" | "error_on_conflict" | "replace_ids" | "replace_all">("upsert");
+  const [busy, setBusy] = useState(false);
+  const [message, setMessage] = useState<string | null>(null);
+
+  const runImport = async () => {
+    if (!artifactBase64.trim()) return;
+    setBusy(true);
+    setMessage(null);
+    try {
+      const res = await apiPost<{ imported_memories: number; imported_chunks: number }>("/v1/import", {
+        artifact_base64: artifactBase64.trim(),
+        mode,
+      });
+      setMessage(`Imported ${res.imported_memories} memories and ${res.imported_chunks} chunks.`);
+      setArtifactBase64("");
+    } catch (err: unknown) {
+      setMessage(userFacingErrorMessage(err));
+    } finally {
+      setBusy(false);
+    }
+  };
 
   return (
     <Panel title="Import Data">
+      {!isPaid && (
+        <div className="badge">
+          Import is available on paid plans only. Upgrade in Billing to unlock it.
+        </div>
+      )}
       <div className="dropzone muted small">Drop files here or click to browse (TXT, PDF, PNG, JPG, MP4)</div>
       <label className="field">
         <span>Add URL</span>
         <div className="row">
           <input value={url} onChange={(e) => setUrl(e.target.value)} placeholder="https://example.com/article" />
-          <button className="ghost" disabled={!url.trim()}>Add</button>
+          <button className="ghost" disabled={!url.trim() || !isPaid}>Add</button>
         </div>
       </label>
       <label className="field">
         <span>Container Tag (optional)</span>
-        <input value={tag} onChange={(e) => setTag(e.target.value)} placeholder="Search or create tags…" />
+        <input value={tag} onChange={(e) => setTag(e.target.value)} placeholder="Search or create tags..." />
       </label>
-      <button disabled>Import 0 items</button>
+      <label className="field">
+        <span>Artifact (base64)</span>
+        <textarea value={artifactBase64} onChange={(e) => setArtifactBase64(e.target.value)} rows={6} />
+      </label>
+      <label className="field">
+        <span>Mode</span>
+        <select value={mode} onChange={(e) => setMode(e.target.value as typeof mode)}>
+          <option value="upsert">upsert</option>
+          <option value="skip_existing">skip_existing</option>
+          <option value="error_on_conflict">error_on_conflict</option>
+          <option value="replace_ids">replace_ids</option>
+          <option value="replace_all">replace_all</option>
+        </select>
+      </label>
+      <button disabled={!isPaid || !artifactBase64.trim() || busy} onClick={runImport}>
+        {busy ? "Importing..." : "Run import"}
+      </button>
+      {message && <div className="badge">{message}</div>}
     </Panel>
   );
 }
 
-function AgentsView() {
+function McpView() {
   return (
-    <Panel title="Agents">
-      <EmptyState title="No agents connected" subtitle="Install the CLI and run login to connect an agent." />
-    </Panel>
-  );
-}
-
-function PluginsView() {
-  return (
-    <Panel title="Plugins">
-      <EmptyState title="Plugins require paid plan" subtitle="Connect external tools to enhance your workflow." />
-      <button>Upgrade</button>
+    <Panel title="MCP Setup">
+      <div className="muted small">Connect your agent host to MemoryNode with the official MCP server.</div>
+      <code className="code-block">pnpm add @memorynodeai/mcp-server</code>
+      <div className="muted small">Required env vars:</div>
+      <code className="code-block">MEMORYNODE_API_KEY=mn_live_xxx{"\n"}MEMORYNODE_BASE_URL=https://api.memorynode.ai{"\n"}MEMORYNODE_USER_ID=user-123{"\n"}MEMORYNODE_NAMESPACE=default</code>
+      <a className="ghost" href="https://docs.memorynode.ai/quickstart" target="_blank" rel="noopener noreferrer">
+        Open quickstart
+      </a>
     </Panel>
   );
 }
@@ -1571,7 +1557,7 @@ function ApiKeysView({
   );
 }
 
-function _MemoryView({
+function MemoryBrowserView({
   userId,
   workspaceId,
   onSearchCompleted,
@@ -1770,178 +1756,6 @@ function _MemoryView({
   );
 }
 
-function _RetrievalView({ userId, workspaceId }: { userId: string; workspaceId: string }) {
-  const [evalSets, setEvalSets] = useState<Array<{ id: string; name: string; created_at: string }>>([]);
-  const [history, setHistory] = useState<Array<{ id: string; query: string; created_at: string }>>([]);
-  const [newEvalName, setNewEvalName] = useState("");
-  const [loading, setLoading] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-  const [evalResult, setEvalResult] = useState<{ summary: { avg_precision_at_k: number; avg_recall: number }; count: number } | null>(null);
-  const [replayResult, setReplayResult] = useState<{ previous: { total: number }; current: { total: number } } | null>(null);
-  const [runningEvalId, setRunningEvalId] = useState<string | null>(null);
-  const [replayingId, setReplayingId] = useState<string | null>(null);
-
-  if (!workspaceId?.trim()) {
-    return (
-      <Panel title="Retrieval Quality">
-        <div className="badge">Set your workspace first to use eval sets and replay history.</div>
-        <div className="muted small">After setting a workspace, run a search and enable “Save to history”.</div>
-      </Panel>
-    );
-  }
-
-  const loadEvalSets = async () => {
-    setLoading(true);
-    setError(null);
-    try {
-      const res = await apiGet<{ eval_sets: Array<{ id: string; name: string; created_at: string }> }>("/v1/eval/sets");
-      setEvalSets(res.eval_sets ?? []);
-    } catch (err: unknown) {
-      setError(userFacingErrorMessage(err));
-    } finally {
-      setLoading(false);
-    }
-  };
-
-  const loadHistory = async () => {
-    setLoading(true);
-    setError(null);
-    try {
-      const res = await apiGet<{ history: Array<{ id: string; query: string; created_at: string }> }>("/v1/search/history?limit=20");
-      setHistory(res.history ?? []);
-    } catch (err: unknown) {
-      setError(userFacingErrorMessage(err));
-    } finally {
-      setLoading(false);
-    }
-  };
-
-  const createEvalSet = async () => {
-    if (!newEvalName.trim()) return;
-    setError(null);
-    try {
-      await apiPost("/v1/eval/sets", { name: newEvalName.trim() });
-      setNewEvalName("");
-      loadEvalSets();
-    } catch (err: unknown) {
-      setError(userFacingErrorMessage(err));
-    }
-  };
-
-  const runEval = async (evalSetId: string) => {
-    setRunningEvalId(evalSetId);
-    setEvalResult(null);
-    setError(null);
-    try {
-      const res = await apiPost<{ summary: { avg_precision_at_k: number; avg_recall: number; count: number }; items?: unknown[] }>(
-        "/v1/eval/run",
-        { eval_set_id: evalSetId, user_id: userId },
-      );
-      setEvalResult({
-        summary: res.summary,
-        count: res.summary?.count ?? (res.items?.length ?? 0),
-      });
-    } catch (err: unknown) {
-      setError(userFacingErrorMessage(err));
-    } finally {
-      setRunningEvalId(null);
-    }
-  };
-
-  const replay = async (queryId: string) => {
-    setReplayingId(queryId);
-    setReplayResult(null);
-    setError(null);
-    try {
-      const res = await apiPost<{ previous: { total: number }; current: { total: number } }>("/v1/search/replay", {
-        query_id: queryId,
-      });
-      setReplayResult({ previous: res.previous ?? { total: 0 }, current: res.current ?? { total: 0 } });
-    } catch (err: unknown) {
-      setError(userFacingErrorMessage(err));
-    } finally {
-      setReplayingId(null);
-    }
-  };
-
-  useEffect(() => {
-    void loadEvalSets();
-    void loadHistory();
-  }, []);
-
-  return (
-    <Panel title="Retrieval Quality (Phase 5)">
-      <p className="muted small">
-        Eval sets and search history. Use Memory Browser with <code>X-Save-History: true</code> to save searches for replay. See{" "}
-        docs/RETRIEVAL_COCKPIT_DEMO.md
-        .
-      </p>
-      {error && (
-        <div className="badge">
-          {error}
-          <button className="ghost" onClick={() => setError(null)}>
-            Dismiss
-          </button>
-        </div>
-      )}
-
-      <h4>Eval sets</h4>
-      <div className="row">
-        <input value={newEvalName} onChange={(e) => setNewEvalName(e.target.value)} placeholder="New eval set name" />
-        <button onClick={createEvalSet} disabled={!newEvalName.trim()}>
-          Create
-        </button>
-      </div>
-      <ul className="list">
-        {evalSets.map((s) => (
-          <li key={s.id} className="card">
-            <div className="row-space">
-              <div>
-                <strong>{s.name}</strong>
-                <div className="muted small">{new Date(s.created_at).toLocaleString()}</div>
-              </div>
-              <button onClick={() => runEval(s.id)} disabled={!!runningEvalId}>
-                {runningEvalId === s.id ? "Running…" : "Run eval"}
-              </button>
-            </div>
-          </li>
-        ))}
-      </ul>
-      {evalResult && (
-        <div className="badge">
-          Avg precision@k: {evalResult.summary.avg_precision_at_k.toFixed(3)} · Avg recall: {evalResult.summary.avg_recall.toFixed(3)} · Items: {evalResult.count}
-        </div>
-      )}
-
-      <h4>Search history</h4>
-      <button className="ghost" onClick={loadHistory} disabled={loading}>
-        Refresh
-      </button>
-      <ul className="list">
-        {history.map((h) => (
-          <li key={h.id} className="card">
-            <div className="row-space">
-              <div>
-                <div className="muted small">{h.query.slice(0, 80)}{h.query.length > 80 ? "…" : ""}</div>
-                <div className="muted small">{new Date(h.created_at).toLocaleString()}</div>
-              </div>
-              <button onClick={() => replay(h.id)} disabled={!!replayingId}>
-                {replayingId === h.id ? "Replaying…" : "Replay"}
-              </button>
-            </div>
-          </li>
-        ))}
-      </ul>
-      {history.length === 0 && !loading && <div className="muted small">No saved searches. Add X-Save-History: true to search requests.</div>}
-      {replayResult && (
-        <div className="badge">
-          Previous: {replayResult.previous.total} results · Current: {replayResult.current.total} results
-        </div>
-      )}
-    </Panel>
-  );
-}
-
 function UsageView({ workspaceId, embedded = false }: { workspaceId: string; embedded?: boolean }) {
   const [usage, setUsage] = useState<UsageRow | null>(null);
   const [loading, setLoading] = useState(false);
@@ -2018,76 +1832,6 @@ function UsageView({ workspaceId, embedded = false }: { workspaceId: string; emb
     </>
   );
   return embedded ? content : <Panel title="Usage">{content}</Panel>;
-}
-
-function _ActivationView({ workspaceId }: { workspaceId: string }) {
-  const [range, setRange] = useState<"24h" | "7d">("24h");
-  const [rows, setRows] = useState<Record<string, number>>({});
-  const [loading, setLoading] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-
-  useEffect(() => {
-    if (!workspaceId) {
-      setRows({});
-      setError(null);
-      return;
-    }
-    setLoading(true);
-    setError(null);
-    const days = range === "24h" ? 1 : 7;
-    (async () => {
-      try {
-        const { data, error } = await supabase.rpc("activation_counts", { p_workspace_id: workspaceId, p_days: days });
-        if (error) {
-          setError(error.message);
-          setRows({});
-          return;
-        }
-        const map: Record<string, number> = {};
-        (data as Array<{ event_name: string; count: number }> | null)?.forEach((row) => {
-          map[row.event_name] = Number(row.count ?? 0);
-        });
-        setRows(map);
-      } catch (err: unknown) {
-        const msg = err instanceof Error ? err.message : String(err);
-        setError(msg);
-        setRows({});
-      } finally {
-        setLoading(false);
-      }
-    })();
-  }, [workspaceId, range]);
-
-  return (
-    <Panel title="Activation (workspace-scoped)">
-      {!workspaceId && <div className="muted small">Select a workspace to see activation signals.</div>}
-      {workspaceId && (
-        <>
-          <div className="row">
-            <button className={range === "24h" ? "tab active" : "tab"} onClick={() => setRange("24h")}>
-              Last 24h
-            </button>
-            <button className={range === "7d" ? "tab active" : "tab"} onClick={() => setRange("7d")}>
-              Last 7d
-            </button>
-          </div>
-          {loading && <div>Loading…</div>}
-          {error && <div className="badge">{error}</div>}
-          <ul className="list">
-            {activationEvents.map((evt) => (
-              <li key={evt.key} className="row-space card">
-                <div>
-                  <strong>{evt.label}</strong>
-                  <div className="muted small">{evt.key}</div>
-                </div>
-                <div className="badge">{rows[evt.key] ?? 0}</div>
-              </li>
-            ))}
-          </ul>
-        </>
-      )}
-    </Panel>
-  );
 }
 
 function BillingView({ workspaceId }: { workspaceId: string }) {

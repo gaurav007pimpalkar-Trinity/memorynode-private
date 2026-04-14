@@ -33,6 +33,9 @@ const results = await client.search({
   query: "user preferences",
   topK: 5,
 });
+
+// Optional: import an artifact (paid plans only)
+await client.importMemories("<artifact_base64>", "upsert");
 ```
 
 Get an API key at [console.memorynode.ai](https://console.memorynode.ai).

@@ -118,6 +118,24 @@ export function createImportHandlers(
           402,
         );
       }
+      const effectivePlan = (quota.effectivePlan ?? "free").toString().toLowerCase();
+      if (effectivePlan === "free") {
+        return jsonResponse(
+          {
+            error: {
+              code: "UPGRADE_REQUIRED",
+              message: "Import is available on paid plans only.",
+              upgrade_required: true,
+              effective_plan: "free",
+            },
+            upgrade_url: (env as { PUBLIC_APP_URL?: string }).PUBLIC_APP_URL
+              ? `${(env as { PUBLIC_APP_URL: string }).PUBLIC_APP_URL}/billing`
+              : undefined,
+          },
+          402,
+          rate.headers,
+        );
+      }
 
       const preInsertGuard = async (deltas: {
         writesDelta: number;

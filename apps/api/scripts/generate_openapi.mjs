@@ -174,20 +174,10 @@ const ImportPayloadSchema = z
 
 const ImportResponse = z
   .object({
-    imported: z.number().int().openapi({ example: 42 }),
-    skipped: z.number().int().openapi({ example: 0 }),
-    errors: z.number().int().openapi({ example: 0 }),
+    imported_memories: z.number().int().openapi({ example: 42 }),
+    imported_chunks: z.number().int().openapi({ example: 126 }),
   })
   .openapi("ImportResponse");
-
-// ── Export schemas ──────────────────────────────────────────────────────────
-const ExportResponse = z
-  .object({
-    artifact_base64: z.string(),
-    bytes: z.number().int(),
-    sha256: z.string(),
-  })
-  .openapi("ExportResponse");
 
 // ── Usage schemas ───────────────────────────────────────────────────────────
 const UsageResponse = z
@@ -512,28 +502,12 @@ registry.registerPath({
   },
 });
 
-// POST /v1/export
-registry.registerPath({
-  method: "post",
-  path: "/v1/export",
-  summary: "Export memories (JSON or ZIP)",
-  tags: ["Export / Import"],
-  security: [{ [bearerAuth.name]: [] }],
-  responses: {
-    200: {
-      description: "Export artifact",
-      content: { "application/json": { schema: ExportResponse } },
-    },
-    401: errorRef("Unauthorized"),
-  },
-});
-
 // POST /v1/import
 registry.registerPath({
   method: "post",
   path: "/v1/import",
-  summary: "Import memories from export artifact",
-  tags: ["Export / Import"],
+  summary: "Import memories from artifact (paid plans)",
+  tags: ["Import"],
   security: [{ [bearerAuth.name]: [] }],
   request: {
     body: {
@@ -548,6 +522,7 @@ registry.registerPath({
     },
     400: errorRef("Validation error"),
     401: errorRef("Unauthorized"),
+    402: errorRef("Upgrade required for import"),
   },
 });
 

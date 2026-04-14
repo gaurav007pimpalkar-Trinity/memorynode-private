@@ -6,7 +6,6 @@ import type {
   CreateApiKeyResponse,
   CreateWorkspaceResponse,
   DeleteMemoryResponse,
-  ExportResponse,
   ImportRequest,
   ImportResponse,
   GetMemoryResponse,
@@ -172,24 +171,6 @@ export class MemoryNodeClient {
 
   async deleteMemory(id: string): Promise<DeleteMemoryResponse> {
     return this.request<DeleteMemoryResponse>(`/v1/memories/${encodeURIComponent(id)}`, { method: "DELETE" });
-  }
-
-  async exportMemories(): Promise<ExportResponse> {
-    return this.request<ExportResponse>("/v1/export", { method: "POST" });
-  }
-
-  async exportMemoriesZip(): Promise<Uint8Array> {
-    const url = new URL("/v1/export", this.baseUrl);
-    url.searchParams.set("format", "zip");
-    const response = await fetch(url.toString(), {
-      method: "POST",
-      headers: { ...this.buildHeaders(), accept: "application/zip" },
-    });
-    if (!response.ok) {
-      throw await this.toApiError(response);
-    }
-    const buffer = await response.arrayBuffer();
-    return new Uint8Array(buffer);
   }
 
   async importMemories(artifactBase64: string, mode?: ImportRequest["mode"]): Promise<ImportResponse> {

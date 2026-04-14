@@ -44,8 +44,24 @@ To let AI agents read/write memory via MCP tools:
 2. Configure your MCP client with:
    - `MEMORYNODE_API_KEY` — your API key.
    - `MEMORYNODE_BASE_URL` — `https://api.memorynode.ai` (or your base URL).
+   - `MEMORYNODE_NAMESPACE` — optional, defaults to `default`.
 3. Use the `memory://search` resource and the memory insert tool from your agent.
 
 See [packages/mcp-server](packages/mcp-server) and [API usage](API_USAGE.md) for full request/response shapes.
+
+## 5. Import data (paid plans)
+
+Bulk import is available on paid plans only.
+
+**POST /v1/import**
+
+```bash
+curl -X POST "https://api.memorynode.ai/v1/import" \
+  -H "Authorization: Bearer YOUR_API_KEY" \
+  -H "Content-Type: application/json" \
+  -d '{"artifact_base64":"<base64>","mode":"upsert"}'
+```
+
+Free plans receive `402` with `UPGRADE_REQUIRED`.
 
 <!-- Migration manifest (CI-checked): MIGRATIONS_TOTAL=35; MIGRATIONS_LATEST=033_dashboard_console_overview_stats.sql -->

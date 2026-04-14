@@ -1,5 +1,5 @@
 /**
- * Minimal integration tests for API endpoints: memories, search, episodes.
+ * Minimal integration tests for API endpoints: memories, search, import gating.
  * Uses stub Supabase and rate-limit DO; verifies status and response shape.
  * Recency decay: search results are ordered by score desc (stub applies score ordering).
  */
@@ -97,59 +97,23 @@ describe("POST /v1/search", () => {
   });
 });
 
-describe("POST /v1/episodes", () => {
-  it("returns 201 and id, created_at with valid auth", async () => {
+describe("POST /v1/import", () => {
+  it("returns 402 for free plans", async () => {
     const { apiKey } = await getStubApiKey();
     const res = await api.fetch(
-      new Request("http://localhost/v1/episodes", {
+      new Request("http://localhost/v1/import", {
         method: "POST",
         headers: { "content-type": "application/json", authorization: `Bearer ${apiKey}` },
         body: JSON.stringify({
-          session_id: "sess-ep-1",
-          event_type: "tool_call",
-          tool_name: "test_tool",
-          input_summary: "input",
+          artifact_base64: "aGVsbG8=",
+          mode: "upsert",
         }),
       }),
       stubEnv as unknown as Record<string, unknown>,
     );
-    expect(res.status).toBe(201);
+    expect(res.status).toBe(402);
     const json = await res.json();
-    expect(typeof json.id).toBe("string");
-    expect(typeof json.created_at).toBe("string");
-  });
-});
-
-describe("GET /v1/episodes", () => {
-  it("returns 200 and results including created episode", async () => {
-    const { apiKey } = await getStubApiKey();
-    const sessionId = "sess-list-" + Date.now();
-    const createRes = await api.fetch(
-      new Request("http://localhost/v1/episodes", {
-        method: "POST",
-        headers: { "content-type": "application/json", authorization: `Bearer ${apiKey}` },
-        body: JSON.stringify({
-          session_id: sessionId,
-          event_type: "agent_step",
-          output_summary: "step done",
-        }),
-      }),
-      stubEnv as unknown as Record<string, unknown>,
-    );
-    expect(createRes.status).toBe(201);
-
-    const listRes = await api.fetch(
-      new Request(`http://localhost/v1/episodes?session_id=${encodeURIComponent(sessionId)}`, {
-        method: "GET",
-        headers: { authorization: `Bearer ${apiKey}` },
-      }),
-      stubEnv as unknown as Record<string, unknown>,
-    );
-    expect(listRes.status).toBe(200);
-    const json = await listRes.json();
-    expect(Array.isArray(json.results)).toBe(true);
-    expect(json.results.length).toBeGreaterThanOrEqual(1);
-    expect(json.results.some((r: { session_id?: string }) => r.session_id === sessionId)).toBe(true);
+    expect(json?.error?.code).toBe("UPGRADE_REQUIRED");
   });
 });
 

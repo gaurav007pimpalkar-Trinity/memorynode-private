@@ -1,6 +1,6 @@
 /**
  * Plan v2 protection layer integration tests.
- * Covers: extraction cap, token cap, atomic cap enforcement, import cap, eval cap, workspace RPM.
+ * Covers: extraction cap, token cap, atomic cap enforcement, import cap, workspace RPM.
  */
 
 import { describe, expect, it } from "vitest";
@@ -8,7 +8,6 @@ import {
   handleCreateMemory,
   handleSearch,
   handleImport,
-  handleRunEval,
 } from "../src/index.js";
 import { getLimitsForPlanCode } from "@memorynodeai/shared";
 import type { SupabaseClient } from "@supabase/supabase-js";
@@ -69,6 +68,20 @@ function makeSupabasePlanV2(options: {
         return {
           select: () => ({
             eq: () => ({ maybeSingle: async () => ({ data: { id: "ws1", plan: planCode, plan_status: "active" }, error: null }) }),
+          }),
+        };
+      }
+      if (table === "workspace_entitlements") {
+        return {
+          select: () => ({
+            eq: () => ({
+              order: () => ({
+                limit: async () => ({
+                  data: [{ plan_code: planCode, status: "active", starts_at: null, expires_at: null, caps_json: null }],
+                  error: null,
+                }),
+              }),
+            }),
           }),
         };
       }
@@ -266,9 +279,9 @@ describe("Plan v2: atomic cap enforcement", () => {
 describe("Plan v2: import cap enforcement", () => {
   it("returns 402 when import would exceed writes cap", async () => {
     const crypto = await import("node:crypto");
-    const limits = getLimitsForPlanCode("free");
+    const limits = getLimitsForPlanCode("build");
     const supabase = makeSupabasePlanV2({
-      planCode: "free",
+      planCode: "build",
       usage: { writes: limits.writes_per_day - 5, reads: 0, embeds: 0, extraction_calls: 0, embed_tokens_used: 0 },
     });
     const memories = Array.from({ length: 20 }, (_, i) => ({
@@ -324,31 +337,6 @@ describe("Plan v2: import cap enforcement", () => {
       makeEnv() as Record<string, unknown>,
       supabase,
       {},
-    );
-    expect(res.status).toBe(402);
-    const json = await res.json();
-    expect(json.error?.code).toBe("PLAN_LIMIT_EXCEEDED");
-  });
-});
-
-describe("Plan v2: eval cap enforcement", () => {
-  it("returns 402 when eval run would exceed reads/embeds cap", async () => {
-    const limits = getLimitsForPlanCode("free");
-    const embedsCap = Math.floor(limits.embed_tokens_per_day / 200);
-    const supabase = makeSupabasePlanV2({
-      planCode: "free",
-      usage: { writes: 0, reads: limits.reads_per_day - 1, embeds: embedsCap - 1, extraction_calls: 0, embed_tokens_used: 0 },
-    });
-    const res = await handleRunEval(
-      new Request("http://localhost/v1/eval/run", {
-        method: "POST",
-        headers: { authorization: "Bearer mn_live_test", "content-type": "application/json" },
-        body: JSON.stringify({ eval_set_id: "es1", user_id: "u1", namespace: "default" }),
-      }),
-      makeEnv() as Record<string, unknown>,
-      supabase,
-      {},
-      "req-1",
     );
     expect(res.status).toBe(402);
     const json = await res.json();

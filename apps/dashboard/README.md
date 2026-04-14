@@ -38,11 +38,10 @@ Use the **anon** (not service-role) key so browser traffic is RLS-enforced.
 - Set your Worker API key once in the **API key** panel (top of the dashboard). It’s stored locally only.
 - Data is fetched from Worker API `/v1/usage/today`; shows counts and plan limits with friendly errors (401 invalid key, 402 over cap, 429 rate limited).
 
-## Activation tab
+## Import tab (paid)
 
-- Shows activation funnel events per workspace (api_key_created, first_ingest/search/context_success, cap_exceeded, checkout_started, upgrade_activated).
-- Toggle between last 24h and last 7d; data comes from Supabase RPC `activation_counts` (RLS enforced via membership).
-- Screenshot: simple list with event names and counts; a workspace selector prompt appears if none is chosen.
+- Import supports artifact-based bulk ingest through Worker API `POST /v1/import`.
+- Free plans receive `402 UPGRADE_REQUIRED`; paid plans can run import modes (`upsert`, `skip_existing`, `error_on_conflict`, `replace_ids`, `replace_all`).
 
 ## Billing
 

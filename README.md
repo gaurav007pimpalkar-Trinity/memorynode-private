@@ -30,7 +30,7 @@ Use the MemoryNode MCP server so AI tools can read/write memory without custom c
 
 ```bash
 pnpm add @memorynodeai/mcp-server
-# Configure MCP with MEMORYNODE_API_KEY and MEMORYNODE_BASE_URL; then use memory://search and memory insert tools.
+# Configure MCP with MEMORYNODE_API_KEY, MEMORYNODE_BASE_URL, optional MEMORYNODE_NAMESPACE; then use memory_search, memory_context, and memory_insert tools.
 ```
 
 See **[MCP server](packages/mcp-server/README.md)** and **[QUICKSTART – Connect MCP](docs/external/QUICKSTART.md#4-connect-mcp)**.
@@ -40,6 +40,7 @@ See **[MCP server](packages/mcp-server/README.md)** and **[QUICKSTART – Connec
 - **API** — Cloudflare Worker (`apps/api`): REST over HTTPS; auth via API key; rate limit per key; memories and chunks in Supabase (Postgres + pgvector).
 - **Search** — Hybrid (vector + keyword); optional recency decay; scoped by `user_id` and `namespace`.
 - **Dashboard** — React app for workspaces, API keys, usage, billing.
+  - Import in console/API is available on paid plans (`POST /v1/import`).
 - **SDK** — TypeScript client (`packages/sdk`); optional MCP server (`packages/mcp-server`) for agent tooling.
 
 ## Repo layout
