@@ -428,28 +428,20 @@ function Panel({ title, children }: { title: string; children: React.ReactNode }
 }
 
 function AuthLanding() {
-  const showcaseCompanies = ["Nexora", "Bluepine", "Aptly", "Lumic", "Packetly", "Orbital"];
   return (
     <div className="auth-layout">
-      <section className="auth-left">
-        <div className="auth-card">
-          <div className="auth-chip">MemoryNode</div>
-          <h1>Your AI memory layer awaits</h1>
-          <p className="muted">Sign in to continue building context-aware products with persistent memory.</p>
-          <AuthPanel />
-          <p className="auth-terms muted small">By continuing, you agree to our Terms and Privacy Policy.</p>
-        </div>
-      </section>
-      <section className="auth-right">
-        <div className="auth-image" />
-        <div className="auth-brands">
-          <div className="auth-brands-title">USED BY COMPANIES YOU (AND WE) LOVE</div>
-          <div className="brand-grid">
-            {showcaseCompanies.map((company) => (
-              <div key={company} className="brand-pill">
-                {company}
-              </div>
-            ))}
+      <section className="auth-stage">
+        <div className="auth-showcase">
+          <div className="auth-accent auth-accent-top" aria-hidden="true" />
+          <div className="auth-accent auth-accent-right" aria-hidden="true" />
+          <div className="auth-accent auth-accent-bottom" aria-hidden="true" />
+          <div className="auth-accent auth-accent-ring" aria-hidden="true" />
+          <div className="auth-card">
+            <div className="auth-chip">MemoryNode</div>
+            <h1>Your AI memory layer awaits</h1>
+            <p className="muted">Sign in to continue building context-aware products with persistent memory.</p>
+            <AuthPanel />
+            <p className="auth-terms muted small">By continuing, you agree to our Terms and Privacy Policy.</p>
           </div>
         </div>
       </section>
