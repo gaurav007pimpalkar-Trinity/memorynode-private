@@ -1,4 +1,4 @@
-import { Component, useCallback, useEffect, useMemo, useState } from "react";
+import { Component, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Session, type AuthChangeEvent } from "@supabase/supabase-js";
 import { supabase, supabaseEnvError } from "./supabaseClient";
 import { ApiKeyRow, InviteRow, MemoryRow, UsageRow } from "./types";
@@ -433,7 +433,7 @@ function AuthLanding() {
     <div className="auth-layout">
       <section className="auth-left">
         <div className="auth-card">
-          <div className="auth-chip">MemoryNode Console</div>
+          <div className="auth-chip">MemoryNode</div>
           <h1>Your AI memory layer awaits</h1>
           <p className="muted">Sign in to continue building context-aware products with persistent memory.</p>
           <AuthPanel />
@@ -705,18 +705,41 @@ function GitHubIcon() {
 
 function AuthPanel() {
   const [email, setEmail] = useState("");
-  const [message, setMessage] = useState<string | null>(null);
+  const [errorMessage, setErrorMessage] = useState<string | null>(null);
+  const [magicSent, setMagicSent] = useState(false);
   const [busy, setBusy] = useState(false);
+  const sentResetTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  useEffect(() => {
+    return () => {
+      if (sentResetTimer.current) {
+        clearTimeout(sentResetTimer.current);
+      }
+    };
+  }, []);
 
   const magic = async () => {
+    if (sentResetTimer.current) {
+      clearTimeout(sentResetTimer.current);
+      sentResetTimer.current = null;
+    }
     setBusy(true);
-    setMessage(null);
+    setErrorMessage(null);
+    setMagicSent(false);
     const { error } = await supabase.auth.signInWithOtp({
       email,
       options: { emailRedirectTo: window.location.origin },
     });
     setBusy(false);
-    setMessage(error ? error.message : "Magic link sent (check your inbox)");
+    if (error) {
+      setErrorMessage(error.message);
+      return;
+    }
+    setMagicSent(true);
+    sentResetTimer.current = setTimeout(() => {
+      setMagicSent(false);
+      sentResetTimer.current = null;
+    }, 3000);
   };
 
   const github = async () => {
@@ -730,11 +753,15 @@ function AuthPanel() {
   return (
     <div className="auth-form">
       <input value={email} onChange={(e) => setEmail(e.target.value)} placeholder="Email address" />
-      <button className="auth-provider-btn auth-magic-btn" onClick={magic} disabled={!email || busy}>
+      <button
+        className={`auth-provider-btn auth-magic-btn${magicSent ? " sent" : ""}`}
+        onClick={magic}
+        disabled={!email || busy}
+      >
         <span className="provider-icon" aria-hidden="true">
           <MagicLinkIcon />
         </span>
-        {busy ? "Sending magic link..." : "Send magic link"}
+        {busy ? "Sending magic link..." : magicSent ? "Sent" : "Send magic link"}
       </button>
       <div className="auth-divider">OR</div>
       <button className="auth-provider-btn auth-google-btn" onClick={google}>
@@ -749,7 +776,7 @@ function AuthPanel() {
         </span>
         Continue with GitHub
       </button>
-      {message && <div className="badge">{message}</div>}
+      {errorMessage && <div className="badge">{errorMessage}</div>}
     </div>
   );
 }
