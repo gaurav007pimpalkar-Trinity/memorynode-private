@@ -657,6 +657,51 @@ function InvoicesView() {
   return <EmptyState title="No invoices yet" subtitle="Invoices appear here once you have an active paid subscription." />;
 }
 
+function MagicLinkIcon() {
+  return (
+    <svg viewBox="0 0 24 24" aria-hidden="true">
+      <path
+        fill="currentColor"
+        d="M3 6.75A2.75 2.75 0 0 1 5.75 4h12.5A2.75 2.75 0 0 1 21 6.75v10.5A2.75 2.75 0 0 1 18.25 20H5.75A2.75 2.75 0 0 1 3 17.25V6.75Zm2.06.13 6.29 4.7a1.1 1.1 0 0 0 1.3 0l6.29-4.7A1.24 1.24 0 0 0 18.25 6H5.75c-.26 0-.5.08-.69.22ZM19.5 8.55l-5.95 4.45a2.6 2.6 0 0 1-3.1 0L4.5 8.55v8.7c0 .69.56 1.25 1.25 1.25h12.5c.69 0 1.25-.56 1.25-1.25v-8.7Z"
+      />
+    </svg>
+  );
+}
+
+function GoogleIcon() {
+  return (
+    <svg viewBox="0 0 533.5 544.3" aria-hidden="true">
+      <path
+        fill="#4285F4"
+        d="M533.5 278.4c0-17.4-1.6-34.1-4.7-50.2H272v95h147c-6.4 34.2-25.8 63.2-55 82.5v68h88.8c52-47.8 80.7-118.2 80.7-195.3Z"
+      />
+      <path
+        fill="#34A853"
+        d="M272 544.3c73.1 0 134.4-24.2 179.2-65.6l-88.8-68c-24.7 16.6-56.3 26.4-90.4 26.4-69.5 0-128.3-46.9-149.3-110l-70.8 54.4c44.6 88.7 136.5 148.8 220.1 148.8Z"
+      />
+      <path
+        fill="#FBBC04"
+        d="M122.7 327.1c-5.3-15.7-8.4-32.5-8.4-49.9 0-17.3 3-34.2 8.4-49.9l-70.8-54.4C34.5 206.3 24 240.2 24 277.2s10.5 70.9 27.9 104.3l70.8-54.4Z"
+      />
+      <path
+        fill="#EA4335"
+        d="M272 107.3c39.8 0 75.5 13.7 103.6 40.5l77.7-77.7C406.3 26.3 345 0 272 0 188.4 0 96.5 60.1 51.9 148.8l70.8 54.4c21-63.1 79.8-110 149.3-110Z"
+      />
+    </svg>
+  );
+}
+
+function GitHubIcon() {
+  return (
+    <svg viewBox="0 0 98 96" aria-hidden="true">
+      <path
+        fill="currentColor"
+        d="M49 0C21.9 0 0 21.9 0 49c0 21.7 14.1 40.1 33.6 46.6 2.5.5 3.4-1.1 3.4-2.4 0-1.2 0-4.5-.1-8.8-13.7 3-16.6-6.6-16.6-6.6-2.2-5.7-5.5-7.2-5.5-7.2-4.5-3.1.3-3 .3-3 5 .3 7.6 5.1 7.6 5.1 4.4 7.6 11.6 5.4 14.4 4.1.5-3.2 1.7-5.4 3.1-6.7-10.9-1.2-22.4-5.4-22.4-24.3 0-5.4 1.9-9.8 5.1-13.2-.5-1.2-2.2-6.2.5-12.8 0 0 4.2-1.3 13.6 5a46.9 46.9 0 0 1 24.8 0c9.5-6.4 13.6-5 13.6-5 2.7 6.6 1 11.6.5 12.8 3.2 3.4 5.1 7.8 5.1 13.2 0 18.9-11.5 23-22.5 24.2 1.8 1.5 3.3 4.6 3.3 9.2 0 6.7-.1 12.1-.1 13.7 0 1.3.9 2.9 3.4 2.4C83.9 89.1 98 70.7 98 49 98 21.9 76.1 0 49 0Z"
+      />
+    </svg>
+  );
+}
+
 function AuthPanel() {
   const [email, setEmail] = useState("");
   const [message, setMessage] = useState<string | null>(null);
@@ -684,14 +729,23 @@ function AuthPanel() {
   return (
     <div className="auth-form">
       <input value={email} onChange={(e) => setEmail(e.target.value)} placeholder="Email address" />
-      <button onClick={magic} disabled={!email || busy}>
-        {busy ? "Sending..." : "Send magic link"}
+      <button className="auth-provider-btn auth-magic-btn" onClick={magic} disabled={!email || busy}>
+        <span className="provider-icon" aria-hidden="true">
+          <MagicLinkIcon />
+        </span>
+        {busy ? "Sending magic link..." : "Send magic link"}
       </button>
       <div className="auth-divider">OR</div>
-      <button className="ghost" onClick={google}>
+      <button className="auth-provider-btn auth-google-btn" onClick={google}>
+        <span className="provider-icon" aria-hidden="true">
+          <GoogleIcon />
+        </span>
         Continue with Google
       </button>
-      <button className="ghost" onClick={github}>
+      <button className="auth-provider-btn auth-github-btn" onClick={github}>
+        <span className="provider-icon" aria-hidden="true">
+          <GitHubIcon />
+        </span>
         Continue with GitHub
       </button>
       {message && <div className="badge">{message}</div>}

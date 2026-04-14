@@ -320,10 +320,22 @@ details > summary {
 }
 
 .auth-divider {
-  text-align: center;
+  display: flex;
+  align-items: center;
+  gap: 10px;
   color: #7d8797;
   font-size: 12px;
   letter-spacing: 0.1em;
+  justify-content: center;
+}
+
+.auth-divider::before,
+.auth-divider::after {
+  content: "";
+  height: 1px;
+  flex: 1;
+  max-width: 140px;
+  background: linear-gradient(90deg, transparent, #253047, transparent);
 }
 
 .auth-terms {
@@ -369,6 +381,63 @@ details > summary {
   font-size: 14px;
   color: #e8edf8;
   background: rgba(16, 20, 31, 0.65);
+}
+
+.auth-provider-btn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  min-height: 44px;
+  width: 100%;
+  border-radius: 10px;
+  font-weight: 600;
+  letter-spacing: 0.01em;
+}
+
+.auth-provider-btn .provider-icon {
+  width: 18px;
+  height: 18px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.auth-provider-btn .provider-icon svg {
+  width: 18px;
+  height: 18px;
+}
+
+.auth-magic-btn {
+  background: linear-gradient(135deg, #187dd8, #7b5cff);
+  border: 1px solid rgba(111, 164, 255, 0.4);
+}
+
+.auth-google-btn {
+  background: #ffffff;
+  color: #161a22;
+  border: 1px solid #d9e0ee;
+}
+
+.auth-google-btn:hover {
+  background: #f7f9fe;
+}
+
+.auth-github-btn {
+  background: #0d1117;
+  color: #ffffff;
+  border: 1px solid #30363d;
+}
+
+.auth-github-btn:hover {
+  background: #111827;
+}
+
+.auth-form input {
+  min-height: 44px;
+  border-radius: 10px;
+  border: 1px solid #243049;
+  background: #0a101b;
 }
 
 @media (max-width: 960px) {
