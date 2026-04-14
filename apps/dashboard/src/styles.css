@@ -288,11 +288,11 @@ details > summary {
 }
 
 .auth-layout {
-  min-height: 100vh;
+  min-height: 100dvh;
   display: flex;
   align-items: center;
   justify-content: center;
-  padding: 34px;
+  padding: 18px;
   background:
     radial-gradient(circle at 14% 8%, rgba(56, 189, 248, 0.26), transparent 34%),
     radial-gradient(circle at 88% 14%, rgba(90, 123, 255, 0.2), transparent 42%),
@@ -306,11 +306,11 @@ details > summary {
 
 .auth-showcase {
   position: relative;
-  min-height: 760px;
+  min-height: calc(100dvh - 36px);
   display: flex;
   align-items: center;
   justify-content: center;
-  padding: 40px 28px;
+  padding: 24px 20px;
   background: transparent;
 }
 
@@ -319,7 +319,7 @@ details > summary {
   z-index: 5;
   width: 100%;
   max-width: 460px;
-  padding: 34px 32px 28px;
+  padding: 26px 24px 20px;
   border-radius: 24px;
   border: 1px solid rgba(138, 182, 255, 0.34);
   background: linear-gradient(170deg, rgba(17, 56, 116, 0.46), rgba(6, 20, 48, 0.64));
@@ -329,9 +329,9 @@ details > summary {
 }
 
 .auth-card h1 {
-  font-size: 62px;
+  font-size: 52px;
   line-height: 1.05;
-  margin: 0 0 16px;
+  margin: 0 0 12px;
   letter-spacing: -0.02em;
   color: #eaf1ff;
   max-width: 420px;
@@ -341,7 +341,7 @@ details > summary {
   display: flex;
   flex-direction: column;
   gap: 12px;
-  margin-top: 24px;
+  margin-top: 16px;
 }
 
 .auth-chip {
@@ -350,7 +350,7 @@ details > summary {
   gap: 6px;
   width: fit-content;
   padding: 10px 20px;
-  margin-bottom: 16px;
+  margin-bottom: 12px;
   border-radius: 999px;
   border: 1px solid rgba(122, 175, 255, 0.52);
   background: rgba(15, 45, 96, 0.66);
@@ -381,7 +381,7 @@ details > summary {
 }
 
 .auth-terms {
-  margin-top: 18px;
+  margin-top: 12px;
   color: rgba(205, 220, 247, 0.86);
 }
 
@@ -477,18 +477,18 @@ details > summary {
 
 @media (max-width: 960px) {
   .auth-layout {
-    padding: 16px;
+    padding: 10px;
   }
   .auth-showcase {
-    min-height: 620px;
-    padding: 24px 16px;
+    min-height: calc(100dvh - 20px);
+    padding: 14px 10px;
   }
   .auth-card {
-    padding: 24px 18px 20px;
+    padding: 18px 14px 14px;
     max-width: 100%;
   }
   .auth-card h1 {
-    font-size: 48px;
+    font-size: 40px;
   }
   .auth-chip {
     font-size: 13px;
