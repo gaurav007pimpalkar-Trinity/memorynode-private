@@ -986,7 +986,7 @@ function ApiKeysView({
   );
 }
 
-function MemoryView({
+function _MemoryView({
   userId,
   workspaceId,
   onSearchCompleted,
@@ -1185,7 +1185,7 @@ function MemoryView({
   );
 }
 
-function RetrievalView({ userId, workspaceId }: { userId: string; workspaceId: string }) {
+function _RetrievalView({ userId, workspaceId }: { userId: string; workspaceId: string }) {
   const [evalSets, setEvalSets] = useState<Array<{ id: string; name: string; created_at: string }>>([]);
   const [history, setHistory] = useState<Array<{ id: string; query: string; created_at: string }>>([]);
   const [newEvalName, setNewEvalName] = useState("");
@@ -1435,7 +1435,7 @@ function UsageView({ workspaceId, embedded = false }: { workspaceId: string; emb
   return embedded ? content : <Panel title="Usage">{content}</Panel>;
 }
 
-function ActivationView({ workspaceId }: { workspaceId: string }) {
+function _ActivationView({ workspaceId }: { workspaceId: string }) {
   const [range, setRange] = useState<"24h" | "7d">("24h");
   const [rows, setRows] = useState<Record<string, number>>({});
   const [loading, setLoading] = useState(false);
@@ -1620,7 +1620,7 @@ ${Object.entries(res.fields)
   );
 }
 
-function SettingsView({ session, workspaceId }: { session: Session; workspaceId: string }) {
+function _SettingsView({ session, workspaceId }: { session: Session; workspaceId: string }) {
   return (
     <Panel title="Settings">
       <div className="muted small">User ID: {session.user.id}</div>
