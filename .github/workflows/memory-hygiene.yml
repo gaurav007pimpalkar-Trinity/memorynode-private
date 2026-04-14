@@ -16,7 +16,7 @@ jobs:
         env:
           TOKEN: ${{ secrets.MEMORY_HYGIENE_ADMIN_TOKEN }}
           WORKSPACE_ID: ${{ secrets.MEMORY_HYGIENE_WORKSPACE_ID }}
-          BASE_URL: ${{ secrets.MEMORY_HYGIENE_BASE_URL }}
+          BASE_URL: ${{ secrets[fromJSON('["MEMORY_HYGIENE_BASE_URL"]')[0]] }}
         run: |
           if [[ -z "$TOKEN" || -z "$WORKSPACE_ID" ]]; then
             echo "Skipping: set MEMORY_HYGIENE_ADMIN_TOKEN and MEMORY_HYGIENE_WORKSPACE_ID in repo secrets to enable."

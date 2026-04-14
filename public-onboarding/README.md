@@ -8,7 +8,7 @@
 
 ## Architecture
 
-```
+```text
 Your app (Node, Python, etc.)
         │
         │  HTTPS + API key
@@ -31,7 +31,7 @@ You send text and optional metadata; you get back relevant memories. No vector D
 
 ## Get an API key
 
-1. Sign up at **[app.memorynode.ai](https://app.memorynode.ai)**.
+1. Sign up at **[console.memorynode.ai](https://console.memorynode.ai)**.
 2. Create a workspace and an API key.
 3. Use it as the `API_KEY` environment variable below.
 

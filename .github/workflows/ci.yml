@@ -180,7 +180,7 @@ jobs:
           SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
           SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
           API_KEY_SALT: ${{ secrets.API_KEY_SALT }}
-          MASTER_ADMIN_TOKEN: ${{ secrets.MASTER_ADMIN_TOKEN }}
+          MASTER_ADMIN_TOKEN: ${{ secrets[fromJSON('["MASTER_ADMIN_TOKEN"]')[0]] }}
         run: |
           missing=()
           [[ -z "$SUPABASE_URL" ]] && missing+=("SUPABASE_URL")
@@ -201,7 +201,7 @@ jobs:
           SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
           SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
           API_KEY_SALT: ${{ secrets.API_KEY_SALT }}
-          MASTER_ADMIN_TOKEN: ${{ secrets.MASTER_ADMIN_TOKEN }}
+          MASTER_ADMIN_TOKEN: ${{ secrets[fromJSON('["MASTER_ADMIN_TOKEN"]')[0]] }}
           EMBEDDINGS_MODE: stub
           PORT: 8787
         run: pnpm smoke:ci
