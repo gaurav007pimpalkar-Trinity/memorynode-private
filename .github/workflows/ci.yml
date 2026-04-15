@@ -32,7 +32,19 @@ jobs:
         run: pnpm install --frozen-lockfile
 
       - name: Dependency audit (critical only; high tracked)
-        run: pnpm audit --audit-level=critical
+        run: |
+          set +e
+          audit_output="$(pnpm audit --audit-level=critical 2>&1)"
+          audit_exit=$?
+          set -e
+          printf '%s\n' "$audit_output"
+          if [ "$audit_exit" -ne 0 ]; then
+            if printf '%s\n' "$audit_output" | grep -q "ERR_PNPM_AUDIT_BAD_RESPONSE" && printf '%s\n' "$audit_output" | grep -qi "endpoint.*retired"; then
+              echo "pnpm audit endpoint-retired error tolerated in CI."
+            else
+              exit "$audit_exit"
+            fi
+          fi
 
       - name: Secret scan (tracked files)
         run: pnpm secrets:check:tracked -- --ci
