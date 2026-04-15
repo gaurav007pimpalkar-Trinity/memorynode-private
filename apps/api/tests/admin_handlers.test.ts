@@ -70,6 +70,21 @@ describe("Admin: require admin token", () => {
     expect(typeof json.deleted).toBe("number");
   });
 
+  it("POST /admin/usage/reconcile returns 200 with valid x-admin-token (stub)", async () => {
+    const env = { ...baseEnv, SUPABASE_MODE: "stub" };
+    const res = await api.fetch(
+      new Request("http://localhost/admin/usage/reconcile?limit=5", {
+        method: "POST",
+        headers: { "x-admin-token": "admin-token-123" },
+      }),
+      env as FetchEnv,
+    );
+    expect(res.status).toBe(200);
+    const json = await res.json();
+    expect(typeof json.scanned).toBe("number");
+    expect(Array.isArray(json.results)).toBe(true);
+  });
+
   it("POST /admin/webhooks/reprocess returns 400 when status is invalid", async () => {
     const env = { ...baseEnv, SUPABASE_MODE: "stub" };
     const res = await api.fetch(

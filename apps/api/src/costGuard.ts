@@ -107,11 +107,26 @@ export async function checkGlobalCostGuard(
 
   refreshing = true;
   try {
-    const costInr = await getCurrentMonthCostInr(supabase, usdToInr);
-    cachedCostInr = costInr;
-    cachedAt = now;
-    if (costInr >= budgetInr) {
-      throw new AIBudgetExceededError("AI_COST_LIMIT_EXCEEDED");
+    try {
+      const costInr = await getCurrentMonthCostInr(supabase, usdToInr);
+      cachedCostInr = costInr;
+      cachedAt = now;
+      if (costInr >= budgetInr) {
+        throw new AIBudgetExceededError("AI_COST_LIMIT_EXCEEDED");
+      }
+    } catch (err) {
+      // Degrade open on transient DB issues; keep serving traffic while preserving
+      // hard-stop behavior only for verified budget exceedance.
+      if (err instanceof AIBudgetExceededError) {
+        throw err;
+      }
+      if (cachedCostInr != null) {
+        if (cachedCostInr >= budgetInr) {
+          throw new AIBudgetExceededError("AI_COST_LIMIT_EXCEEDED");
+        }
+        return;
+      }
+      return;
     }
   } finally {
     refreshing = false;

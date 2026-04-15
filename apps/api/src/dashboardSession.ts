@@ -166,13 +166,11 @@ export function validateDashboardCsrf(
     throw new Error("CSRF_TOKEN_INVALID");
   }
   const origin = request.headers.get("origin")?.trim();
-  if (origin) {
-    if (!originAllowlist || originAllowlist.length === 0) {
-      throw new Error("ORIGIN_NOT_ALLOWED");
-    }
-    const allowed = originAllowlist.includes(origin) || originAllowlist.includes("*");
-    if (!allowed) {
-      throw new Error("ORIGIN_NOT_ALLOWED");
-    }
+  if (!origin || !originAllowlist || originAllowlist.length === 0) {
+    throw new Error("ORIGIN_NOT_ALLOWED");
+  }
+  const allowed = originAllowlist.includes(origin) || originAllowlist.includes("*");
+  if (!allowed) {
+    throw new Error("ORIGIN_NOT_ALLOWED");
   }
 }

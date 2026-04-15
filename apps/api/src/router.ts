@@ -146,6 +146,13 @@ export interface RouterHandlers {
     requestId: string,
     deps: HandlerDeps,
   ) => Promise<Response>;
+  handleReconcileUsageRefunds: (
+    request: Request,
+    env: Env,
+    supabase: SupabaseClient,
+    requestId: string,
+    deps: HandlerDeps,
+  ) => Promise<Response>;
   handleAdminBillingHealth: (
     request: Request,
     env: Env,
@@ -276,6 +283,10 @@ export async function route(
 
   if (request.method === "POST" && url.pathname === "/admin/webhooks/reprocess") {
     return handlers.handleReprocessDeferredWebhooks(request, env, supabase, requestId, handlerDeps);
+  }
+
+  if (request.method === "POST" && url.pathname === "/admin/usage/reconcile") {
+    return handlers.handleReconcileUsageRefunds(request, env, supabase, requestId, handlerDeps);
   }
 
   if (request.method === "POST" && url.pathname === "/admin/sessions/cleanup") {

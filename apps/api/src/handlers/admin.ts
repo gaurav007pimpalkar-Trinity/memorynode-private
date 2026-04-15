@@ -41,6 +41,13 @@ export function createAdminHandlers(
   requestDeps: AdminHandlerDeps,
   defaultDeps: AdminHandlerDeps,
 ): {
+  handleReconcileUsageRefunds: (
+    request: Request,
+    env: Env,
+    supabase: SupabaseClient,
+    requestId: string,
+    deps?: HandlerDeps,
+  ) => Promise<Response>;
   handleReprocessDeferredWebhooks: (
     request: Request,
     env: Env,
@@ -78,6 +85,68 @@ export function createAdminHandlers(
   }
 
   return {
+    async handleReconcileUsageRefunds(request, env, supabase, requestId = "", deps?) {
+      const d = (deps ?? defaultDeps) as AdminHandlerDeps;
+      const { jsonResponse } = d;
+      await guardAdminIp(request, env, d);
+      const { token } = await d.requireAdmin(request, env);
+      const rate = await d.rateLimit(`admin:usage-refunds:${token}`, env);
+      if (!rate.allowed) {
+        return jsonResponse(
+          { error: { code: "rate_limited", message: "Rate limit exceeded" } },
+          429,
+          rate.headers,
+        );
+      }
+
+      const url = new URL(request.url);
+      const parsedLimit = Number(url.searchParams.get("limit") ?? "100");
+      const limit = Number.isFinite(parsedLimit)
+        ? Math.max(1, Math.min(1000, Math.floor(parsedLimit)))
+        : 100;
+
+      const { data, error } = await supabase.rpc("process_usage_reservation_refunds", {
+        p_limit: limit,
+      });
+      if (error) {
+        return jsonResponse(
+          { error: { code: "DB_ERROR", message: error.message ?? "Failed to process usage refunds" } },
+          500,
+          rate.headers,
+        );
+      }
+      const rows = (Array.isArray(data) ? data : []) as Array<{
+        reservation_id?: string | null;
+        status?: string | null;
+        error_message?: string | null;
+      }>;
+      const refunded = rows.filter((r) => (r.status ?? "") === "refunded").length;
+      const failed = rows.filter((r) => (r.status ?? "") === "failed").length;
+      d.emitEventLog("usage_refunds_reconciled", {
+        route: "/admin/usage/reconcile",
+        method: "POST",
+        request_id: requestId || null,
+        scanned: rows.length,
+        refunded,
+        failed,
+        limit,
+      });
+      return jsonResponse(
+        {
+          scanned: rows.length,
+          refunded,
+          failed,
+          results: rows.map((r) => ({
+            reservation_id: r.reservation_id ?? null,
+            status: r.status ?? null,
+            error_message: r.error_message ?? null,
+          })),
+        },
+        200,
+        rate.headers,
+      );
+    },
+
     async handleCleanupExpiredSessions(request, env, supabase, requestId = "", deps?) {
       const d = (deps ?? defaultDeps) as AdminHandlerDeps;
       const { jsonResponse } = d;

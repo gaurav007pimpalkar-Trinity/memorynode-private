@@ -91,9 +91,6 @@ async function fetchJson<T>(path: string, init: RequestInit): Promise<T> {
       onUnauthorized?.();
     }
     const err = (json as ApiError | null)?.error;
-    // #region agent log
-    fetch('http://127.0.0.1:7420/ingest/253793e2-9a0d-4620-b251-39382727da68',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'aa3f1d'},body:JSON.stringify({sessionId:'aa3f1d',runId:'pre-fix',hypothesisId:'H3',location:'apps/dashboard/src/apiClient.ts:90',message:'api response not ok',data:{path,status:res.status,errorCode:err?.code??null},timestamp:Date.now()})}).catch(()=>{});
-    // #endregion
     throw new ApiClientError(res.status, err?.code, err?.message ?? `Request failed: ${res.status}`);
   }
   return (json as T) ?? ({} as T);
@@ -119,9 +116,6 @@ export async function ensureDashboardSession(accessToken: string, workspaceId: s
       /* ignore */
     }
     const err = (json as ApiError | null)?.error;
-    // #region agent log
-    fetch('http://127.0.0.1:7420/ingest/253793e2-9a0d-4620-b251-39382727da68',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'aa3f1d'},body:JSON.stringify({sessionId:'aa3f1d',runId:'pre-fix',hypothesisId:'H4',location:'apps/dashboard/src/apiClient.ts:116',message:'ensureDashboardSession response not ok',data:{status:res.status,errorCode:err?.code??null},timestamp:Date.now()})}).catch(()=>{});
-    // #endregion
     throw new ApiClientError(res.status, err?.code, err?.message ?? `Session failed: ${res.status}`);
   }
   const data = (await res.json()) as { csrf_token?: string };

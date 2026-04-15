@@ -222,6 +222,22 @@ jobs:
           BILLING_WEBHOOKS_ENABLED: "0"
         run: pnpm release:gate
 
+      - name: Production config assertions
+        env:
+          CHECK_ENV: production
+          CHECK_CONFIG_MODE: ci
+          SUPABASE_URL: https://memorynode-ci.supabase.co
+          SUPABASE_SERVICE_ROLE_KEY: ci_supabase_service_role_key_value
+          SUPABASE_ANON_KEY: ci_supabase_anon_key_value
+          ALLOWED_ORIGINS: https://app.memorynode.ai
+          API_KEY_SALT: ci_api_key_salt_value
+          MASTER_ADMIN_TOKEN: ci_master_admin_token_value
+          DATABASE_URL: postgresql://ci_user:ci_pass@ci-db.invalid:5432/memorynode?sslmode=require
+          EMBEDDINGS_MODE: openai
+          OPENAI_API_KEY: ci_openai_key_value
+          BILLING_WEBHOOKS_ENABLED: "0"
+        run: pnpm check:config
+
       - name: Check example envs are empty
         run: node scripts/check_examples_no_values.mjs
 

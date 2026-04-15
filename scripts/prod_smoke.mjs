@@ -12,7 +12,7 @@
 
 import { createHash } from "node:crypto";
 
-const BASE_URL = process.env.BASE_URL ?? "https://memorynode-api.gaurav007pimpalkar.workers.dev";
+const BASE_URL = process.env.BASE_URL ?? "https://api.memorynode.ai";
 const ADMIN_TOKEN = process.env.MASTER_ADMIN_TOKEN;
 const SERVICE_ROLE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY;
 const API_KEY_SALT_ENV = process.env.API_KEY_SALT;

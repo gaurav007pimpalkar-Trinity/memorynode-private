@@ -7,6 +7,8 @@ In **production** (and when `ENVIRONMENT=production` or `staging`), the followin
 | Requirement | Env / config | What must be true |
 |-------------|--------------|-------------------|
 | **Supabase** | `SUPABASE_MODE` ≠ `stub` | Real Supabase project; `SUPABASE_URL` and `SUPABASE_SERVICE_ROLE_KEY` set. |
+| **Dashboard auth** | `SUPABASE_ANON_KEY` set | Required for dashboard session flows and runtime config checks. |
+| **Origin policy** | `ALLOWED_ORIGINS` set | Must include exact dashboard/app origins used for CORS + CSRF origin checks. |
 | **Embeddings** | `EMBEDDINGS_MODE=openai` | Real OpenAI embeddings; `OPENAI_API_KEY` set (valid key). |
 | **Rate limiting** | `RATE_LIMIT_MODE` ≠ `off` | Rate limit Durable Object enabled; `RATE_LIMIT_DO` binding set. |
 
@@ -18,6 +20,8 @@ In **production** (and when `ENVIRONMENT=production` or `staging`), the followin
   - `RATE_LIMIT_MODE=off`
 - **Config check:** `pnpm check:config` (and release gate) validates the same for the target stage.
 - **Secrets:** `SUPABASE_SERVICE_ROLE_KEY`, `OPENAI_API_KEY`, `API_KEY_SALT`, `MASTER_ADMIN_TOKEN`, and PayU secrets must be set via Wrangler secrets (never in `[vars]` or repo).
+- **Entitlement failure policy:** production/staging enforces free-plan fallback and blocks paid-only expensive routes during entitlement lookup outages.
+- **Quota reconciliation:** reservation refunds are asynchronous; use `/admin/usage/reconcile` for manual reconciliation during incident response.
 
 ## Allowed only in development
 

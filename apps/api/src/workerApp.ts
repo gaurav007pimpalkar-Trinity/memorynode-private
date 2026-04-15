@@ -541,6 +541,7 @@ type QuotaResolution = {
   effectivePlan: EffectivePlanCode;
   planStatus: AuthContext["planStatus"];
   blocked: false;
+  degradedEntitlements: boolean;
 } | {
   caps: UsageSnapshot;
   planLimits: PlanLimits;
@@ -658,6 +659,7 @@ async function resolveQuotaForWorkspace(
         effectivePlan: fallbackPlan,
         planStatus: fallbackStatus,
         blocked: false,
+        degradedEntitlements: true,
       };
     }
     const rows = (query.data ?? []) as Array<{
@@ -674,6 +676,7 @@ async function resolveQuotaForWorkspace(
         effectivePlan: fallbackPlan,
         planStatus: fallbackStatus,
         blocked: false,
+        degradedEntitlements: false,
       };
     }
 
@@ -694,6 +697,7 @@ async function resolveQuotaForWorkspace(
         effectivePlan: authPlanFromEntitlement(planCode),
         planStatus: "active",
         blocked: false,
+        degradedEntitlements: false,
       };
     }
 
@@ -722,6 +726,7 @@ async function resolveQuotaForWorkspace(
     effectivePlan: fallbackPlan,
     planStatus: fallbackStatus,
     blocked: false,
+    degradedEntitlements: true,
   };
 }
 
@@ -1224,6 +1229,7 @@ const KNOWN_PATH_ALLOWED_METHODS: Array<{ test: (path: string) => boolean; allow
   { test: (p) => p === "/v1/import", allow: "POST" },
   { test: (p) => p === "/v1/admin/billing/health", allow: "GET" },
   { test: (p) => p === "/admin/webhooks/reprocess", allow: "POST" },
+  { test: (p) => p === "/admin/usage/reconcile", allow: "POST" },
   { test: (p) => p === "/admin/sessions/cleanup", allow: "POST" },
   { test: (p) => p === "/admin/memory-hygiene", allow: "POST" },
   { test: (p) => p === "/v1/dashboard/session", allow: "POST" },
@@ -1590,6 +1596,8 @@ async function handleRequestImpl(request: Request, env: Env): Promise<Response> 
         getUsage,
         resolveQuotaForWorkspace,
         reserveQuotaAndMaybeRespond,
+        markUsageReservationCommitted,
+        markUsageReservationRefundPending,
         planLimitExceededResponse,
         estimateEmbedTokens,
         normalizePlanStatus,
@@ -2081,6 +2089,77 @@ function createStubSupabase(env: Env) {
           existing.extraction_calls = ex + pEx;
           return Promise.resolve({ data: [{ ...existing, exceeded: false, limit_name: null }], error: null });
         }
+        case "create_usage_reservation": {
+          const reservations = ((db as unknown as { usage_reservations?: StubRow[] }).usage_reservations ??= []);
+          const id = `res_${Math.random().toString(36).slice(2, 12)}`;
+          reservations.push({
+            id,
+            workspace_id: params.p_workspace_id as string,
+            day: params.p_day as string,
+            writes_delta: params.p_writes_delta as number,
+            reads_delta: params.p_reads_delta as number,
+            embeds_delta: params.p_embeds_delta as number,
+            embed_tokens_delta: params.p_embed_tokens_delta as number,
+            extraction_calls_delta: params.p_extraction_calls_delta as number,
+            route: params.p_route as string | null,
+            request_id: params.p_request_id as string | null,
+            status: "reserved",
+          } as unknown as StubRow);
+          return Promise.resolve({ data: id, error: null });
+        }
+        case "mark_usage_reservation_committed": {
+          const reservations = ((db as unknown as { usage_reservations?: StubRow[] }).usage_reservations ??= []);
+          const id = params.p_reservation_id as string;
+          const row = reservations.find((r) => (r as { id?: string }).id === id);
+          if (row) (row as { status?: string }).status = "committed";
+          return Promise.resolve({ data: Boolean(row), error: null });
+        }
+        case "mark_usage_reservation_refund_pending": {
+          const reservations = ((db as unknown as { usage_reservations?: StubRow[] }).usage_reservations ??= []);
+          const id = params.p_reservation_id as string;
+          const row = reservations.find((r) => (r as { id?: string }).id === id);
+          if (row) {
+            (row as { status?: string }).status = "refund_pending";
+            (row as { error_message?: string }).error_message = (params.p_error_message as string) ?? null;
+          }
+          return Promise.resolve({ data: Boolean(row), error: null });
+        }
+        case "process_usage_reservation_refunds": {
+          const reservations = ((db as unknown as { usage_reservations?: StubRow[] }).usage_reservations ??= []);
+          const limit = Number(params.p_limit ?? 100);
+          const rows = reservations
+            .filter((r) => (r as { status?: string }).status === "refund_pending")
+            .slice(0, Math.max(1, Math.min(1000, limit)));
+          for (const row of rows) {
+            const workspaceId = (row as { workspace_id?: string }).workspace_id as string;
+            const day = (row as { day?: string }).day as string;
+            const usage = db.usage_daily.find((u) => u.workspace_id === workspaceId && u.day === day);
+            if (usage) {
+              usage.writes = Math.max(0, Number(usage.writes ?? 0) - Number((row as { writes_delta?: number }).writes_delta ?? 0));
+              usage.reads = Math.max(0, Number(usage.reads ?? 0) - Number((row as { reads_delta?: number }).reads_delta ?? 0));
+              usage.embeds = Math.max(0, Number(usage.embeds ?? 0) - Number((row as { embeds_delta?: number }).embeds_delta ?? 0));
+              usage.embed_tokens_used = Math.max(
+                0,
+                Number(usage.embed_tokens_used ?? 0) - Number((row as { embed_tokens_delta?: number }).embed_tokens_delta ?? 0),
+              );
+              usage.extraction_calls = Math.max(
+                0,
+                Number(usage.extraction_calls ?? 0) - Number((row as { extraction_calls_delta?: number }).extraction_calls_delta ?? 0),
+              );
+            }
+            (row as { status?: string }).status = "refunded";
+          }
+          return Promise.resolve({
+            data: rows.map((r) => ({
+              reservation_id: (r as { id?: string }).id ?? null,
+              workspace_id: (r as { workspace_id?: string }).workspace_id ?? null,
+              day: (r as { day?: string }).day ?? null,
+              status: (r as { status?: string }).status ?? null,
+              error_message: (r as { error_message?: string }).error_message ?? null,
+            })),
+            error: null,
+          });
+        }
         case "match_chunks_vector":
         case "match_chunks_text": {
           const memoryTypes = params.p_memory_types as string[] | null;
@@ -2488,9 +2567,9 @@ export async function importArtifact(
       embedsDelta: number;
       embedTokensDelta: number;
       extractionCallsDelta: number;
-    }) => Promise<Response | null>;
+    }) => Promise<{ response: Response | null; reservationId: string | null }>;
   },
-): Promise<ImportOutcome | { cap_exceeded: true; response: Response }> {
+): Promise<ImportOutcome | { cap_exceeded: true; response: Response } | { failed: true; response: Response; reservation_id: string | null } | (ImportOutcome & { reservation_id: string | null })> {
   const allowedModes: ImportMode[] = ["upsert", "skip_existing", "error_on_conflict", "replace_ids", "replace_all"];
   if (!allowedModes.includes(mode)) {
     throw createHttpError(400, "BAD_REQUEST", "invalid import mode");
@@ -2549,7 +2628,7 @@ export async function importArtifact(
     if (!ids.length) return new Set<string>();
     const { data, error } = await supabase
       .from(table)
-      .select("id", { count: "exact" })
+      .select("id")
       .eq("workspace_id", auth.workspaceId)
       .in("id", ids);
     if (error) {
@@ -2603,15 +2682,17 @@ export async function importArtifact(
     (sum, c) => sum + estimateEmbedTokens(String((c as { chunk_text?: string }).chunk_text ?? "").length),
     0,
   );
+  let reservationId: string | null = null;
   if (options?.preInsertGuard) {
-    const guardResponse = await options.preInsertGuard({
+    const guard = await options.preInsertGuard({
       writesDelta,
       readsDelta: 0,
       embedsDelta,
       embedTokensDelta,
       extractionCallsDelta: 0,
     });
-    if (guardResponse) return { cap_exceeded: true, response: guardResponse };
+    reservationId = guard.reservationId;
+    if (guard.response) return { cap_exceeded: true, response: guard.response };
   }
 
   let importedMemories = 0;
@@ -2639,7 +2720,7 @@ export async function importArtifact(
     importedChunks = chunksToWrite.length;
   }
 
-  return { imported_memories: importedMemories, imported_chunks: importedChunks };
+  return { imported_memories: importedMemories, imported_chunks: importedChunks, reservation_id: reservationId };
 }
 
 
@@ -3176,7 +3257,7 @@ export async function performListMemories(
 
   let query = supabase
     .from("memories")
-    .select("id, user_id, namespace, text, metadata, created_at, memory_type, source_memory_id", { count: "exact" })
+    .select("id, user_id, namespace, text, metadata, created_at, memory_type, source_memory_id")
     .eq("workspace_id", auth.workspaceId)
     .is("duplicate_of", null);
 
@@ -3188,18 +3269,35 @@ export async function performListMemories(
   if (filters.end_time) query = query.lte("created_at", filters.end_time);
 
   query = query.order("created_at", { ascending: false }).order("id", { ascending: false });
-  query = query.range(offset, offset + page_size - 1);
+  query = query.range(offset, offset + page_size);
 
-  const { data, error, count } = await query;
+  const { data, error } = await query;
   if (error) {
     throw createHttpError(500, "DB_ERROR", error.message ?? "Failed to list memories");
   }
 
-  const total = typeof count === "number" ? count : data?.length ?? 0;
-  const has_more = offset + (data?.length ?? 0) < total;
+  const rows = (data ?? []) as ListOutcome["results"];
+  const has_more = rows.length > page_size;
+  const results = has_more ? rows.slice(0, page_size) : rows;
+  let total = offset + results.length + (has_more ? 1 : 0);
+  let countQuery = supabase
+    .from("memories")
+    .select("id", { count: "planned", head: true })
+    .eq("workspace_id", auth.workspaceId)
+    .is("duplicate_of", null);
+  if (namespace) countQuery = countQuery.eq("namespace", namespace);
+  if (user_id) countQuery = countQuery.eq("user_id", user_id);
+  if (memory_type) countQuery = countQuery.eq("memory_type", memory_type);
+  if (filters.metadata) countQuery = countQuery.contains("metadata", filters.metadata);
+  if (filters.start_time) countQuery = countQuery.gte("created_at", filters.start_time);
+  if (filters.end_time) countQuery = countQuery.lte("created_at", filters.end_time);
+  const { count } = await countQuery;
+  if (typeof count === "number" && count >= 0) {
+    total = count;
+  }
 
   return {
-    results: (data ?? []) as ListOutcome["results"],
+    results,
     total,
     page,
     page_size,
@@ -3429,8 +3527,9 @@ async function reserveQuotaAndMaybeRespond(
   rateHeaders: Record<string, string> | undefined,
   env: Env,
   jsonResponse: (data: unknown, status?: number, extraHeaders?: Record<string, string>) => Response,
-): Promise<Response | null> {
-  if (quota.blocked) return null;
+  meta?: { route?: string; requestId?: string },
+): Promise<{ response: Response | null; reservationId: string | null }> {
+  if (quota.blocked) return { response: null, reservationId: null };
   const result = await bumpUsageIfWithinCap(
     supabase,
     workspaceId,
@@ -3439,16 +3538,64 @@ async function reserveQuotaAndMaybeRespond(
     quota.planLimits,
   );
   if (!result.ok) {
-    return planLimitExceededResponse(
-      result.limit,
-      result.used,
-      result.cap,
-      rateHeaders,
-      jsonResponse,
-      env,
-    );
+    return {
+      response: planLimitExceededResponse(
+        result.limit,
+        result.used,
+        result.cap,
+        rateHeaders,
+        jsonResponse,
+        env,
+      ),
+      reservationId: null,
+    };
   }
-  return null;
+  let reservationId: string | null = null;
+  try {
+    const { data, error } = await supabase.rpc("create_usage_reservation", {
+      p_workspace_id: workspaceId,
+      p_day: day,
+      p_writes_delta: deltas.writesDelta,
+      p_reads_delta: deltas.readsDelta,
+      p_embeds_delta: deltas.embedsDelta,
+      p_embed_tokens_delta: deltas.embedTokensDelta,
+      p_extraction_calls_delta: deltas.extractionCallsDelta,
+      p_route: meta?.route ?? null,
+      p_request_id: meta?.requestId ?? null,
+    });
+    if (!error && typeof data === "string" && data.trim().length > 0) {
+      reservationId = data;
+    }
+  } catch {
+    // best effort; usage remains capped and accounted even when reservation logging fails
+  }
+  return { response: null, reservationId };
+}
+
+async function markUsageReservationCommitted(
+  supabase: SupabaseClient,
+  reservationId: string,
+): Promise<void> {
+  try {
+    await supabase.rpc("mark_usage_reservation_committed", { p_reservation_id: reservationId });
+  } catch {
+    /* best effort */
+  }
+}
+
+async function markUsageReservationRefundPending(
+  supabase: SupabaseClient,
+  reservationId: string,
+  errorMessage: string,
+): Promise<void> {
+  try {
+    await supabase.rpc("mark_usage_reservation_refund_pending", {
+      p_reservation_id: reservationId,
+      p_error_message: errorMessage.slice(0, 500),
+    });
+  } catch {
+    /* best effort */
+  }
 }
 
 export async function deleteMemoryCascade(
@@ -3496,6 +3643,8 @@ const defaultMemoryHandlerDeps: MemoryHandlerDeps = {
   checkCapsAndMaybeRespond,
   resolveQuotaForWorkspace,
   reserveQuotaAndMaybeRespond,
+  markUsageReservationCommitted,
+  markUsageReservationRefundPending,
   planLimitExceededResponse,
   estimateEmbedTokens,
 };
@@ -3509,6 +3658,8 @@ const defaultSearchHandlerDeps: SearchHandlerDeps = {
   resolveQuotaForWorkspace,
   rateLimitWorkspace,
   reserveQuotaAndMaybeRespond,
+  markUsageReservationCommitted,
+  markUsageReservationRefundPending,
   todayUtc,
   estimateEmbedTokens,
   performSearch,
@@ -3603,7 +3754,10 @@ const defaultImportHandlerDeps: ImportHandlerDeps = {
   jsonResponse: simpleJsonResponse,
   safeParseJson,
   resolveQuotaForWorkspace,
+  rateLimitWorkspace,
   reserveQuotaAndMaybeRespond,
+  markUsageReservationCommitted,
+  markUsageReservationRefundPending,
   todayUtc,
   importArtifact: importArtifact as ImportHandlerDeps["importArtifact"],
   defaultMaxImportBytes: DEFAULT_MAX_IMPORT_BYTES,
@@ -3645,6 +3799,7 @@ export const handleBillingCheckout = billingHandlersDefault.handleBillingCheckou
 export const handleBillingPortal = billingHandlersDefault.handleBillingPortal;
 export const handleBillingWebhook = webhookHandlersDefault.handleBillingWebhook;
 export const handleReprocessDeferredWebhooks = adminHandlersDefault.handleReprocessDeferredWebhooks;
+export const handleReconcileUsageRefunds = adminHandlersDefault.handleReconcileUsageRefunds;
 export const handleAdminBillingHealth = adminHandlersDefault.handleAdminBillingHealth;
 export const handleCleanupExpiredSessions = adminHandlersDefault.handleCleanupExpiredSessions;
 export const handleMemoryHygiene = adminHandlersDefault.handleMemoryHygiene;

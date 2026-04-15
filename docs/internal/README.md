@@ -225,7 +225,6 @@ It checks `/healthz`, validates authenticated usage/search/context paths, and ve
 - `ALLOWED_ORIGINS`: comma-separated allowed origins for CORS. If unset, the API does not send CORS headers, so cross-origin browser requests (e.g. dashboard) will fail; **in production this is required** (release:gate fails without it). Use `*` to explicitly allow all origins.
 - `MAX_BODY_BYTES`: maximum request body size in bytes (default 1,000,000).
 - `MAX_IMPORT_BYTES`: maximum allowed size (bytes) for `/v1/import` artifacts (default 10,000,000).
-- `MAX_EXPORT_BYTES`: maximum allowed size (bytes) for `/v1/export` artifacts (default 10,000,000).
 - `AUDIT_IP_SALT`: salt used to hash IPs in audit logs.
 - `API_KEY_SALT`: prefer setting via environment in prod; the database `app_settings.api_key_salt` is a dev fallback. If both are present and differ, the Worker fails fast with `CONFIG_ERROR` to prevent mismatched key hashes.
 
@@ -244,12 +243,10 @@ It checks `/healthz`, validates authenticated usage/search/context paths, and ve
   - Entitlement grant is one-per-txn via unique `workspace_entitlements.source_txn_id`.
 - Entitlements drive quota enforcement on quota-consuming routes (`/v1/memories`, `/v1/search`, `/v1/context`) and expired entitlements return `ENTITLEMENT_EXPIRED` (HTTP 402).
 
-### Export / Import
-- `POST /v1/export`
-  - Default: JSON `{ artifact_base64, bytes, sha256 }` (deterministic ZIP encoded as base64).
-  - Binary: set `Accept: application/zip` **or** `?format=zip` to receive a ZIP payload with `Content-Type: application/zip` and a download filename `memorynode-export-<workspace>-<yyyy-mm-dd>.zip`.
-  - Both modes enforce `MAX_EXPORT_BYTES` and return 413 on overflow.
-- `POST /v1/import` accepts `{ artifact_base64, mode? }` and restores memories/chunks for the authenticated workspace only. `mode` defaults to non-destructive `upsert`; see API docs for other modes.
+### Import (paid plans)
+- `POST /v1/import` accepts `{ artifact_base64, mode? }` and restores memories/chunks for the authenticated workspace only.
+- `mode` defaults to non-destructive `upsert`; see API docs for other modes.
+- Free plans return `402 UPGRADE_REQUIRED`.
 
 ## Database Setup (Supabase)
 1) Set `SUPABASE_DB_URL` (or `DATABASE_URL`) for your target database.
@@ -282,7 +279,7 @@ It checks `/healthz`, validates authenticated usage/search/context paths, and ve
    - `MASTER_ADMIN_TOKEN`
    - `EMBEDDINGS_MODE` (`openai` or `stub`; use `stub` for local dev to avoid OpenAI calls)
 
-Migration manifest (CI-checked): `MIGRATIONS_TOTAL=35; MIGRATIONS_LATEST=033_dashboard_console_overview_stats.sql`
+Migration manifest (CI-checked): `MIGRATIONS_TOTAL=38; MIGRATIONS_LATEST=036_bump_usage_if_within_cap_reapply_hotfix.sql`
 
 ## Admin & Bootstrap
 - Admin endpoints require header `x-admin-token: $MASTER_ADMIN_TOKEN`.

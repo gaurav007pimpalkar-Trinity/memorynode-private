@@ -132,10 +132,11 @@ function injectBuildVersionIntoWrangler(envName, buildVersion) {
   }
   const block = match[0];
   const hasLine = /^\s*BUILD_VERSION\s*=.*/m.test(block);
-  const header = `[env.${envName}.vars]\n`;
+  const eol = block.includes("\r\n") ? "\r\n" : "\n";
+  const headerRe = new RegExp(`\\[env\\.${envName}\\.vars\\]\\r?\\n`);
   const updated = hasLine
     ? block.replace(/^\s*BUILD_VERSION\s*=.*$/m, `BUILD_VERSION = "${buildVersion}"`)
-    : block.replace(header, `${header}BUILD_VERSION = "${buildVersion}"\n`);
+    : block.replace(headerRe, `[env.${envName}.vars]${eol}BUILD_VERSION = "${buildVersion}"${eol}`);
   const finalToml = raw.replace(blockRe, updated);
   fs.writeFileSync(tmpPath, finalToml);
   return tmpPath;

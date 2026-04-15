@@ -28,6 +28,7 @@ export type ImportOutcomeWithCap =
 export interface ImportHandlerDeps extends HandlerDeps {
   safeParseJson: <T>(request: Request) => Promise<{ ok: true; data: T } | { ok: false; error: string }>;
   resolveQuotaForWorkspace: (auth: AuthContext, supabase: SupabaseClient) => Promise<QuotaResolutionLike>;
+  rateLimitWorkspace: (workspaceId: string, workspaceRpm: number, env: Env) => Promise<{ allowed: boolean; headers: Record<string, string> }>;
   reserveQuotaAndMaybeRespond: (
     quota: QuotaResolutionLike,
     supabase: SupabaseClient,
@@ -43,7 +44,17 @@ export interface ImportHandlerDeps extends HandlerDeps {
     rateHeaders: Record<string, string> | undefined,
     env: Env,
     jsonResponse: (data: unknown, status?: number, extraHeaders?: Record<string, string>) => Response,
-  ) => Promise<Response | null>;
+    meta?: { route?: string; requestId?: string },
+  ) => Promise<{ response: Response | null; reservationId: string | null }>;
+  markUsageReservationCommitted: (
+    supabase: SupabaseClient,
+    reservationId: string,
+  ) => Promise<void>;
+  markUsageReservationRefundPending: (
+    supabase: SupabaseClient,
+    reservationId: string,
+    errorMessage: string,
+  ) => Promise<void>;
   todayUtc: () => string;
   importArtifact: (
     auth: AuthContext,
@@ -58,9 +69,9 @@ export interface ImportHandlerDeps extends HandlerDeps {
         embedsDelta: number;
         embedTokensDelta: number;
         extractionCallsDelta: number;
-      }) => Promise<Response | null>;
+      }) => Promise<{ response: Response | null; reservationId: string | null }>;
     },
-  ) => Promise<ImportOutcomeWithCap>;
+  ) => Promise<ImportOutcomeWithCap | (ImportOutcomeLike & { reservation_id?: string | null })>;
   defaultMaxImportBytes: number;
 }
 
@@ -118,7 +129,31 @@ export function createImportHandlers(
           402,
         );
       }
+      const wsRpm = quota.planLimits.workspace_rpm ?? 120;
+      const wsRate = await d.rateLimitWorkspace(auth.workspaceId, wsRpm, env);
+      if (!wsRate.allowed) {
+        return jsonResponse(
+          { error: { code: "rate_limited", message: "Workspace rate limit exceeded" } },
+          429,
+          { ...rate.headers, ...wsRate.headers },
+        );
+      }
+      const rateHeaders = { ...rate.headers, ...wsRate.headers };
       const effectivePlan = (quota.effectivePlan ?? "free").toString().toLowerCase();
+      const stage = (env.ENVIRONMENT ?? env.NODE_ENV ?? "dev").toLowerCase();
+      const enforceDegradedBlocks = stage === "production" || stage === "prod" || stage === "staging";
+      if (enforceDegradedBlocks && quota.degradedEntitlements) {
+        return jsonResponse(
+          {
+            error: {
+              code: "ENTITLEMENT_DEGRADED",
+              message: "Import is temporarily unavailable while entitlement checks recover.",
+            },
+          },
+          503,
+          rateHeaders,
+        );
+      }
       if (effectivePlan === "free") {
         return jsonResponse(
           {
@@ -133,46 +168,69 @@ export function createImportHandlers(
               : undefined,
           },
           402,
-          rate.headers,
+          rateHeaders,
         );
       }
 
+      let reservationIdFromGuard: string | null = null;
       const preInsertGuard = async (deltas: {
         writesDelta: number;
         readsDelta: number;
         embedsDelta: number;
         embedTokensDelta: number;
         extractionCallsDelta: number;
-      }) =>
-        d.reserveQuotaAndMaybeRespond(
+      }) => {
+        const reserveResult = await d.reserveQuotaAndMaybeRespond(
           quota,
           supabase,
           auth.workspaceId,
           d.todayUtc(),
           deltas,
-          rate.headers,
+          rateHeaders,
           env,
           jsonResponse,
+          { route: "/v1/import" },
         );
+        reservationIdFromGuard = reserveResult.reservationId;
+        return reserveResult;
+      };
 
       const maxBytes = Number(env.MAX_IMPORT_BYTES ?? d.defaultMaxImportBytes);
-      const outcome = await d.importArtifact(
-        auth,
-        supabase,
-        payload.artifact_base64,
-        maxBytes,
-        payload.mode,
-        { preInsertGuard },
-      );
+      let outcome: ImportOutcomeWithCap | (ImportOutcomeLike & { reservation_id?: string | null });
+      try {
+        outcome = await d.importArtifact(
+          auth,
+          supabase,
+          payload.artifact_base64,
+          maxBytes,
+          payload.mode,
+          { preInsertGuard },
+        ) as ImportOutcomeWithCap | (ImportOutcomeLike & { reservation_id?: string | null });
+      } catch (err) {
+        if (reservationIdFromGuard) {
+          await d.markUsageReservationRefundPending(
+            supabase,
+            reservationIdFromGuard,
+            err instanceof Error ? err.message : String(err),
+          );
+        }
+        throw err;
+      }
 
       if ("cap_exceeded" in outcome && outcome.cap_exceeded) {
         return outcome.response;
       }
+      const reservationId =
+        (outcome as unknown as { reservation_id?: string | null }).reservation_id ??
+        reservationIdFromGuard;
       const success = outcome as ImportOutcomeLike;
+      if (reservationId) {
+        await d.markUsageReservationCommitted(supabase, reservationId);
+      }
       return jsonResponse(
         { imported_memories: success.imported_memories, imported_chunks: success.imported_chunks },
         200,
-        rate.headers,
+        rateHeaders,
       );
     },
   };

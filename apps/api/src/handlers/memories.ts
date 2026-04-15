@@ -111,7 +111,17 @@ export interface MemoryHandlerDeps extends HandlerDeps {
     rateHeaders: Record<string, string> | undefined,
     env: Env,
     jsonResponse: (data: unknown, status?: number, extraHeaders?: Record<string, string>) => Response,
-  ) => Promise<Response | null>;
+    meta?: { route?: string; requestId?: string },
+  ) => Promise<{ response: Response | null; reservationId: string | null }>;
+  markUsageReservationCommitted: (
+    supabase: SupabaseClient,
+    reservationId: string,
+  ) => Promise<void>;
+  markUsageReservationRefundPending: (
+    supabase: SupabaseClient,
+    reservationId: string,
+    errorMessage: string,
+  ) => Promise<void>;
   planLimitExceededResponse: (
     limit: string,
     used: number,
@@ -126,6 +136,7 @@ export interface MemoryHandlerDeps extends HandlerDeps {
 export interface QuotaResolutionLike {
   planLimits: PlanLimits;
   blocked: boolean;
+  degradedEntitlements?: boolean;
   /** launch|build|deploy|scale|scale_plus|free — from workspace entitlements when present */
   effectivePlan?: string;
   errorCode?: string;
@@ -439,6 +450,20 @@ export function createMemoryHandlers(
           env,
         );
       }
+      const stage = (env.ENVIRONMENT ?? env.NODE_ENV ?? "dev").toLowerCase();
+      const enforceDegradedBlocks = stage === "production" || stage === "prod" || stage === "staging";
+      if (extract && enforceDegradedBlocks && quota.degradedEntitlements) {
+        return jsonResponse(
+          {
+            error: {
+              code: "ENTITLEMENT_DEGRADED",
+              message: "Extraction is temporarily unavailable while entitlement checks recover.",
+            },
+          },
+          503,
+          rateHeaders,
+        );
+      }
 
       const chunks = d.chunkText(text);
       const chunkCount = chunks.length;
@@ -451,7 +476,7 @@ export function createMemoryHandlers(
       const extractWrites = extract ? MAX_EXTRACT_ITEMS : 0;
       const extractEmbeds = extract ? MAX_EXTRACT_ITEMS * MAX_CHUNKS_PER_EXTRACTED_ITEM : 0;
       const extractEmbedTokens = extract ? extractEmbeds * TOKENS_PER_EMBED : 0;
-      const capResponse = await d.reserveQuotaAndMaybeRespond(
+      const reserveResult = await d.reserveQuotaAndMaybeRespond(
         quota,
         supabase,
         auth.workspaceId,
@@ -466,13 +491,22 @@ export function createMemoryHandlers(
         rateHeaders,
         env,
         jsonResponse,
+        { route: "/v1/memories", requestId },
       );
-      if (capResponse) return capResponse;
+      if (reserveResult.response) return reserveResult.response;
+      const reservationId = reserveResult.reservationId;
 
       try {
         await checkGlobalCostGuard(supabase, env);
       } catch (e) {
         if (e instanceof AIBudgetExceededError) {
+          if (reservationId) {
+            await d.markUsageReservationRefundPending(
+              supabase,
+              reservationId,
+              "ai_budget_exceeded_pre_embed",
+            );
+          }
           return jsonResponse(
             {
               error: {
@@ -487,7 +521,19 @@ export function createMemoryHandlers(
         throw e;
       }
 
-      const embedResult = await d.embedText(chunks, env);
+      let embedResult: EmbedResult;
+      try {
+        embedResult = await d.embedText(chunks, env);
+      } catch (err) {
+        if (reservationId) {
+          await d.markUsageReservationRefundPending(
+            supabase,
+            reservationId,
+            err instanceof Error ? err.message : String(err),
+          );
+        }
+        throw err;
+      }
       const embeddings = embedResult.embeddings;
       const actualEmbedTokens = embedResult.tokensUsed;
 
@@ -527,6 +573,13 @@ export function createMemoryHandlers(
         .single();
 
       if (memoryError || !memoryInsert) {
+        if (reservationId) {
+          await d.markUsageReservationRefundPending(
+            supabase,
+            reservationId,
+            memoryError?.message ?? "memory_insert_failed",
+          );
+        }
         return jsonResponse(
           {
             error: {
@@ -553,6 +606,13 @@ export function createMemoryHandlers(
 
       const { error: chunkError } = await supabase.from("memory_chunks").insert(rows);
       if (chunkError) {
+        if (reservationId) {
+          await d.markUsageReservationRefundPending(
+            supabase,
+            reservationId,
+            chunkError.message ?? "chunk_insert_failed",
+          );
+        }
         return jsonResponse(
           { error: { code: "DB_ERROR", message: chunkError.message ?? "Failed to insert chunks" } },
           500,
@@ -566,6 +626,13 @@ export function createMemoryHandlers(
           await checkGlobalCostGuard(supabase, env);
         } catch (e) {
           if (e instanceof AIBudgetExceededError) {
+            if (reservationId) {
+              await d.markUsageReservationRefundPending(
+                supabase,
+                reservationId,
+                "ai_budget_exceeded_pre_extract",
+              );
+            }
             return jsonResponse(
               {
                 error: {
@@ -582,6 +649,13 @@ export function createMemoryHandlers(
         extractionResult = await extractAndStore(env, supabase, d, memoryId, auth.workspaceId, user_id, namespaceVal, text);
 
         if (extractionResult.error) {
+          if (reservationId) {
+            await d.markUsageReservationRefundPending(
+              supabase,
+              reservationId,
+              extractionResult.error,
+            );
+          }
           return jsonResponse(
             { error: { code: "EXTRACTION_ERROR", message: extractionResult.error } },
             503,
@@ -635,6 +709,9 @@ export function createMemoryHandlers(
         };
       }
 
+      if (reservationId) {
+        await d.markUsageReservationCommitted(supabase, reservationId);
+      }
       return jsonResponse(response, 200, rateHeaders);
     },
 
@@ -650,6 +727,33 @@ export function createMemoryHandlers(
           rate.headers,
         );
       }
+      const quota = await d.resolveQuotaForWorkspace(auth, supabase);
+      if (quota.blocked) {
+        return jsonResponse(
+          {
+            error: {
+              code: "ENTITLEMENT_EXPIRED",
+              message: "Active entitlement expired. Renew to continue quota-consuming API calls.",
+              upgrade_required: true,
+              effective_plan: "free",
+            },
+            upgrade_url: (env as { PUBLIC_APP_URL?: string }).PUBLIC_APP_URL
+              ? `${(env as { PUBLIC_APP_URL: string }).PUBLIC_APP_URL}/billing`
+              : undefined,
+          },
+          402,
+        );
+      }
+      const wsRpm = quota.planLimits.workspace_rpm ?? 120;
+      const wsRate = await rateLimitWorkspace(auth.workspaceId, wsRpm, env);
+      if (!wsRate.allowed) {
+        return jsonResponse(
+          { error: { code: "rate_limited", message: "Workspace rate limit exceeded" } },
+          429,
+          { ...rate.headers, ...wsRate.headers },
+        );
+      }
+      const rateHeaders = { ...rate.headers, ...wsRate.headers };
 
       const params = d.normalizeMemoryListParams(url);
       const result = await d.performListMemories(auth, params, supabase);
@@ -663,7 +767,7 @@ export function createMemoryHandlers(
           has_more: result.has_more,
         },
         200,
-        rate.headers,
+        rateHeaders,
       );
     },
 

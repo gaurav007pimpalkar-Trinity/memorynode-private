@@ -3,6 +3,8 @@
  */
 
 import type { SupabaseClient } from "@supabase/supabase-js";
+import { timingSafeEqual } from "node:crypto";
+import { Buffer } from "node:buffer";
 import type { Env } from "./env.js";
 import { createHttpError } from "./http.js";
 import { withSupabaseQueryRetry } from "./supabaseRetry.js";
@@ -181,12 +183,14 @@ export async function authenticate(
       .single(),
   );
   const authMatched = !error && Boolean(data?.workspace_id);
-  if ((env.AUTH_DEBUG ?? "").trim() === "1") {
+  const authDebugEnabled =
+    (env.AUTH_DEBUG ?? "").trim() === "1" &&
+    (env.ENVIRONMENT ?? env.NODE_ENV ?? "dev").toLowerCase() === "dev";
+  if (authDebugEnabled) {
     const errorCode = typeof (error as { code?: unknown } | null)?.code === "string"
       ? (error as { code: string }).code
       : undefined;
     console.info("auth_debug_verify", {
-      hash_prefix: hashed.slice(0, 12),
       matched: authMatched,
       ...(errorCode ? { error_code: errorCode } : {}),
     });
@@ -312,7 +316,12 @@ export async function rateLimitWorkspace(
 
 export async function requireAdmin(request: Request, env: Env): Promise<{ token: string }> {
   const token = request.headers.get("x-admin-token");
-  if (!token || token !== env.MASTER_ADMIN_TOKEN) {
+  const expected = env.MASTER_ADMIN_TOKEN ?? "";
+  const provided = token ?? "";
+  const providedBuf = Buffer.from(provided, "utf8");
+  const expectedBuf = Buffer.from(expected, "utf8");
+  const valid = providedBuf.length === expectedBuf.length && timingSafeEqual(providedBuf, expectedBuf);
+  if (!token || !valid) {
     throw createHttpError(401, "UNAUTHORIZED", "Invalid admin token");
   }
   return { token };

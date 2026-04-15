@@ -110,6 +110,19 @@ After any production deploy, run a quick smoke test:
 BASE_URL=https://api.memorynode.ai pnpm prod:smoke
 ```
 
+## Quota reconciliation operations
+
+- Quota-consuming routes now write usage reservations and reconcile failures asynchronously.
+- If embed/DB work fails after reservation, the request is marked `refund_pending` and is refunded by reconciliation.
+- Run manual reconciliation (admin only) when needed:
+
+```bash
+curl -X POST "https://api.memorynode.ai/admin/usage/reconcile?limit=200" \
+  -H "x-admin-token: $MASTER_ADMIN_TOKEN"
+```
+
+- Entitlement DB outages use free-plan fallback and block paid-only expensive paths until entitlement reads recover.
+
 This hits `/healthz`, creates a workspace, creates an API key, and optionally checks usage. If you use a custom production API URL, set `BASE_URL` to it.
 
 ---

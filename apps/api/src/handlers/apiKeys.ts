@@ -77,8 +77,11 @@ export function createApiKeysHandlers(
       const rawKey = d.generateApiKey();
       const saltOutcome = await d.getApiKeySalt(env, supabase);
       const keyHash = await d.hashApiKey(rawKey, saltOutcome.salt);
-      if ((env.AUTH_DEBUG ?? "").trim() === "1") {
-        console.info("auth_debug_create", { hash_prefix: keyHash.slice(0, 12) });
+      const authDebugEnabled =
+        (env.AUTH_DEBUG ?? "").trim() === "1" &&
+        (env.ENVIRONMENT ?? env.NODE_ENV ?? "dev").toLowerCase() === "dev";
+      if (authDebugEnabled) {
+        console.info("auth_debug_create", { created: true });
       }
 
       const { data, error } = await supabase

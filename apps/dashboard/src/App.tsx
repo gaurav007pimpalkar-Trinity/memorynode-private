@@ -193,11 +193,20 @@ export function App(): JSX.Element {
       setSession(null);
       return;
     }
-    supabase.auth.getSession().then(({ data }: { data: { session: Session | null } }) => {
-      if (!mounted) return;
-      setSession(data.session ?? null);
-      setLoadingSession(false);
-    });
+    supabase.auth
+      .getSession()
+      .then(({ data }: { data: { session: Session | null } }) => {
+        if (!mounted) return;
+        setSession(data.session ?? null);
+      })
+      .catch(() => {
+        if (!mounted) return;
+        setSession(null);
+      })
+      .finally(() => {
+        if (!mounted) return;
+        setLoadingSession(false);
+      });
     const { data: sub } = supabase.auth.onAuthStateChange((_event: AuthChangeEvent, s: Session | null) => setSession(s));
     return () => {
       mounted = false;
@@ -343,7 +352,7 @@ export function App(): JSX.Element {
         });
         if (!cancelled) {
           setSessionReady(false);
-          setSessionError(err instanceof Error ? err.message : String(err));
+          setSessionError(userFacingErrorMessage(err));
         }
       });
     return () => {
@@ -992,10 +1001,6 @@ function OverviewView({
 function RequestsView({ workspaceId }: { workspaceId: string }) {
   return (
     <Panel title="Usage">
-      <div className="row">
-        <button className="tab active">30d</button>
-        <button className="tab">All</button>
-      </div>
       {workspaceId ? (
         <UsageView workspaceId={workspaceId} embedded />
       ) : (
@@ -1611,6 +1616,14 @@ function MemoryBrowserView({
     setLoading(true);
     setError(null);
       try {
+        const queryValue = query.trim();
+        if (!queryValue) {
+          setRows([]);
+          setTotal(0);
+          setHasMore(false);
+          setError("Enter a search query to run semantic search.");
+          return;
+        }
         type SearchFilters = { metadata?: Record<string, unknown>; start_time?: string; end_time?: string };
         const body: {
           user_id: string;
@@ -1622,7 +1635,7 @@ function MemoryBrowserView({
         } = {
           user_id: userId,
           namespace: namespace || undefined,
-          query: query || "",
+          query: queryValue,
           page: pageToUse,
           page_size: pageSize,
         };
@@ -1661,9 +1674,8 @@ function MemoryBrowserView({
     try {
       const res = await apiGet<MemoryRow>(`/v1/memories/${id}`);
       setSelected(res);
-    } catch (err) {
-      const msg = err instanceof Error ? err.message : String(err);
-      setError(msg);
+    } catch (err: unknown) {
+      setError(userFacingErrorMessage(err));
     }
   };
 
@@ -1784,7 +1796,7 @@ function UsageView({ workspaceId, embedded = false }: { workspaceId: string; emb
 
   useEffect(() => {
     void load();
-  }, []);
+  }, [workspaceId]);
 
   const content = (
     <>

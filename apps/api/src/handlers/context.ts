@@ -224,10 +224,24 @@ export function createContextHandlers(
       }
 
       const searchMode = parseResult.data.search_mode ?? "hybrid";
+      const stage = (env.ENVIRONMENT ?? env.NODE_ENV ?? "dev").toLowerCase();
+      const enforceDegradedBlocks = stage === "production" || stage === "prod" || stage === "staging";
+      if (enforceDegradedBlocks && quota.degradedEntitlements && searchMode !== "keyword") {
+        return jsonResponse(
+          {
+            error: {
+              code: "ENTITLEMENT_DEGRADED",
+              message: "Semantic context is temporarily unavailable while entitlement checks recover.",
+            },
+          },
+          503,
+          rateHeaders,
+        );
+      }
       const embedsDelta = searchMode === "keyword" ? 0 : 1;
       const embedTokensDelta = d.estimateEmbedTokens(parseResult.data.query.length);
       const today = d.todayUtc();
-      const capResponse = await d.reserveQuotaAndMaybeRespond(
+      const reserveResult = await d.reserveQuotaAndMaybeRespond(
         quota,
         supabase,
         auth.workspaceId,
@@ -242,10 +256,24 @@ export function createContextHandlers(
         rateHeaders,
         env,
         jsonResponse,
+        { route: "/v1/context", requestId },
       );
-      if (capResponse) return capResponse;
+      if (reserveResult.response) return reserveResult.response;
+      const reservationId = reserveResult.reservationId;
 
-      const outcome = await d.performSearch(auth, parseResult.data, env, supabase);
+      let outcome;
+      try {
+        outcome = await d.performSearch(auth, parseResult.data, env, supabase);
+      } catch (err) {
+        if (reservationId) {
+          await d.markUsageReservationRefundPending(
+            supabase,
+            reservationId,
+            err instanceof Error ? err.message : String(err),
+          );
+        }
+        throw err;
+      }
       const blocks = assembleSmartContext(outcome.results);
 
       const lines: string[] = [];
@@ -281,6 +309,9 @@ export function createContextHandlers(
         true,
       );
 
+      if (reservationId) {
+        await d.markUsageReservationCommitted(supabase, reservationId);
+      }
       return jsonResponse(
         {
           context_text: lines.join("\n\n"),

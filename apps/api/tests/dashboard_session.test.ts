@@ -107,6 +107,19 @@ describe("validateDashboardCsrf", () => {
     ).toThrow("ORIGIN_NOT_ALLOWED");
   });
 
+  it("throws when origin header is missing", () => {
+    const req = new Request("https://api.example.com/v1/dashboard/logout", {
+      method: "POST",
+      headers: { [CSRF_HEADER]: "correct-token" },
+    });
+    expect(() =>
+      validateDashboardCsrf(req, {
+        token: "cookie-session-token",
+        csrfToken: "correct-token",
+      }, ["https://app.example.com"]),
+    ).toThrow("ORIGIN_NOT_ALLOWED");
+  });
+
   it("accepts wildcard origin allowlist", () => {
     const req = new Request("http://localhost", {
       method: "POST",
