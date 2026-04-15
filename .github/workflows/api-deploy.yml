@@ -1,0 +1,172 @@
+# yaml-language-server: disable
+name: API Deploy
+
+on:
+  workflow_run:
+    workflows: ["CI"]
+    types: [completed]
+    branches: [main]
+  workflow_dispatch:
+    inputs:
+      environment:
+        description: "Target deploy environment"
+        required: true
+        type: choice
+        options:
+          - staging
+          - production
+        default: staging
+      ref:
+        description: "Git ref to deploy (branch, tag, or SHA). Defaults to current branch."
+        required: false
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: api-deploy-${{ github.event_name }}-${{ github.event_name == 'workflow_dispatch' && github.event.inputs.environment || 'staging' }}
+  cancel-in-progress: false
+
+jobs:
+  deploy-staging:
+    if: >
+      (github.event_name == 'workflow_run' &&
+       github.event.workflow_run.conclusion == 'success' &&
+       github.event.workflow_run.head_branch == 'main') ||
+      (github.event_name == 'workflow_dispatch' && github.event.inputs.environment == 'staging')
+    runs-on: ubuntu-latest
+    environment: ${{ 'staging' }}
+    env:
+      CHECK_ENV: staging
+      DEPLOY_ENV: staging
+      CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+      CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+      DATABASE_URL: ${{ secrets.DATABASE_URL }}
+      BASE_URL: ${{ secrets.BASE_URL }}
+      MEMORYNODE_API_KEY: ${{ secrets.MEMORYNODE_API_KEY }}
+      SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+      SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+      API_KEY_SALT: ${{ secrets.API_KEY_SALT }}
+      MASTER_ADMIN_TOKEN: ${{ secrets.MASTER_ADMIN_TOKEN }}
+      EMBEDDINGS_MODE: ${{ secrets.EMBEDDINGS_MODE }}
+      OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+      BILLING_WEBHOOKS_ENABLED: ${{ secrets.BILLING_WEBHOOKS_ENABLED }}
+      PAYU_MERCHANT_KEY: ${{ secrets.PAYU_MERCHANT_KEY }}
+      PAYU_MERCHANT_SALT: ${{ secrets.PAYU_MERCHANT_SALT }}
+      PAYU_BASE_URL: ${{ secrets.PAYU_BASE_URL }}
+      PAYU_VERIFY_URL: ${{ secrets.PAYU_VERIFY_URL }}
+      PUBLIC_APP_URL: ${{ secrets.PUBLIC_APP_URL }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+          token: ${{ secrets.GITHUB_TOKEN }}
+          persist-credentials: false
+          ref: ${{ github.event_name == 'workflow_run' && github.event.workflow_run.head_sha || inputs.ref || github.ref_name }}
+
+      - name: Setup Node
+        uses: actions/setup-node@v5
+        with:
+          node-version: '20'
+          package-manager-cache: false
+
+      - name: Enable corepack
+        run: corepack enable
+
+      - name: Prepare pnpm
+        run: corepack prepare pnpm@10.0.0 --activate
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Validate deploy env
+        run: |
+          missing=()
+          for key in CLOUDFLARE_API_TOKEN DATABASE_URL BASE_URL MEMORYNODE_API_KEY SUPABASE_URL SUPABASE_SERVICE_ROLE_KEY API_KEY_SALT MASTER_ADMIN_TOKEN EMBEDDINGS_MODE BILLING_WEBHOOKS_ENABLED PAYU_MERCHANT_KEY PAYU_MERCHANT_SALT PAYU_BASE_URL PAYU_VERIFY_URL PUBLIC_APP_URL; do
+            [[ -z "${!key}" ]] && missing+=("$key")
+          done
+          if [[ "$EMBEDDINGS_MODE" == "openai" && -z "$OPENAI_API_KEY" ]]; then
+            missing+=("OPENAI_API_KEY")
+          fi
+          if [[ ${#missing[@]} -gt 0 ]]; then
+            echo "Missing required environment secrets: ${missing[*]}"
+            exit 1
+          fi
+
+      - name: Deploy staging API
+        run: pnpm deploy:staging
+
+  deploy-production:
+    if: github.event_name == 'workflow_dispatch' && github.event.inputs.environment == 'production'
+    runs-on: ubuntu-latest
+    environment: ${{ 'production' }}
+    env:
+      CHECK_ENV: production
+      DEPLOY_ENV: production
+      DEPLOY_CONFIRM: memorynode-prod
+      CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+      CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+      DATABASE_URL: ${{ secrets.DATABASE_URL }}
+      BASE_URL: ${{ secrets.BASE_URL }}
+      MEMORYNODE_API_KEY: ${{ secrets.MEMORYNODE_API_KEY }}
+      SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+      SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+      SUPABASE_ANON_KEY: ${{ secrets.SUPABASE_ANON_KEY }}
+      ALLOWED_ORIGINS: ${{ secrets.ALLOWED_ORIGINS }}
+      API_KEY_SALT: ${{ secrets.API_KEY_SALT }}
+      MASTER_ADMIN_TOKEN: ${{ secrets.MASTER_ADMIN_TOKEN }}
+      EMBEDDINGS_MODE: ${{ secrets.EMBEDDINGS_MODE }}
+      OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+      RATE_LIMIT_MODE: ${{ secrets.RATE_LIMIT_MODE }}
+      BILLING_WEBHOOKS_ENABLED: ${{ secrets.BILLING_WEBHOOKS_ENABLED }}
+      PAYU_MERCHANT_KEY: ${{ secrets.PAYU_MERCHANT_KEY }}
+      PAYU_MERCHANT_SALT: ${{ secrets.PAYU_MERCHANT_SALT }}
+      PAYU_BASE_URL: ${{ secrets.PAYU_BASE_URL }}
+      PAYU_VERIFY_URL: ${{ secrets.PAYU_VERIFY_URL }}
+      PUBLIC_APP_URL: ${{ secrets.PUBLIC_APP_URL }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+          token: ${{ secrets.GITHUB_TOKEN }}
+          persist-credentials: false
+          ref: ${{ inputs.ref || github.ref_name }}
+
+      - name: Setup Node
+        uses: actions/setup-node@v5
+        with:
+          node-version: '20'
+          package-manager-cache: false
+
+      - name: Enable corepack
+        run: corepack enable
+
+      - name: Prepare pnpm
+        run: corepack prepare pnpm@10.0.0 --activate
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Validate deploy env
+        run: |
+          missing=()
+          for key in CLOUDFLARE_API_TOKEN DATABASE_URL BASE_URL MEMORYNODE_API_KEY SUPABASE_URL SUPABASE_SERVICE_ROLE_KEY SUPABASE_ANON_KEY ALLOWED_ORIGINS API_KEY_SALT MASTER_ADMIN_TOKEN EMBEDDINGS_MODE RATE_LIMIT_MODE BILLING_WEBHOOKS_ENABLED PAYU_MERCHANT_KEY PAYU_MERCHANT_SALT PAYU_BASE_URL PAYU_VERIFY_URL PUBLIC_APP_URL; do
+            [[ -z "${!key}" ]] && missing+=("$key")
+          done
+          if [[ "$EMBEDDINGS_MODE" == "openai" && -z "$OPENAI_API_KEY" ]]; then
+            missing+=("OPENAI_API_KEY")
+          fi
+          if [[ "$EMBEDDINGS_MODE" == "stub" ]]; then
+            echo "EMBEDDINGS_MODE=stub is not allowed for production."
+            exit 1
+          fi
+          if [[ ${#missing[@]} -gt 0 ]]; then
+            echo "Missing required environment secrets: ${missing[*]}"
+            exit 1
+          fi
+
+      - name: Deploy production API
+        run: pnpm deploy:prod

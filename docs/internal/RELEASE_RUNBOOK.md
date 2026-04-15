@@ -228,3 +228,47 @@ pnpm --filter @memorynode/dashboard build
 ## 9) Go/No-Go
 
 Use `docs/internal/PROD_READY.md` as the release sign-off checklist.
+
+## 10) GitHub Deploy Pipeline (API)
+
+Workflow: `.github/workflows/api-deploy.yml`
+
+- Staging deploy runs automatically after `CI` succeeds on `main`.
+- Production deploy is manual (`workflow_dispatch`) and targets the GitHub `production` environment.
+- The deploy jobs call existing guarded scripts:
+  - Staging: `pnpm deploy:staging`
+  - Production: `pnpm deploy:prod`
+
+### Required GitHub environment secrets
+
+Set these in both `staging` and `production` GitHub Environments (Settings -> Environments):
+
+- `CLOUDFLARE_API_TOKEN`
+- `CLOUDFLARE_ACCOUNT_ID` (recommended)
+- `DATABASE_URL`
+- `BASE_URL`
+- `MEMORYNODE_API_KEY`
+- `SUPABASE_URL`
+- `SUPABASE_SERVICE_ROLE_KEY`
+- `API_KEY_SALT`
+- `MASTER_ADMIN_TOKEN`
+- `EMBEDDINGS_MODE`
+- `OPENAI_API_KEY` (required when `EMBEDDINGS_MODE=openai`)
+- `BILLING_WEBHOOKS_ENABLED`
+- `PAYU_MERCHANT_KEY`
+- `PAYU_MERCHANT_SALT`
+- `PAYU_BASE_URL`
+- `PAYU_VERIFY_URL`
+- `PUBLIC_APP_URL`
+
+Production-only additional secrets:
+
+- `SUPABASE_ANON_KEY`
+- `ALLOWED_ORIGINS`
+- `RATE_LIMIT_MODE`
+
+### Recommended protections
+
+- Require reviewers for the `production` environment before job execution.
+- Restrict who can approve production deployments.
+- Keep branch protection so only green `CI` reaches `main`.
