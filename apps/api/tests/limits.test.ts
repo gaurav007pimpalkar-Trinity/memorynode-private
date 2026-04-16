@@ -3,15 +3,15 @@ import { safeKvTtl } from "../src/index.js";
 
 describe("capsByPlan", () => {
   it("has expected free limits", () => {
-    expect(capsByPlan.free).toEqual({ writes: 300, reads: 1000, embeds: 250 });
+    expect(capsByPlan.free).toEqual({ writes: 250, reads: 1000, embeds: 500 });
   });
 
   it("has expected pro limits", () => {
-    expect(capsByPlan.pro).toEqual({ writes: 1000, reads: 3000, embeds: 1000 });
+    expect(capsByPlan.pro).toEqual({ writes: 1200, reads: 4000, embeds: 3000 });
   });
 
   it("has expected team limits", () => {
-    expect(capsByPlan.team).toEqual({ writes: 5000, reads: 10000, embeds: 10000 });
+    expect(capsByPlan.team).toEqual({ writes: 5000, reads: 15000, embeds: 15000 });
   });
 });
 

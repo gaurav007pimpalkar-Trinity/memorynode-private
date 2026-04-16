@@ -276,7 +276,7 @@ function makeSupabase(options?: {
     rpc(name: string, params?: Record<string, unknown>) {
       if (name === "bump_usage_rpc" || name === "bump_usage")
         return { data: { writes: usage.writes, reads: usage.reads, embeds: usage.embeds, extraction_calls: 0, embed_tokens_used: 0 }, error: null };
-      if (name === "bump_usage_if_within_cap") {
+      if (name === "bump_usage_if_within_cap" || name === "record_usage_event_if_within_cap") {
         const pW = (params?.p_writes as number) ?? 0;
         const pR = (params?.p_reads as number) ?? 0;
         const pE = (params?.p_embeds as number) ?? 0;

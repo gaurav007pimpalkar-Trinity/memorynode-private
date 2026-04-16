@@ -540,19 +540,32 @@ export function createMemoryHandlers(
       if (actualEmbedTokens > estimatedEmbedTokens) {
         const tokenDelta = actualEmbedTokens - estimatedEmbedTokens;
         try {
-          await supabase.rpc("bump_usage_if_within_cap", {
+          await supabase.rpc("record_usage_event_if_within_cap", {
             p_workspace_id: auth.workspaceId,
             p_day: today,
+            p_idempotency_key: `embed-reconcile:${requestId || "unknown"}:${tokenDelta}`,
+            p_request_id: requestId || null,
+            p_route: "/v1/memories",
+            p_actor_type: "api_key",
+            p_actor_id: null,
             p_writes: 0,
             p_reads: 0,
             p_embeds: 0,
             p_embed_tokens: tokenDelta,
             p_extraction_calls: 0,
-            p_writes_cap: Number.MAX_SAFE_INTEGER,
-            p_reads_cap: Number.MAX_SAFE_INTEGER,
-            p_embeds_cap: Number.MAX_SAFE_INTEGER,
-            p_embed_tokens_cap: Number.MAX_SAFE_INTEGER,
-            p_extraction_calls_cap: Number.MAX_SAFE_INTEGER,
+            p_gen_input_tokens: 0,
+            p_gen_output_tokens: 0,
+            p_storage_bytes: 0,
+            p_estimated_cost_inr: 0,
+            p_billable: true,
+            p_metadata: {},
+            p_writes_cap: quota.planLimits.writes_per_day,
+            p_reads_cap: quota.planLimits.reads_per_day,
+            p_embeds_cap: Math.floor(quota.planLimits.embed_tokens_per_day / 200),
+            p_embed_tokens_cap: quota.planLimits.embed_tokens_per_day,
+            p_extraction_calls_cap: quota.planLimits.extraction_calls_per_day,
+            p_gen_tokens_cap: Math.max(0, quota.planLimits.included_gen_tokens ?? 0),
+            p_storage_bytes_cap: Math.floor(Math.max(0, quota.planLimits.included_storage_gb ?? 0) * 1_000_000_000),
           });
         } catch {
           /* best-effort reconciliation; pre-flight estimate already enforced the cap */

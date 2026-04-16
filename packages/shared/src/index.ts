@@ -133,10 +133,21 @@ export interface UsageTodayResponse {
   writes: number;
   reads: number;
   embeds: number;
+  extraction_calls?: number;
+  embed_tokens?: number;
+  gen_tokens?: number;
+  storage_bytes?: number;
   limits: {
     writes: number;
     reads: number;
     embeds: number;
+  };
+  limits_v3?: {
+    included_writes: number;
+    included_reads: number;
+    included_embed_tokens: number;
+    included_gen_tokens: number;
+    included_storage_gb: number;
   };
 }
 

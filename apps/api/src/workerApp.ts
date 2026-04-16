@@ -284,7 +284,7 @@ function planStatusFromPayUStatus(status: "success" | "pending" | "failure" | "c
   return "past_due";
 }
 
-function normalizeMoneyString(raw: string | undefined, fallback = "499.00"): string {
+function normalizeMoneyString(raw: string | undefined, fallback = "999.00"): string {
   const parsed = Number(raw ?? fallback);
   if (!Number.isFinite(parsed) || parsed <= 0) return fallback;
   return parsed.toFixed(2);
@@ -310,7 +310,7 @@ function resolvePayUAmountForPlan(planCode: string, env: Env): string {
   const plan = getPlan(code);
   return plan && plan.price_inr > 0
     ? formatINRAmount(plan.price_inr)
-    : (env.PAYU_PRO_AMOUNT ? normalizeMoneyString(env.PAYU_PRO_AMOUNT, "499.00") : "499.00");
+    : (env.PAYU_PRO_AMOUNT ? normalizeMoneyString(env.PAYU_PRO_AMOUNT, "999.00") : "999.00");
 }
 
 function resolveProductInfoForPlan(planCode: string, env: Env): string {
@@ -955,6 +955,56 @@ async function upsertWorkspaceEntitlementFromTransaction(
   const inserted = await supabase.from("workspace_entitlements").insert(payload);
   if (inserted.error) {
     throw createHttpError(500, "DB_ERROR", inserted.error.message ?? "Failed to create entitlement");
+  }
+
+  // Best-effort v3 entitlement mirror (plans + entitlements tables).
+  try {
+    const planRow = await supabase
+      .from("plans")
+      .select("id")
+      .eq("plan_code", planCode)
+      .maybeSingle();
+    const planId = Number((planRow.data as { id?: number } | null)?.id ?? 0);
+    if (planId > 0) {
+      const existingV3 = await supabase
+        .from("entitlements")
+        .select("id")
+        .eq("source_txn_id", txn.txn_id)
+        .maybeSingle();
+      const periodStart = startsAt;
+      const periodEnd = expiresAt ?? new Date(Date.parse(startsAt) + 30 * 24 * 60 * 60 * 1000).toISOString();
+      const payloadV3 = {
+        workspace_id: txn.workspace_id,
+        plan_id: planId,
+        status: "active",
+        period_start: periodStart,
+        period_end: periodEnd,
+        auto_renew: true,
+        source_txn_id: txn.txn_id,
+        billing_provider: "payu",
+        hard_cap_enabled: true,
+        soft_cap_enabled: true,
+        metadata: {
+          payu_status: verify.status,
+          payu_status_raw: verify.statusRaw,
+          payu_payment_id: verify.paymentId,
+          amount: verify.amount,
+          currency: verify.currency,
+          mirrored_from: "workspace_entitlements",
+        },
+        updated_at: new Date().toISOString(),
+      };
+      if ((existingV3.data as { id?: number } | null)?.id) {
+        await supabase
+          .from("entitlements")
+          .update(payloadV3)
+          .eq("id", Number((existingV3.data as { id: number }).id));
+      } else {
+        await supabase.from("entitlements").insert(payloadV3);
+      }
+    }
+  } catch {
+    // Keep webhook path resilient while schema rolls out progressively.
   }
 }
 
@@ -1777,6 +1827,12 @@ let stubState: {
     memories: StubRow[];
     memory_chunks: StubRow[];
     usage_daily: StubRow[];
+    usage_daily_v2: StubRow[];
+    usage_events: StubRow[];
+    plans: StubRow[];
+    entitlements: StubRow[];
+    invoice_lines: StubRow[];
+    usage_alert_events: StubRow[];
     api_audit_log: StubRow[];
     app_settings: StubRow[];
     product_events: StubRow[];
@@ -1797,6 +1853,12 @@ function createStubSupabase(env: Env) {
         memories: [] as StubRow[],
         memory_chunks: [] as StubRow[],
         usage_daily: [] as StubRow[],
+        usage_daily_v2: [] as StubRow[],
+        usage_events: [] as StubRow[],
+        plans: [] as StubRow[],
+        entitlements: [] as StubRow[],
+        invoice_lines: [] as StubRow[],
+        usage_alert_events: [] as StubRow[],
         api_audit_log: [] as StubRow[],
         app_settings: [{ api_key_salt: env.API_KEY_SALT ?? "" }],
         product_events: [] as StubRow[],
@@ -2088,6 +2150,69 @@ function createStubSupabase(env: Env) {
           existing.embed_tokens_used = et + pEt;
           existing.extraction_calls = ex + pEx;
           return Promise.resolve({ data: [{ ...existing, exceeded: false, limit_name: null }], error: null });
+        }
+        case "record_usage_event_if_within_cap": {
+          const pW = Number(params.p_writes ?? 0);
+          const pR = Number(params.p_reads ?? 0);
+          const pE = Number(params.p_embeds ?? 0);
+          const pEt = Number(params.p_embed_tokens ?? 0);
+          const pEx = Number(params.p_extraction_calls ?? 0);
+          const capW = Number(params.p_writes_cap ?? Number.MAX_SAFE_INTEGER);
+          const capR = Number(params.p_reads_cap ?? Number.MAX_SAFE_INTEGER);
+          const capE = Number(params.p_embeds_cap ?? Number.MAX_SAFE_INTEGER);
+          const capEt = Number(params.p_embed_tokens_cap ?? Number.MAX_SAFE_INTEGER);
+          const capEx = Number(params.p_extraction_calls_cap ?? Number.MAX_SAFE_INTEGER);
+          const day = String(params.p_day ?? todayUtc());
+          let existing = db.usage_daily.find(
+            (r) => r.workspace_id === params.p_workspace_id && r.day === day,
+          ) as Record<string, unknown> | undefined;
+          if (!existing) {
+            existing = {
+              workspace_id: params.p_workspace_id,
+              day,
+              writes: 0,
+              reads: 0,
+              embeds: 0,
+              extraction_calls: 0,
+              embed_tokens_used: 0,
+              gen_input_tokens_used: 0,
+              gen_output_tokens_used: 0,
+              storage_bytes_used: 0,
+            };
+            db.usage_daily.push(existing as StubRow);
+          }
+          const w = Number(existing.writes ?? 0);
+          const r = Number(existing.reads ?? 0);
+          const e = Number(existing.embeds ?? 0);
+          const et = Number(existing.embed_tokens_used ?? 0);
+          const ex = Number(existing.extraction_calls ?? 0);
+          if (w + pW > capW) return Promise.resolve({ data: [{ ...existing, exceeded: true, limit_name: "writes" }], error: null });
+          if (r + pR > capR) return Promise.resolve({ data: [{ ...existing, exceeded: true, limit_name: "reads" }], error: null });
+          if (e + pE > capE) return Promise.resolve({ data: [{ ...existing, exceeded: true, limit_name: "embeds" }], error: null });
+          if (et + pEt > capEt) return Promise.resolve({ data: [{ ...existing, exceeded: true, limit_name: "embed_tokens" }], error: null });
+          if (ex + pEx > capEx) return Promise.resolve({ data: [{ ...existing, exceeded: true, limit_name: "extraction_calls" }], error: null });
+          existing.writes = w + pW;
+          existing.reads = r + pR;
+          existing.embeds = e + pE;
+          existing.embed_tokens_used = et + pEt;
+          existing.extraction_calls = ex + pEx;
+          const eventId = `ue_${Math.random().toString(36).slice(2, 10)}`;
+          (db as unknown as { usage_events: StubRow[] }).usage_events.push({
+            id: eventId,
+            workspace_id: params.p_workspace_id,
+            idempotency_key: params.p_idempotency_key,
+          });
+          return Promise.resolve({
+            data: [{
+              ...existing,
+              exceeded: false,
+              limit_name: null,
+              usage_event_id: eventId,
+              entitlement_id: null,
+              idempotent_replay: false,
+            }],
+            error: null,
+          });
         }
         case "create_usage_reservation": {
           const reservations = ((db as unknown as { usage_reservations?: StubRow[] }).usage_reservations ??= []);
@@ -3348,6 +3473,9 @@ type UsageRow = {
   embeds: number;
   extraction_calls?: number;
   embed_tokens_used?: number;
+  gen_input_tokens_used?: number;
+  gen_output_tokens_used?: number;
+  storage_bytes_used?: number;
 };
 
 function todayUtc(): string {
@@ -3359,6 +3487,32 @@ async function getUsage(
   workspaceId: string,
   day: string,
 ): Promise<UsageRow> {
+  try {
+    const v3 = await supabase
+      .from("usage_daily_v2")
+      .select("workspace_id, day, writes, reads, embeds, extraction_calls, embed_tokens, gen_input_tokens, gen_output_tokens, storage_bytes")
+      .eq("workspace_id", workspaceId)
+      .eq("day", day)
+      .maybeSingle();
+    if (!v3.error && v3.data) {
+      const row = v3.data as Record<string, unknown>;
+      return {
+        workspace_id: workspaceId,
+        day,
+        writes: Number(row.writes) ?? 0,
+        reads: Number(row.reads) ?? 0,
+        embeds: Number(row.embeds) ?? 0,
+        extraction_calls: Number(row.extraction_calls) ?? 0,
+        embed_tokens_used: Number(row.embed_tokens) ?? 0,
+        gen_input_tokens_used: Number(row.gen_input_tokens) ?? 0,
+        gen_output_tokens_used: Number(row.gen_output_tokens) ?? 0,
+        storage_bytes_used: Number(row.storage_bytes) ?? 0,
+      };
+    }
+  } catch {
+    // Backward compatibility for stubs/tests without usage_daily_v2 table.
+  }
+
   const { data, error } = await supabase
     .from("usage_daily")
     .select("workspace_id, day, writes, reads, embeds, extraction_calls, embed_tokens_used")
@@ -3369,7 +3523,6 @@ async function getUsage(
   if (error && error.code !== "PGRST116") {
     throw createHttpError(500, "DB_ERROR", `Failed to fetch usage: ${error.message}`);
   }
-
   if (!data) {
     return {
       workspace_id: workspaceId,
@@ -3379,6 +3532,9 @@ async function getUsage(
       embeds: 0,
       extraction_calls: 0,
       embed_tokens_used: 0,
+      gen_input_tokens_used: 0,
+      gen_output_tokens_used: 0,
+      storage_bytes_used: 0,
     };
   }
 
@@ -3391,6 +3547,9 @@ async function getUsage(
     embeds: Number(row.embeds) ?? 0,
     extraction_calls: Number(row.extraction_calls) ?? 0,
     embed_tokens_used: Number(row.embed_tokens_used) ?? 0,
+    gen_input_tokens_used: 0,
+    gen_output_tokens_used: 0,
+    storage_bytes_used: 0,
   };
 }
 
@@ -3425,7 +3584,7 @@ type BumpWithinCapResult =
   | { ok: true; usage: UsageRow }
   | { ok: false; limit: string; used: number; cap: number };
 
-async function bumpUsageIfWithinCap(
+async function recordUsageEventIfWithinCap(
   supabase: SupabaseClient,
   workspaceId: string,
   day: string,
@@ -3437,6 +3596,7 @@ async function bumpUsageIfWithinCap(
     extractionCallsDelta: number;
   },
   planLimits: PlanLimits,
+  meta?: { route?: string; requestId?: string },
 ): Promise<BumpWithinCapResult> {
   const caps = {
     writes: planLimits.writes_per_day,
@@ -3444,34 +3604,59 @@ async function bumpUsageIfWithinCap(
     embeds: Math.floor(planLimits.embed_tokens_per_day / 200),
     embed_tokens: planLimits.embed_tokens_per_day,
     extraction_calls: planLimits.extraction_calls_per_day,
+    gen_tokens: Math.max(0, planLimits.included_gen_tokens ?? 0),
+    storage_bytes: Math.floor(Math.max(0, planLimits.included_storage_gb ?? 0) * 1_000_000_000),
   };
-  const { data, error } = await supabase.rpc("bump_usage_if_within_cap", {
+  const idempotencyKey = `${meta?.route ?? "route"}:${meta?.requestId ?? crypto.randomUUID()}:${workspaceId}:${day}:${deltas.writesDelta}:${deltas.readsDelta}:${deltas.embedsDelta}:${deltas.embedTokensDelta}:${deltas.extractionCallsDelta}`;
+  const { data, error } = await supabase.rpc("record_usage_event_if_within_cap", {
     p_workspace_id: workspaceId,
     p_day: day,
+    p_idempotency_key: idempotencyKey,
+    p_request_id: meta?.requestId ?? null,
+    p_route: meta?.route ?? "unknown",
+    p_actor_type: "api_key",
+    p_actor_id: null,
     p_writes: deltas.writesDelta,
     p_reads: deltas.readsDelta,
     p_embeds: deltas.embedsDelta,
     p_embed_tokens: deltas.embedTokensDelta,
     p_extraction_calls: deltas.extractionCallsDelta,
+    p_gen_input_tokens: 0,
+    p_gen_output_tokens: 0,
+    p_storage_bytes: 0,
+    p_estimated_cost_inr: 0,
+    p_billable: true,
+    p_metadata: {},
     p_writes_cap: caps.writes,
     p_reads_cap: caps.reads,
     p_embeds_cap: caps.embeds,
     p_embed_tokens_cap: caps.embed_tokens,
     p_extraction_calls_cap: caps.extraction_calls,
+    p_gen_tokens_cap: caps.gen_tokens,
+    p_storage_bytes_cap: caps.storage_bytes,
   });
-
   if (error) {
-    throw createHttpError(500, "DB_ERROR", `Failed to bump usage: ${error.message}`);
+    throw createHttpError(500, "DB_ERROR", `Failed to record usage event: ${error.message}`);
   }
-
   const rows = Array.isArray(data) ? data : data ? [data] : [];
   const row = rows[0] as
-    | { exceeded?: boolean; limit_name?: string; writes?: number; reads?: number; embeds?: number; extraction_calls?: number; embed_tokens_used?: number }
+    | {
+      exceeded?: boolean;
+      limit_name?: string;
+      writes?: number;
+      reads?: number;
+      embeds?: number;
+      extraction_calls?: number;
+      embed_tokens_used?: number;
+      gen_input_tokens_used?: number;
+      gen_output_tokens_used?: number;
+      storage_bytes_used?: number;
+    }
     | undefined;
   if (!row) {
-    throw createHttpError(500, "DB_ERROR", "bump_usage_if_within_cap returned no row");
+    throw createHttpError(500, "DB_ERROR", "record_usage_event_if_within_cap returned no row");
   }
-  if (row.exceeded === true && row.limit_name) {
+  if (row.exceeded && row.limit_name) {
     const used =
       row.limit_name === "writes"
         ? (row.writes ?? 0)
@@ -3483,7 +3668,11 @@ async function bumpUsageIfWithinCap(
               ? (row.embed_tokens_used ?? 0)
               : row.limit_name === "extraction_calls"
                 ? (row.extraction_calls ?? 0)
-                : 0;
+                : row.limit_name === "gen_tokens"
+                  ? ((row.gen_input_tokens_used ?? 0) + (row.gen_output_tokens_used ?? 0))
+                  : row.limit_name === "storage_bytes"
+                    ? (row.storage_bytes_used ?? 0)
+                    : 0;
     const cap =
       row.limit_name === "writes"
         ? caps.writes
@@ -3495,7 +3684,11 @@ async function bumpUsageIfWithinCap(
               ? caps.embed_tokens
               : row.limit_name === "extraction_calls"
                 ? caps.extraction_calls
-                : 0;
+                : row.limit_name === "gen_tokens"
+                  ? caps.gen_tokens
+                  : row.limit_name === "storage_bytes"
+                    ? caps.storage_bytes
+                    : 0;
     return { ok: false, limit: row.limit_name, used, cap };
   }
   return {
@@ -3508,6 +3701,9 @@ async function bumpUsageIfWithinCap(
       embeds: row.embeds ?? 0,
       extraction_calls: row.extraction_calls ?? 0,
       embed_tokens_used: row.embed_tokens_used ?? 0,
+      gen_input_tokens_used: row.gen_input_tokens_used ?? 0,
+      gen_output_tokens_used: row.gen_output_tokens_used ?? 0,
+      storage_bytes_used: row.storage_bytes_used ?? 0,
     },
   };
 }
@@ -3530,12 +3726,13 @@ async function reserveQuotaAndMaybeRespond(
   meta?: { route?: string; requestId?: string },
 ): Promise<{ response: Response | null; reservationId: string | null }> {
   if (quota.blocked) return { response: null, reservationId: null };
-  const result = await bumpUsageIfWithinCap(
+  const result = await recordUsageEventIfWithinCap(
     supabase,
     workspaceId,
     day,
     deltas,
     quota.planLimits,
+    meta,
   );
   if (!result.ok) {
     return {
@@ -3695,6 +3892,7 @@ const defaultBillingHandlerDeps: BillingHandlerDeps = {
   resolveQuotaForWorkspace,
   emitEventLog,
   redact,
+  resolveBillingWebhooksEnabled,
   isPayUBillingConfigured,
   assertPayUEnvFor,
   shortHash,

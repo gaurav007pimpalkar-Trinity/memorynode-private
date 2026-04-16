@@ -9,15 +9,22 @@ import type { AuthContext } from "../auth.js";
 import { authenticate, rateLimit } from "../auth.js";
 import type { HandlerDeps } from "../router.js";
 import type { UsageSnapshot } from "../limits.js";
+import type { PlanLimits } from "@memorynodeai/shared";
 
 export interface UsageRowLike {
   writes: number;
   reads: number;
   embeds: number;
+  extraction_calls?: number;
+  embed_tokens_used?: number;
+  gen_input_tokens_used?: number;
+  gen_output_tokens_used?: number;
+  storage_bytes_used?: number;
 }
 
 export interface QuotaResolutionLike {
   caps: UsageSnapshot;
+  planLimits: PlanLimits;
   effectivePlan: string;
   planStatus: AuthContext["planStatus"];
   blocked: boolean;
@@ -73,8 +80,19 @@ export function createUsageHandlers(
           writes: usage.writes,
           reads: usage.reads,
           embeds: usage.embeds,
+          extraction_calls: usage.extraction_calls ?? 0,
+          embed_tokens: usage.embed_tokens_used ?? 0,
+          gen_tokens: (usage.gen_input_tokens_used ?? 0) + (usage.gen_output_tokens_used ?? 0),
+          storage_bytes: usage.storage_bytes_used ?? 0,
           plan: effectivePlanValue,
           limits: caps,
+          limits_v3: {
+            included_writes: quota.planLimits.included_writes ?? quota.planLimits.writes_per_day,
+            included_reads: quota.planLimits.included_reads ?? quota.planLimits.reads_per_day,
+            included_embed_tokens: quota.planLimits.included_embed_tokens ?? quota.planLimits.embed_tokens_per_day,
+            included_gen_tokens: quota.planLimits.included_gen_tokens ?? 0,
+            included_storage_gb: quota.planLimits.included_storage_gb ?? 0,
+          },
         },
         200,
         rate.headers,

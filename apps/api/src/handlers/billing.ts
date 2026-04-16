@@ -17,6 +17,7 @@ export interface BillingHandlerDeps extends HandlerDeps {
   resolveQuotaForWorkspace: (auth: AuthContext, supabase: SupabaseClient) => Promise<QuotaResolutionLike>;
   emitEventLog: (event_name: string, fields: Record<string, unknown>) => void;
   redact: (value: unknown, keyHint?: string) => unknown;
+  resolveBillingWebhooksEnabled: (env: Env) => boolean;
   isPayUBillingConfigured: (env: Env) => boolean;
   assertPayUEnvFor: (path: string, env: Env) => void;
   shortHash: (value: string, length?: number) => Promise<string>;
@@ -57,6 +58,7 @@ export interface PayUTransactionLike {
   workspace_id: string;
   amount: number | string;
   currency: string;
+  plan_id?: number | null;
 }
 
 export interface PayURequestHashFieldsLike {
@@ -107,6 +109,12 @@ export function createBillingHandlers(
     async handleBillingStatus(request, env, supabase, auditCtx, requestId = "", deps?) {
       const d = (deps ?? defaultDeps) as BillingHandlerDeps;
       const { jsonResponse } = d;
+      if (!d.resolveBillingWebhooksEnabled(env)) {
+        return jsonResponse(
+          { error: { code: "BILLING_DISABLED", message: "Billing is disabled in this environment" } },
+          503,
+        );
+      }
       if (!d.isPayUBillingConfigured(env)) {
         return jsonResponse(
           { error: { code: "BILLING_NOT_CONFIGURED", message: "Missing PayU configuration" } },
@@ -162,6 +170,18 @@ export function createBillingHandlers(
     async handleBillingCheckout(request, env, supabase, auditCtx, requestId = "", deps?) {
       const d = (deps ?? defaultDeps) as BillingHandlerDeps;
       const { jsonResponse } = d;
+      if (!d.resolveBillingWebhooksEnabled(env)) {
+        return jsonResponse(
+          {
+            error: {
+              code: "BILLING_DISABLED",
+              message: "Checkout is disabled in this environment",
+            },
+            ...(requestId ? { request_id: requestId } : {}),
+          },
+          503,
+        );
+      }
       const parsedBody = await d.safeParseJson<{ plan?: string; firstname?: string; email?: string; phone?: string }>(request);
       const requestedPlan = parsedBody.ok ? parsedBody.data.plan : undefined;
       if (requestedPlan != null && requestedPlan !== "" && !CHECKOUT_PLAN_IDS.includes(requestedPlan as (typeof CHECKOUT_PLAN_IDS)[number])) {
@@ -207,8 +227,37 @@ export function createBillingHandlers(
       const workspaceHash = await d.shortHash(auth.workspaceId, 8);
       const idemHash = clientIdem ? await d.shortHash(clientIdem, 8) : "default1";
       const txnId = `mn${monthKey}${workspaceHash}${idemHash}`.slice(0, 40);
-      const amount = d.getAmountForPlan(planCode, env);
-      const currency = d.normalizeCurrency(env.PAYU_CURRENCY);
+      let planId: number | null = null;
+      let amountFromCatalog: string | null = null;
+      let currencyFromCatalog: string | null = null;
+      try {
+        const planCatalog = await supabase
+          .from("plans")
+          .select("id, plan_code, price_inr, currency, is_active")
+          .eq("plan_code", planCode)
+          .maybeSingle();
+        if (!planCatalog.error && planCatalog.data) {
+          const row = planCatalog.data as {
+            id?: number;
+            plan_code?: string;
+            price_inr?: number | string;
+            currency?: string;
+            is_active?: boolean;
+          };
+          if (row.is_active !== false) {
+            const parsedAmount = Number(row.price_inr);
+            if (Number.isFinite(parsedAmount) && parsedAmount > 0) {
+              planId = typeof row.id === "number" ? row.id : null;
+              amountFromCatalog = parsedAmount.toFixed(2);
+              currencyFromCatalog = d.normalizeCurrency(row.currency);
+            }
+          }
+        }
+      } catch {
+        // Pre-migration or test stubs can omit plans table; fallback path handles pricing.
+      }
+      const amount = amountFromCatalog ?? d.getAmountForPlan(planCode, env);
+      const currency = currencyFromCatalog ?? d.normalizeCurrency(env.PAYU_CURRENCY);
 
       const existingTxn = await d.fetchPayUTransactionByTxnId(supabase, txnId);
       if (existingTxn) {
@@ -234,6 +283,7 @@ export function createBillingHandlers(
           txn_id: txnId,
           workspace_id: auth.workspaceId,
           plan_code: planCode,
+          ...(planId != null ? { plan_id: planId } : {}),
           amount,
           currency,
           status: "created",

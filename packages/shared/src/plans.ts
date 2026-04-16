@@ -7,9 +7,32 @@
 export type PlanId = "launch" | "build" | "deploy" | "scale" | "scale_plus";
 
 export interface PlanLimits {
+  /** Included writes per billing cycle (compat alias: writes_per_day). */
+  included_writes: number;
+  /** Included reads per billing cycle (compat alias: reads_per_day). */
+  included_reads: number;
+  /** Included embed tokens per billing cycle (compat alias: embed_tokens_per_day). */
+  included_embed_tokens: number;
+  /** Included generation tokens per billing cycle (input + output). */
+  included_gen_tokens: number;
+  /** Included storage in GB-month. */
+  included_storage_gb: number;
+  /** Pricing guardrail to prevent day-1 bucket draining. */
+  daily_usage_pct_cap: number;
+  /** Data retention for this plan. */
+  retention_days: number;
+  /** Overage rates used by billing v3 tables/functions. */
+  overage_writes_per_1k_inr: number;
+  overage_reads_per_1k_inr: number;
+  overage_embed_tokens_per_1m_inr: number;
+  overage_gen_tokens_per_1m_inr: number;
+  overage_storage_gb_month_inr: number;
+  /** Compatibility alias; same value as included_writes during transition. */
   writes_per_day: number;
+  /** Compatibility alias; same value as included_reads during transition. */
   reads_per_day: number;
   /** Hard gate: blocks ingest + search/context when exceeded. */
+  /** Compatibility alias; same value as included_embed_tokens during transition. */
   embed_tokens_per_day: number;
   /** 0 = extraction disabled for plan. */
   extraction_calls_per_day: number;
@@ -51,14 +74,26 @@ const PLANS: Plan[] = [
     label: "Launch",
     audience: "solo",
     member_cap: 1,
-    price_inr: 299,
+    price_inr: 399,
     billing_period_days: 7,
     limits: {
-      writes_per_day: 300,
+      included_writes: 250,
+      included_reads: 1000,
+      included_embed_tokens: 100_000,
+      included_gen_tokens: 150_000,
+      included_storage_gb: 0.5,
+      daily_usage_pct_cap: 15,
+      retention_days: 30,
+      overage_writes_per_1k_inr: 90,
+      overage_reads_per_1k_inr: 120,
+      overage_embed_tokens_per_1m_inr: 60,
+      overage_gen_tokens_per_1m_inr: 220,
+      overage_storage_gb_month_inr: 35,
+      writes_per_day: 250,
       reads_per_day: 1000,
-      embed_tokens_per_day: 50_000,
+      embed_tokens_per_day: 100_000,
       extraction_calls_per_day: 0,
-      max_text_chars: 15_000,
+      max_text_chars: 12_000,
       workspace_rpm: WORKSPACE_RPM_DEFAULT,
     },
   },
@@ -67,13 +102,25 @@ const PLANS: Plan[] = [
     label: "Build",
     audience: "solo",
     member_cap: 1,
-    price_inr: 499,
+    price_inr: 999,
     billing_period_days: 30,
     limits: {
-      writes_per_day: 1000,
-      reads_per_day: 3000,
-      embed_tokens_per_day: 200_000,
-      extraction_calls_per_day: 50,
+      included_writes: 1200,
+      included_reads: 4000,
+      included_embed_tokens: 600_000,
+      included_gen_tokens: 1_000_000,
+      included_storage_gb: 2,
+      daily_usage_pct_cap: 15,
+      retention_days: 90,
+      overage_writes_per_1k_inr: 75,
+      overage_reads_per_1k_inr: 100,
+      overage_embed_tokens_per_1m_inr: 50,
+      overage_gen_tokens_per_1m_inr: 180,
+      overage_storage_gb_month_inr: 30,
+      writes_per_day: 1200,
+      reads_per_day: 4000,
+      embed_tokens_per_day: 600_000,
+      extraction_calls_per_day: 100,
       max_text_chars: 15_000,
       workspace_rpm: WORKSPACE_RPM_DEFAULT,
     },
@@ -83,13 +130,25 @@ const PLANS: Plan[] = [
     label: "Deploy",
     audience: "team",
     member_cap: 10,
-    price_inr: 1999,
+    price_inr: 2999,
     billing_period_days: 30,
     limits: {
+      included_writes: 5000,
+      included_reads: 15_000,
+      included_embed_tokens: 3_000_000,
+      included_gen_tokens: 5_000_000,
+      included_storage_gb: 10,
+      daily_usage_pct_cap: 15,
+      retention_days: 180,
+      overage_writes_per_1k_inr: 60,
+      overage_reads_per_1k_inr: 80,
+      overage_embed_tokens_per_1m_inr: 40,
+      overage_gen_tokens_per_1m_inr: 140,
+      overage_storage_gb_month_inr: 25,
       writes_per_day: 5000,
-      reads_per_day: 10000,
-      embed_tokens_per_day: 2_000_000,
-      extraction_calls_per_day: 300,
+      reads_per_day: 15_000,
+      embed_tokens_per_day: 3_000_000,
+      extraction_calls_per_day: 500,
       max_text_chars: 20_000,
       workspace_rpm: WORKSPACE_RPM_DEFAULT,
     },
@@ -99,13 +158,25 @@ const PLANS: Plan[] = [
     label: "Scale",
     audience: "team",
     member_cap: 10,
-    price_inr: 4999,
+    price_inr: 8999,
     billing_period_days: 30,
     limits: {
+      included_writes: 20_000,
+      included_reads: 60_000,
+      included_embed_tokens: 12_000_000,
+      included_gen_tokens: 20_000_000,
+      included_storage_gb: 50,
+      daily_usage_pct_cap: 15,
+      retention_days: 365,
+      overage_writes_per_1k_inr: 50,
+      overage_reads_per_1k_inr: 65,
+      overage_embed_tokens_per_1m_inr: 35,
+      overage_gen_tokens_per_1m_inr: 110,
+      overage_storage_gb_month_inr: 20,
       writes_per_day: 20000,
-      reads_per_day: 50000,
-      embed_tokens_per_day: 10_000_000,
-      extraction_calls_per_day: 1000,
+      reads_per_day: 60_000,
+      embed_tokens_per_day: 12_000_000,
+      extraction_calls_per_day: 2000,
       max_text_chars: 25_000,
       workspace_rpm: WORKSPACE_RPM_SCALE,
     },
@@ -118,6 +189,18 @@ const PLANS: Plan[] = [
     price_inr: 0, // custom
     billing_period_days: null,
     limits: {
+      included_writes: 100_000,
+      included_reads: 200_000,
+      included_embed_tokens: 200_000_000,
+      included_gen_tokens: 200_000_000,
+      included_storage_gb: 250,
+      daily_usage_pct_cap: 20,
+      retention_days: 365,
+      overage_writes_per_1k_inr: 40,
+      overage_reads_per_1k_inr: 55,
+      overage_embed_tokens_per_1m_inr: 30,
+      overage_gen_tokens_per_1m_inr: 95,
+      overage_storage_gb_month_inr: 18,
       writes_per_day: 100000,
       reads_per_day: 200000,
       embed_tokens_per_day: 200_000_000,

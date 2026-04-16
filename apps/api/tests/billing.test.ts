@@ -280,6 +280,22 @@ function makeSupabase(options?: {
           update: builder.update,
         };
       }
+      if (table === "plans") {
+        const catalog: Record<string, { id: number; plan_code: string; price_inr: number; currency: string; is_active: boolean }> = {
+          launch: { id: 1, plan_code: "launch", price_inr: 399, currency: "INR", is_active: true },
+          build: { id: 2, plan_code: "build", price_inr: 999, currency: "INR", is_active: true },
+          deploy: { id: 3, plan_code: "deploy", price_inr: 2999, currency: "INR", is_active: true },
+          scale: { id: 4, plan_code: "scale", price_inr: 8999, currency: "INR", is_active: true },
+        };
+        const builder = {
+          eq: (_col: string, val: unknown) => ({
+            maybeSingle: async () => ({ data: catalog[String(val)] ?? null, error: null }),
+          }),
+        };
+        return {
+          select: () => builder,
+        };
+      }
       if (table === "payu_webhook_events") {
         const listEvents = () =>
           Array.from(payuEvents.values()).sort((a, b) => {
@@ -337,7 +353,7 @@ function makeSupabase(options?: {
       throw new Error(`Unexpected table ${table}`);
     },
     rpc(name: string, params?: Record<string, unknown>) {
-      if (name === "bump_usage_if_within_cap") {
+      if (name === "bump_usage_if_within_cap" || name === "record_usage_event_if_within_cap") {
         const pW = (params?.p_writes as number) ?? 0;
         const pR = (params?.p_reads as number) ?? 0;
         const pE = (params?.p_embeds as number) ?? 0;
@@ -623,7 +639,7 @@ describe("billing checkout + portal", () => {
     expect(supabase.workspace.payu_txn_id).toMatch(/^mn/);
     const txn = supabase.getTransactionRow(String(supabase.workspace.payu_txn_id));
     expect(txn?.status).toBe("initiated");
-    expect(txn?.amount).toBe("499.00");
+    expect(txn?.amount).toBe("999.00");
     expect(txn?.currency).toBe("INR");
   });
 
