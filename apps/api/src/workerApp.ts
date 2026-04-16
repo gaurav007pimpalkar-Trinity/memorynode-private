@@ -200,6 +200,8 @@ type ProductEventContext = {
   planStatus?: AuthContext["planStatus"];
 };
 
+type FounderMetricsRange = "24h" | "7d" | "30d";
+
 function emitEventLog(event_name: string, fields: Record<string, unknown>): void {
   logger.info({
     event: event_name,
@@ -1689,6 +1691,7 @@ async function handleRequestImpl(request: Request, env: Env): Promise<Response> 
         generateApiKey,
         getApiKeySalt,
         hashApiKey,
+        getFounderPhase1Metrics,
         setStubApiKeyIfPresent,
       };
       const memoryHandlers = createMemoryHandlers(handlerDeps, defaultMemoryHandlerDeps);
@@ -1756,13 +1759,14 @@ async function handleRequestImpl(request: Request, env: Env): Promise<Response> 
         try {
           await emitAuditLog(request, response, started, ip, env, supabase, auditCtx, requestId);
           const durationMs = Date.now() - started;
+          const routeGroup = classifyRouteGroup(url.pathname);
           const errorFields = await extractErrorLogFields(response);
           logger.info({
             event: "request_completed",
             request_id: requestId,
             workspace_id: auditCtx.workspaceId ?? null,
             route: url.pathname,
-            route_group: classifyRouteGroup(url.pathname),
+            route_group: routeGroup,
             method: request.method,
             status: response?.status ?? 0,
             status_code: response?.status ?? 0,
@@ -1771,6 +1775,17 @@ async function handleRequestImpl(request: Request, env: Env): Promise<Response> 
             ...(errorFields.error_code ? { error_type: errorFields.error_code } : {}),
             ...errorFields,
           });
+          if (supabase) {
+            await persistApiRequestEvent(supabase, {
+              requestId,
+              workspaceId: auditCtx.workspaceId,
+              route: url.pathname,
+              routeGroup,
+              method: request.method,
+              status: response?.status ?? 0,
+              latencyMs: durationMs,
+            });
+          }
         } catch (_) {
           /* Logging best-effort; avoid masking original error */
         }
@@ -1794,6 +1809,239 @@ function classifyRouteGroup(pathname: string): string {
   if (pathname === "/v1/import") return "import";
   if (pathname.startsWith("/v1/admin/") || pathname.startsWith("/admin/")) return "admin";
   return "unknown";
+}
+
+function rangeDurationMs(range: FounderMetricsRange): number {
+  return range === "24h" ? 24 * 60 * 60 * 1000 : range === "7d" ? 7 * 24 * 60 * 60 * 1000 : 30 * 24 * 60 * 60 * 1000;
+}
+
+function toFiniteNumber(value: unknown): number {
+  const n = Number(value);
+  return Number.isFinite(n) ? n : 0;
+}
+
+function safeIsoTime(value: unknown): number | null {
+  if (typeof value !== "string") return null;
+  const ms = Date.parse(value);
+  return Number.isFinite(ms) ? ms : null;
+}
+
+function percentile95(values: number[]): number | null {
+  if (values.length === 0) return null;
+  const sorted = [...values].sort((a, b) => a - b);
+  const index = (sorted.length - 1) * 0.95;
+  const lower = Math.floor(index);
+  const upper = Math.ceil(index);
+  if (lower === upper) return sorted[lower];
+  const weight = index - lower;
+  return sorted[lower] + (sorted[upper] - sorted[lower]) * weight;
+}
+
+async function persistApiRequestEvent(
+  supabase: SupabaseClient,
+  event: {
+    requestId: string;
+    workspaceId?: string;
+    route: string;
+    routeGroup: string;
+    method: string;
+    status: number;
+    latencyMs: number;
+  },
+): Promise<void> {
+  try {
+    await supabase.from("api_request_events").insert({
+      request_id: event.requestId,
+      workspace_id: event.workspaceId ?? null,
+      route: event.route,
+      route_group: event.routeGroup,
+      method: event.method,
+      status: event.status,
+      latency_ms: Math.max(0, Math.round(event.latencyMs)),
+    });
+  } catch (err) {
+    const message = (err as Error)?.message ?? "";
+    if (message.includes("Unexpected table: api_request_events")) return;
+    logger.error({
+      event: "api_request_event_persist_failed",
+      route: event.route,
+      request_id: event.requestId,
+      message: redact(message, "message"),
+    });
+  }
+}
+
+async function getFounderPhase1Metrics(
+  supabase: SupabaseClient,
+  range: FounderMetricsRange,
+): Promise<Record<string, unknown>> {
+  const nowMs = Date.now();
+  const spanMs = rangeDurationMs(range);
+  const currentStartMs = nowMs - spanMs;
+  const previousStartMs = currentStartMs - spanMs;
+  const previousPreviousStartMs = previousStartMs - spanMs;
+  const activationWindowMs = 7 * 24 * 60 * 60 * 1000;
+  const publicRouteGroups = ["memories", "search", "context", "usage", "import", "billing", "dashboard", "api_keys"];
+  const activationEventNames = ["api_key_created", "first_ingest_success", "first_search_success", "first_context_success"];
+
+  const currentStartIso = new Date(currentStartMs).toISOString();
+  const previousStartIso = new Date(previousStartMs).toISOString();
+  const previousPreviousStartIso = new Date(previousPreviousStartMs).toISOString();
+  const nowIso = new Date(nowMs).toISOString();
+
+  const [requestEventsRes, searchEventsRes, workspacesRes, activationEventsRes] = await Promise.all([
+    supabase
+      .from("api_request_events")
+      .select("workspace_id, created_at, route_group, status, latency_ms")
+      .gte("created_at", previousPreviousStartIso)
+      .lt("created_at", nowIso),
+    supabase
+      .from("product_events")
+      .select("workspace_id, created_at, event_name, props")
+      .eq("event_name", "search_executed")
+      .gte("created_at", previousStartIso)
+      .lt("created_at", nowIso),
+    supabase
+      .from("workspaces")
+      .select("id, created_at")
+      .gte("created_at", previousPreviousStartIso)
+      .lt("created_at", nowIso),
+    supabase
+      .from("product_events")
+      .select("workspace_id, created_at, event_name")
+      .in("event_name", activationEventNames)
+      .gte("created_at", previousPreviousStartIso)
+      .lt("created_at", nowIso),
+  ]);
+
+  if (requestEventsRes.error) {
+    throw createHttpError(500, "DB_ERROR", requestEventsRes.error.message ?? "Failed to load request telemetry");
+  }
+  if (searchEventsRes.error) {
+    throw createHttpError(500, "DB_ERROR", searchEventsRes.error.message ?? "Failed to load search telemetry");
+  }
+  if (workspacesRes.error) {
+    throw createHttpError(500, "DB_ERROR", workspacesRes.error.message ?? "Failed to load workspaces");
+  }
+  if (activationEventsRes.error) {
+    throw createHttpError(500, "DB_ERROR", activationEventsRes.error.message ?? "Failed to load activation events");
+  }
+
+  const requestEvents = ((requestEventsRes.data as Array<Record<string, unknown>> | null) ?? []).map((row) => ({
+    workspaceId: typeof row.workspace_id === "string" ? row.workspace_id : null,
+    createdAtMs: safeIsoTime(row.created_at) ?? 0,
+    routeGroup: typeof row.route_group === "string" ? row.route_group : "unknown",
+    status: toFiniteNumber(row.status),
+    latencyMs: toFiniteNumber(row.latency_ms),
+  }));
+  const searchEvents = ((searchEventsRes.data as Array<Record<string, unknown>> | null) ?? []).map((row) => {
+    const props = (row.props ?? {}) as Record<string, unknown>;
+    return {
+      workspaceId: typeof row.workspace_id === "string" ? row.workspace_id : null,
+      createdAtMs: safeIsoTime(row.created_at) ?? 0,
+      zeroResults: props.zero_results === true,
+      resultCount: toFiniteNumber(props.result_count),
+    };
+  });
+  const workspaces = ((workspacesRes.data as Array<Record<string, unknown>> | null) ?? []).map((row) => ({
+    id: typeof row.id === "string" ? row.id : "",
+    createdAtMs: safeIsoTime(row.created_at) ?? 0,
+  })).filter((row) => row.id);
+  const activationEvents = ((activationEventsRes.data as Array<Record<string, unknown>> | null) ?? []).map((row) => ({
+    workspaceId: typeof row.workspace_id === "string" ? row.workspace_id : "",
+    createdAtMs: safeIsoTime(row.created_at) ?? 0,
+  })).filter((row) => row.workspaceId);
+
+  const firstActivationAt = new Map<string, number>();
+  for (const event of activationEvents) {
+    const existing = firstActivationAt.get(event.workspaceId);
+    if (existing == null || event.createdAtMs < existing) firstActivationAt.set(event.workspaceId, event.createdAtMs);
+  }
+
+  const computeActivationRate = (windowStartMs: number, windowEndMs: number) => {
+    const cohort = workspaces.filter((row) => row.createdAtMs >= windowStartMs && row.createdAtMs < windowEndMs);
+    const activated = cohort.filter((row) => {
+      const activatedAt = firstActivationAt.get(row.id);
+      return activatedAt != null && activatedAt >= row.createdAtMs && activatedAt <= row.createdAtMs + activationWindowMs;
+    });
+    return {
+      numerator: activated.length,
+      denominator: cohort.length,
+      pct: cohort.length > 0 ? (activated.length / cohort.length) * 100 : 0,
+    };
+  };
+
+  const hasActivityInWindow = (workspaceId: string, windowStartMs: number, windowEndMs: number) =>
+    requestEvents.some((row) =>
+      row.workspaceId === workspaceId &&
+      row.createdAtMs >= windowStartMs &&
+      row.createdAtMs < windowEndMs &&
+      publicRouteGroups.includes(row.routeGroup),
+    );
+
+  const computeRetentionRate = (cohortStartMs: number, cohortEndMs: number, activityStartMs: number, activityEndMs: number) => {
+    const cohort = workspaces.filter((row) => row.createdAtMs >= cohortStartMs && row.createdAtMs < cohortEndMs);
+    const activated = cohort.filter((row) => {
+      const activatedAt = firstActivationAt.get(row.id);
+      return activatedAt != null && activatedAt >= row.createdAtMs && activatedAt <= row.createdAtMs + activationWindowMs;
+    });
+    const retained = activated.filter((row) => hasActivityInWindow(row.id, activityStartMs, activityEndMs));
+    return {
+      numerator: retained.length,
+      denominator: activated.length,
+      pct: activated.length > 0 ? (retained.length / activated.length) * 100 : 0,
+    };
+  };
+
+  const summarizeWindow = (windowStartMs: number, windowEndMs: number, retentionCohortStartMs: number, retentionCohortEndMs: number) => {
+    const reqs = requestEvents.filter((row) => row.createdAtMs >= windowStartMs && row.createdAtMs < windowEndMs);
+    const nonAdminReqs = reqs.filter((row) => row.status > 0 && row.routeGroup !== "admin");
+    const failures = nonAdminReqs.filter((row) => row.status >= 500);
+    const searchReqs = reqs.filter((row) => row.routeGroup === "search" && row.status > 0 && row.status < 500);
+    const searchWindowEvents = searchEvents.filter((row) => row.createdAtMs >= windowStartMs && row.createdAtMs < windowEndMs);
+    const activeWorkspaces = new Set(
+      reqs
+        .filter((row) => row.workspaceId && publicRouteGroups.includes(row.routeGroup))
+        .map((row) => row.workspaceId as string),
+    );
+    const activation = computeActivationRate(windowStartMs, windowEndMs);
+    const retention = computeRetentionRate(retentionCohortStartMs, retentionCohortEndMs, windowStartMs, windowEndMs);
+    const searchP95 = percentile95(searchReqs.map((row) => row.latencyMs));
+    const zeroResultCount = searchWindowEvents.filter((row) => row.zeroResults || row.resultCount === 0).length;
+
+    return {
+      api_uptime_pct: nonAdminReqs.length > 0 ? ((nonAdminReqs.length - failures.length) / nonAdminReqs.length) * 100 : 100,
+      http_5xx_rate_pct: nonAdminReqs.length > 0 ? (failures.length / nonAdminReqs.length) * 100 : 0,
+      search_latency_p95_ms: searchP95 == null ? null : Math.round(searchP95),
+      zero_result_rate_pct: searchWindowEvents.length > 0 ? (zeroResultCount / searchWindowEvents.length) * 100 : 0,
+      active_workspaces: activeWorkspaces.size,
+      activation_rate_pct: activation.pct,
+      retention_7d_pct: retention.pct,
+      counts: {
+        requests: nonAdminReqs.length,
+        failures_5xx: failures.length,
+        searches: searchWindowEvents.length,
+        zero_result_searches: zeroResultCount,
+        new_workspaces: activation.denominator,
+        activated_workspaces: activation.numerator,
+        retention_cohort: retention.denominator,
+        retained_workspaces: retention.numerator,
+      },
+    };
+  };
+
+  return {
+    generated_at: new Date(nowMs).toISOString(),
+    range,
+    current: summarizeWindow(currentStartMs, nowMs, previousStartMs, currentStartMs),
+    previous: summarizeWindow(previousStartMs, currentStartMs, previousPreviousStartMs, previousStartMs),
+    windows: {
+      current_start: currentStartIso,
+      current_end: nowIso,
+      previous_start: previousStartIso,
+      previous_end: currentStartIso,
+    },
+  };
 }
 
 function createSupabaseClient(env: Env): SupabaseClient {
@@ -1836,6 +2084,7 @@ let stubState: {
     api_audit_log: StubRow[];
     app_settings: StubRow[];
     product_events: StubRow[];
+    api_request_events: StubRow[];
     payu_webhook_events: StubRow[];
     payu_transactions: StubRow[];
     dashboard_sessions: StubRow[];
@@ -1862,6 +2111,7 @@ function createStubSupabase(env: Env) {
         api_audit_log: [] as StubRow[],
         app_settings: [{ api_key_salt: env.API_KEY_SALT ?? "" }],
         product_events: [] as StubRow[],
+        api_request_events: [] as StubRow[],
         payu_webhook_events: [] as StubRow[],
         payu_transactions: [] as StubRow[],
         dashboard_sessions: [] as StubRow[],
@@ -1907,6 +2157,10 @@ function createStubSupabase(env: Env) {
         count ? rows.filter((r) => r[col] === val).length : undefined,
       );
     },
+    in(col: string, vals: unknown[]) {
+      const filtered = rows.filter((r) => vals.includes(r[col]));
+      return makeResult(filtered, count ? filtered.length : undefined);
+    },
     is(col: string, val: unknown) {
       return this.eq(col, val);
     },
@@ -1914,6 +2168,12 @@ function createStubSupabase(env: Env) {
       return makeResult(
         rows.filter((r) => (r[col] as string) >= (val as string)),
         count ? rows.filter((r) => (r[col] as string) >= (val as string)).length : undefined,
+      );
+    },
+    lt(col: string, val: unknown) {
+      return makeResult(
+        rows.filter((r) => (r[col] as string) < (val as string)),
+        count ? rows.filter((r) => (r[col] as string) < (val as string)).length : undefined,
       );
     },
     lte(col: string, val: unknown) {
@@ -3939,6 +4199,7 @@ const defaultAdminHandlerDeps: AdminHandlerDeps = {
   rateLimit,
   emitEventLog,
   redact,
+  getFounderPhase1Metrics,
   reconcilePayUWebhook: reconcilePayUWebhook as AdminHandlerDeps["reconcilePayUWebhook"],
   defaultWebhookReprocessLimit: DEFAULT_WEBHOOK_REPROCESS_LIMIT,
   asNonEmptyString,
@@ -3999,6 +4260,7 @@ export const handleBillingWebhook = webhookHandlersDefault.handleBillingWebhook;
 export const handleReprocessDeferredWebhooks = adminHandlersDefault.handleReprocessDeferredWebhooks;
 export const handleReconcileUsageRefunds = adminHandlersDefault.handleReconcileUsageRefunds;
 export const handleAdminBillingHealth = adminHandlersDefault.handleAdminBillingHealth;
+export const handleFounderPhase1Metrics = adminHandlersDefault.handleFounderPhase1Metrics;
 export const handleCleanupExpiredSessions = adminHandlersDefault.handleCleanupExpiredSessions;
 export const handleMemoryHygiene = adminHandlersDefault.handleMemoryHygiene;
 export const handleImport = importHandlersDefault.handleImport;

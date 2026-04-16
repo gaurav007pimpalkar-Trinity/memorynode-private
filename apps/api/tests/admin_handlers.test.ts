@@ -20,6 +20,38 @@ const baseEnv: Record<string, unknown> = {
 };
 
 describe("Admin: require admin token", () => {
+  it("GET /v1/admin/founder/phase1 returns 401 without x-admin-token", async () => {
+    const env = { ...baseEnv, SUPABASE_MODE: "stub" };
+    const res = await api.fetch(
+      new Request("http://localhost/v1/admin/founder/phase1?range=7d"),
+      env as FetchEnv,
+    );
+    expect(res.status).toBe(401);
+    const json = await res.json();
+    expect(json.error?.code).toBe("UNAUTHORIZED");
+  });
+
+  it("GET /v1/admin/founder/phase1 returns metrics with valid x-admin-token (stub)", async () => {
+    const env = { ...baseEnv, SUPABASE_MODE: "stub" };
+    const res = await api.fetch(
+      new Request("http://localhost/v1/admin/founder/phase1?range=7d", {
+        headers: { "x-admin-token": "admin-token-123" },
+      }),
+      env as FetchEnv,
+    );
+    expect(res.status).toBe(200);
+    const json = await res.json();
+    expect(json.range).toBe("7d");
+    expect(json).toHaveProperty("current");
+    expect(json.current).toHaveProperty("api_uptime_pct");
+    expect(json.current).toHaveProperty("http_5xx_rate_pct");
+    expect(json.current).toHaveProperty("search_latency_p95_ms");
+    expect(json.current).toHaveProperty("zero_result_rate_pct");
+    expect(json.current).toHaveProperty("active_workspaces");
+    expect(json.current).toHaveProperty("activation_rate_pct");
+    expect(json.current).toHaveProperty("retention_7d_pct");
+  });
+
   it("GET /v1/admin/billing/health returns 401 without x-admin-token", async () => {
     const env = { ...baseEnv, SUPABASE_MODE: "stub" };
     const res = await api.fetch(

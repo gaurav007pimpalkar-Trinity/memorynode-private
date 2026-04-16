@@ -1,8 +1,10 @@
-# Supabase Google OAuth (console)
+# Supabase Google OAuth (console only)
 
 Use this when **Continue with Google** fails with Supabase `400` / `validation_failed` and **`Unsupported provider: provider is not enabled`**, or when redirects are rejected.
 
-The dashboard calls `signInWithOAuth({ provider: "google", options: { redirectTo: window.location.origin } })` from `apps/dashboard/src/App.tsx`. Production uses `https://console.memorynode.ai` as `redirect_to`.
+The customer console calls `signInWithOAuth({ provider: "google", options: { redirectTo: window.location.origin } })` from `apps/dashboard/src/App.tsx`. Production uses `https://console.memorynode.ai` as `redirect_to`.
+
+The founder app on `https://app.memorynode.ai/founder` does not use Supabase login; it stays admin-token protected.
 
 ---
 

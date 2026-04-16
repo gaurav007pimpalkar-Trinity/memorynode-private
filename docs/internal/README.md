@@ -279,7 +279,7 @@ It checks `/healthz`, validates authenticated usage/search/context paths, and ve
    - `MASTER_ADMIN_TOKEN`
    - `EMBEDDINGS_MODE` (`openai` or `stub`; use `stub` for local dev to avoid OpenAI calls)
 
-Migration manifest (CI-checked): `MIGRATIONS_TOTAL=47; MIGRATIONS_LATEST=045_record_usage_event_conflict_targets_fix.sql`
+Migration manifest (CI-checked): `MIGRATIONS_TOTAL=48; MIGRATIONS_LATEST=046_founder_phase1_request_telemetry.sql`
 
 ## Admin & Bootstrap
 - Admin endpoints require header `x-admin-token: $MASTER_ADMIN_TOKEN`.
@@ -408,9 +408,11 @@ Canonical deploy/rollback workflow: `docs/internal/RELEASE_RUNBOOK.md`, `docs/in
 
 ## Dashboard deployment (merged from DASHBOARD_DEPLOY.md)
 
-Production deploy path for the MemoryNode dashboard (workspace, API keys, memories, usage, billing).
+Production deploy path for the separated MemoryNode frontends:
+- `memorynode-console` -> `https://console.memorynode.ai`
+- `memorynode-app` -> `https://app.memorynode.ai/founder`
 
-**URL:** Production: `https://console.memorynode.ai` (or your configured domain). Local: `pnpm --filter @memorynode/dashboard dev` → http://localhost:5173.
+**URLs:** Console: `https://console.memorynode.ai`. Founder: `https://app.memorynode.ai/founder`. Local: `pnpm --filter @memorynode/dashboard dev` → http://localhost:4173.
 
 ### Deploy (Cloudflare Pages)
 
@@ -418,20 +420,20 @@ Production deploy path for the MemoryNode dashboard (workspace, API keys, memori
 1. Cloudflare dashboard → Workers & Pages → Create application → Pages → Connect to Git.  
 2. Select this repo and branch (e.g. `main`).  
 3. Build configuration: Root directory leave empty (repo root); Build command: `pnpm install && pnpm --filter @memorynode/dashboard build`; Build output directory: `apps/dashboard/dist`.  
-4. Environment variables (Settings → Environment variables → Production): `VITE_SUPABASE_URL`, `VITE_SUPABASE_ANON_KEY`, `VITE_API_BASE_URL` (e.g. `https://api.memorynode.ai`).  
-5. Custom domain: Add `console.memorynode.ai`.
-6. DNS: CNAME for `app` (or `app.memorynode`) to the Pages URL.
+4. Environment variables (Settings → Environment variables → Production): `VITE_API_BASE_URL`, `VITE_APP_SURFACE`, `VITE_CONSOLE_BASE_URL`; console also needs `VITE_SUPABASE_URL` and `VITE_SUPABASE_ANON_KEY`.  
+5. Custom domains: add `console.memorynode.ai` to `memorynode-console` and `app.memorynode.ai` to `memorynode-app`.
+6. Founder routing: `apps/dashboard/public/_redirects` serves `/founder` as SPA entry.
 
 Security headers (CSP, X-Content-Type-Options, etc.) are in `apps/dashboard/public/_headers`.
 
 **Option B: Direct upload (CLI)**  
-From repo root: `pnpm install && pnpm --filter @memorynode/dashboard build`, then `cd apps/dashboard` and `pnpm exec wrangler pages deploy dist --project-name=memorynode-dashboard`. Add env vars and custom domain in dashboard.
+From repo root: `pnpm install && pnpm --filter @memorynode/dashboard build`, then `cd apps/dashboard` and `pnpm exec wrangler pages deploy dist --project-name=memorynode-console` (or `memorynode-app`). Add env vars and custom domains in dashboard.
 
 **Vercel (alternative):** Use `apps/dashboard/vercel.json`; `cd apps/dashboard && vercel --prod`; set same env vars and domain.
 
-**CORS:** Ensure `ALLOWED_ORIGINS` in the API Worker includes your dashboard URL (e.g. `https://console.memorynode.ai`).
+**CORS:** Ensure `ALLOWED_ORIGINS` in the API Worker includes `https://console.memorynode.ai,https://app.memorynode.ai`.
 
-**Post-deploy:** [ ] `https://console.memorynode.ai` loads; [ ] Sign in works; [ ] Session → workspace → API key flow works; [ ] API calls succeed (session cookie, CSRF).
+**Post-deploy:** [ ] `https://console.memorynode.ai` loads; [ ] `https://app.memorynode.ai/founder` loads; [ ] Sign in works on console; [ ] Session → workspace → API key flow works; [ ] Founder app requires admin token; [ ] API calls succeed (session cookie, CSRF on console).
 
 ---
 

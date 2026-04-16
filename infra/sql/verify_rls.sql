@@ -18,6 +18,7 @@ with required_tables(relname) as (
     ('usage_daily_v2'),
     ('invoice_lines'),
     ('usage_alert_events'),
+    ('api_request_events'),
     ('usage_daily'),
     ('workspace_entitlements'),
     ('workspaces'),

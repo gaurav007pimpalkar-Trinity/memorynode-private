@@ -23,6 +23,10 @@ export interface AdminHandlerDeps extends HandlerDeps {
   rateLimit: (keyHash: string, env: Env, auth?: { keyCreatedAt?: string | null }) => Promise<{ allowed: boolean; headers: Record<string, string> }>;
   emitEventLog: (event_name: string, fields: Record<string, unknown>) => void;
   redact: (value: unknown, keyHint?: string) => unknown;
+  getFounderPhase1Metrics: (
+    supabase: SupabaseClient,
+    range: "24h" | "7d" | "30d",
+  ) => Promise<Record<string, unknown>>;
   reconcilePayUWebhook: (
     payload: PayUWebhookPayloadLike,
     supabase: SupabaseClient,
@@ -56,6 +60,12 @@ export function createAdminHandlers(
     deps?: HandlerDeps,
   ) => Promise<Response>;
   handleAdminBillingHealth: (
+    request: Request,
+    env: Env,
+    supabase: SupabaseClient,
+    deps?: HandlerDeps,
+  ) => Promise<Response>;
+  handleFounderPhase1Metrics: (
     request: Request,
     env: Env,
     supabase: SupabaseClient,
@@ -401,6 +411,34 @@ export function createAdminHandlers(
         200,
         rate.headers,
       );
+    },
+
+    async handleFounderPhase1Metrics(request, env, supabase, deps?) {
+      const d = (deps ?? defaultDeps) as AdminHandlerDeps;
+      const { jsonResponse } = d;
+      await guardAdminIp(request, env, d);
+      const { token } = await d.requireAdmin(request, env);
+      const rate = await d.rateLimit(`admin:founder-phase1:${token}`, env);
+      if (!rate.allowed) {
+        return jsonResponse(
+          { error: { code: "rate_limited", message: "Rate limit exceeded" } },
+          429,
+          rate.headers,
+        );
+      }
+
+      const url = new URL(request.url);
+      const rangeRaw = (url.searchParams.get("range") ?? "7d").trim().toLowerCase();
+      if (rangeRaw !== "24h" && rangeRaw !== "7d" && rangeRaw !== "30d") {
+        return jsonResponse(
+          { error: { code: "BAD_REQUEST", message: "range must be one of: 24h, 7d, 30d" } },
+          400,
+          rate.headers,
+        );
+      }
+
+      const metrics = await d.getFounderPhase1Metrics(supabase, rangeRaw);
+      return jsonResponse(metrics, 200, rate.headers);
     },
 
     /**

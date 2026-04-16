@@ -279,6 +279,26 @@ export function createSearchHandlers(
         { body_bytes: Number(request.headers.get("content-length") ?? "0") || undefined },
         true,
       );
+      void d.emitProductEvent(
+        supabase,
+        "search_executed",
+        {
+          workspaceId: auth.workspaceId,
+          requestId,
+          route: "/v1/search",
+          method: "POST",
+          status: 200,
+          effectivePlan: d.effectivePlan(auth.plan, auth.planStatus),
+          planStatus: auth.planStatus,
+        },
+        {
+          result_count: outcome.total,
+          zero_results: outcome.total === 0,
+          page: outcome.page,
+          page_size: outcome.page_size,
+          has_more: outcome.has_more,
+        },
+      );
       if (reservationId) {
         await d.markUsageReservationCommitted(supabase, reservationId);
       }

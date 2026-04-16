@@ -1,6 +1,7 @@
-# Cloudflare Pages — MemoryNode console (console.memorynode.ai)
-# Deploy: from repo root: pnpm --filter @memorynode/dashboard build && pnpm --filter @memorynode/dashboard exec wrangler pages deploy dist --project-name=memorynode-dashboard
-# Or connect this repo in Cloudflare dashboard and use build config below.
+# Cloudflare Pages shared frontend config.
+# Deploy console: pnpm --filter @memorynode/dashboard build && pnpm --filter @memorynode/dashboard exec wrangler pages deploy dist --project-name=memorynode-console
+# Deploy founder app: pnpm --filter @memorynode/dashboard build && pnpm --filter @memorynode/dashboard exec wrangler pages deploy dist --project-name=memorynode-app
+# Use VITE_APP_SURFACE=console for console.memorynode.ai and VITE_APP_SURFACE=app for app.memorynode.ai.
 
-name = "memorynode-dashboard"
+name = "memorynode-console"
 pages_build_output_dir = "./dist"

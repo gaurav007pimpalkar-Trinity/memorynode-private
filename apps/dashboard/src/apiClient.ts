@@ -70,7 +70,11 @@ export function userFacingErrorMessage(err: unknown): string {
   return err instanceof Error ? err.message : String(err);
 }
 
-async function fetchJson<T>(path: string, init: RequestInit): Promise<T> {
+async function fetchJson<T>(
+  path: string,
+  init: RequestInit,
+  opts?: { suppressUnauthorizedHandling?: boolean },
+): Promise<T> {
   if (!API_BASE_URL) {
     throw new ApiClientError(0, "CONFIG", apiEnvError ?? "VITE_API_BASE_URL is not configured.");
   }
@@ -86,7 +90,7 @@ async function fetchJson<T>(path: string, init: RequestInit): Promise<T> {
     /* ignore */
   }
   if (!res.ok) {
-    if (res.status === 401 || res.status === 403) {
+    if (!opts?.suppressUnauthorizedHandling && (res.status === 401 || res.status === 403)) {
       setCsrfToken(null);
       onUnauthorized?.();
     }
@@ -146,4 +150,15 @@ export async function apiPost<T>(path: string, body: unknown = {}, extraHeaders?
 
 export async function apiGet<T>(path: string): Promise<T> {
   return fetchJson<T>(path, { method: "GET" });
+}
+
+export async function adminGet<T>(path: string, adminToken: string): Promise<T> {
+  return fetchJson<T>(
+    path,
+    {
+      method: "GET",
+      headers: { "x-admin-token": adminToken },
+    },
+    { suppressUnauthorizedHandling: true },
+  );
 }

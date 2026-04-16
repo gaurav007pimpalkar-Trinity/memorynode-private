@@ -20,6 +20,7 @@ with required_tables(name) as (
     ('usage_daily_v2'),
     ('invoice_lines'),
     ('usage_alert_events'),
+    ('api_request_events'),
     ('memorynode_migrations'),
     ('dashboard_sessions'),
     ('eval_sets'),

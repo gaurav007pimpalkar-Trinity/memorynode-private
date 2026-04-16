@@ -1,12 +1,15 @@
-# Console Deployment
+# Frontend Deployment
 
-Production deploy path for the MemoryNode console (overview, documents, requests, API keys, team, billing).
+Production deploy path for the separated MemoryNode frontends:
+- `memorynode-console` -> `https://console.memorynode.ai`
+- `memorynode-app` -> `https://app.memorynode.ai/founder`
 
 ---
 
-## URL
+## URLs
 
-- **Production:** `https://console.memorynode.ai` (or your configured domain)
+- **Console:** `https://console.memorynode.ai`
+- **Founder app:** `https://app.memorynode.ai/founder`
 - **Local:** `pnpm --filter @memorynode/dashboard dev` → http://localhost:5173
 
 ---
@@ -22,12 +25,16 @@ Production deploy path for the MemoryNode console (overview, documents, requests
    - **Build command:** `pnpm install && pnpm --filter @memorynode/dashboard build`
    - **Build output directory:** `apps/dashboard/dist` — when building from repo root, the output is under the repo; use this path exactly (not `dist`).
 4. **Environment variables** (Settings → Environment variables → Production):
-   - `VITE_SUPABASE_URL` — your Supabase project URL
-   - `VITE_SUPABASE_ANON_KEY` — Supabase anon/public key
    - `VITE_API_BASE_URL` — `https://api.memorynode.ai`
-5. **Auth (Google login):** Enable the Google provider in Supabase, configure Google Cloud redirect URI, and allowlist `https://console.memorynode.ai`. See [SUPABASE_GOOGLE_OAUTH_SETUP.md](./SUPABASE_GOOGLE_OAUTH_SETUP.md).
-6. **Custom domain:** Settings → Custom domains → Add `console.memorynode.ai`.
-7. **DNS:** In your DNS provider, add a CNAME for `app` (or `app.memorynode`) pointing to the Pages URL Cloudflare shows (e.g. `memorynode-dashboard.pages.dev`), or use Cloudflare DNS and add the domain in the Pages project.
+   - `VITE_APP_SURFACE` — `console` for `memorynode-console`, `app` for `memorynode-app`
+   - `VITE_CONSOLE_BASE_URL` — `https://console.memorynode.ai`
+   - `VITE_SUPABASE_URL` — required for `memorynode-console`
+   - `VITE_SUPABASE_ANON_KEY` — required for `memorynode-console`
+5. **Console auth:** Enable the Google provider in Supabase, configure Google Cloud redirect URI, and allowlist `https://console.memorynode.ai`. See [SUPABASE_GOOGLE_OAUTH_SETUP.md](./SUPABASE_GOOGLE_OAUTH_SETUP.md).
+6. **Custom domains:**
+   - `memorynode-console` -> `console.memorynode.ai`
+   - `memorynode-app` -> `app.memorynode.ai`
+7. **Founder routing:** direct navigation to `/founder` is supported by `apps/dashboard/public/_redirects`.
 
 Security headers (CSP, X-Content-Type-Options, etc.) are in `apps/dashboard/public/_headers` and are included in the build output.
 
@@ -39,15 +46,26 @@ From repo root:
 pnpm install
 pnpm --filter @memorynode/dashboard build
 cd apps/dashboard
-pnpm exec wrangler pages deploy dist --project-name=memorynode-dashboard
+pnpm exec wrangler pages deploy dist --project-name=memorynode-console
 ```
 
-Create the project once in the dashboard if needed: Workers & Pages → Create → Pages → Direct Upload → create project `memorynode-dashboard`. Then add env vars in the dashboard and set custom domain `console.memorynode.ai`.
+Create the projects once in the dashboard if needed:
+- `memorynode-console`
+- `memorynode-app`
 
-**Required env vars (Cloudflare Pages project settings):**
-- `VITE_SUPABASE_URL` — Supabase project URL
-- `VITE_SUPABASE_ANON_KEY` — Supabase anon/public key  
-- `VITE_API_BASE_URL` — e.g. `https://api.memorynode.ai`
+Then add env vars per project and set custom domains `console.memorynode.ai` and `app.memorynode.ai`.
+
+**Console env vars (`memorynode-console`):**
+- `VITE_SUPABASE_URL`
+- `VITE_SUPABASE_ANON_KEY`
+- `VITE_API_BASE_URL=https://api.memorynode.ai`
+- `VITE_APP_SURFACE=console`
+- `VITE_CONSOLE_BASE_URL=https://console.memorynode.ai`
+
+**Founder env vars (`memorynode-app`):**
+- `VITE_API_BASE_URL=https://api.memorynode.ai`
+- `VITE_APP_SURFACE=app`
+- `VITE_CONSOLE_BASE_URL=https://console.memorynode.ai`
 
 ---
 
@@ -66,7 +84,9 @@ Set the same env vars in Vercel and add custom domain `console.memorynode.ai`.
 
 ## CORS
 
-Ensure `ALLOWED_ORIGINS` in the API Worker includes your console URL (e.g. `https://console.memorynode.ai`). Set in Cloudflare Worker vars or `wrangler secret` / dashboard env for the API.
+Ensure `ALLOWED_ORIGINS` in the API Worker includes both frontend origins:
+- `https://console.memorynode.ai`
+- `https://app.memorynode.ai`
 
 ---
 
@@ -89,7 +109,9 @@ The console Overview calls **`GET /v1/dashboard/overview-stats`**, which uses th
 ## Post-deploy
 
 - [ ] `https://console.memorynode.ai` loads
+- [ ] `https://app.memorynode.ai/founder` loads
 - [ ] Sign in works (Supabase Auth); for Google, follow [SUPABASE_GOOGLE_OAUTH_SETUP.md](./SUPABASE_GOOGLE_OAUTH_SETUP.md) and confirm **Continue with Google** → Google consent → return signed in
 - [ ] Session → workspace → API key flow works
 - [ ] API calls succeed (session cookie, CSRF)
+- [ ] Founder app requires valid admin token to load metrics
 - [ ] **Overview** tab shows numeric metrics (not a persistent error); timeframe **1d / 7d / 30d / All** updates counts after migration **033** and API deploy

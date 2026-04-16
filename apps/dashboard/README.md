@@ -1,9 +1,10 @@
-# MemoryNode Console
+# MemoryNode Frontends
 
-Minimal console MVP with Supabase Auth (Google + GitHub OAuth + magic link) and RLS-safe views for workspaces, API keys, team management, and billing.
+Shared frontend codebase for:
+- `console.memorynode.ai` -> customer console
+- `app.memorynode.ai/founder` -> founder dashboard
 
-**Production Google login:** operators must enable the Google provider and redirect allowlist in Supabase — see [`docs/internal/SUPABASE_GOOGLE_OAUTH_SETUP.md`](../../docs/internal/SUPABASE_GOOGLE_OAUTH_SETUP.md).
-Worker API billing controls are wired to PayU checkout using your normal API key (stored locally).
+The console uses Supabase Auth (Google + GitHub OAuth + magic link) and workspace-scoped dashboard sessions. The founder app uses admin-token access only.
 
 ## Run locally
 
@@ -23,9 +24,17 @@ Create `.env.local` (or `.env`) in `apps/dashboard/`:
 VITE_SUPABASE_URL=<your-supabase-url>
 VITE_SUPABASE_ANON_KEY=<your-anon-public-key>
 VITE_API_BASE_URL=http://127.0.0.1:8787
+VITE_APP_SURFACE=console
+VITE_CONSOLE_BASE_URL=https://console.memorynode.ai
 ```
 
-Use the **anon** (not service-role) key so browser traffic is RLS-enforced.
+Use the **anon** (not service-role) key so browser traffic is RLS-enforced. Founder-only deployments can omit the Supabase vars if they do not render the customer console surface.
+
+## Surfaces
+
+- `VITE_APP_SURFACE=console` renders the customer console for `console.memorynode.ai`
+- `VITE_APP_SURFACE=app` renders the founder app and owns `/founder` on `app.memorynode.ai`
+- `VITE_CONSOLE_BASE_URL` controls the “Open customer console” link from the founder app
 
 ## Workspace scoping / RLS
 
@@ -58,7 +67,7 @@ Use the **anon** (not service-role) key so browser traffic is RLS-enforced.
 `vite build` requires a **non-localhost** `VITE_API_BASE_URL` in production mode.
 
 - **CI:** set `VITE_API_BASE_URL` in the workflow or host (see root `.github/workflows/ci.yml`).
-- **Local:** copy [`.env.production.example`](./.env.production.example) to **`.env.production`** in this folder (gitignored), set your real API origin, then run `pnpm build` from `apps/dashboard` or `pnpm --filter @memorynode/dashboard build` from the repo root.
+- **Local:** copy [`.env.production.example`](./.env.production.example), [`.env.console.production.example`](./.env.console.production.example), or [`.env.app.production.example`](./.env.app.production.example) to **`.env.production`** in this folder (gitignored), set your real origins, then run `pnpm build` from `apps/dashboard` or `pnpm --filter @memorynode/dashboard build` from the repo root.
 
 ## Commands
 
