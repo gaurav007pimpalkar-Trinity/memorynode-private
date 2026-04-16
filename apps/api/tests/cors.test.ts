@@ -31,6 +31,7 @@ describe("CORS strict allowlist", () => {
       baseEnv as unknown as FetchEnv,
     );
     expect(res.headers.get("access-control-allow-origin")).toBe("https://allowed.com");
+    expect(res.headers.get("access-control-allow-credentials")).toBe("true");
     expect(res.headers.get("vary")).toBe("Origin");
   });
 
@@ -55,6 +56,7 @@ describe("CORS strict allowlist", () => {
     );
     expect(res.status).toBe(204);
     expect(res.headers.get("access-control-allow-origin")).toBe("https://allowed.com");
+    expect(res.headers.get("access-control-allow-credentials")).toBe("true");
     expect(res.headers.get("access-control-allow-headers")).toContain("authorization");
     expect(res.headers.get("x-content-type-options")).toBe("nosniff");
   });

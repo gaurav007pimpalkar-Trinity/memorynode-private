@@ -23,6 +23,7 @@ describe("CORS allowlist", () => {
     });
     expect(makeCorsHeaders("https://a.com", ["https://a.com"])).toMatchObject({
       "access-control-allow-origin": "https://a.com",
+      "access-control-allow-credentials": "true",
       vary: "Origin",
       "access-control-allow-methods": "GET,POST,OPTIONS,DELETE",
     });

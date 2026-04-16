@@ -135,7 +135,11 @@ export function makeCorsHeaders(
     return { ...base, "access-control-allow-origin": "*" };
   }
   if (allowlist.includes(origin)) {
-    return { ...base, "access-control-allow-origin": origin };
+    return {
+      ...base,
+      "access-control-allow-origin": origin,
+      "access-control-allow-credentials": "true",
+    };
   }
   return {};
 }
