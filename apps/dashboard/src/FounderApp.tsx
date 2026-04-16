@@ -2,7 +2,6 @@ import { useEffect, useMemo, useState } from "react";
 import { adminGet, apiEnvError, userFacingErrorMessage } from "./apiClient";
 import { isFounderPath } from "./appSurface";
 
-const FOUNDER_ADMIN_TOKEN_STORAGE_KEY = "mn_founder_admin_token";
 const CONSOLE_BASE_URL = (import.meta.env.VITE_CONSOLE_BASE_URL as string | undefined)?.trim() || "https://console.memorynode.ai";
 
 type FounderPhase1Summary = {
@@ -53,8 +52,8 @@ export function FounderApp(): JSX.Element {
   }, []);
 
   const [range, setRange] = useState<"24h" | "7d" | "30d">("7d");
-  const [adminToken, setAdminToken] = useState(() => sessionStorage.getItem(FOUNDER_ADMIN_TOKEN_STORAGE_KEY) ?? "");
-  const [tokenSaved, setTokenSaved] = useState(() => Boolean(sessionStorage.getItem(FOUNDER_ADMIN_TOKEN_STORAGE_KEY)));
+  const [adminTokenInput, setAdminTokenInput] = useState("");
+  const [adminToken, setAdminToken] = useState("");
   const [data, setData] = useState<FounderPhase1Response | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -65,27 +64,24 @@ export function FounderApp(): JSX.Element {
   }, []);
 
   const saveToken = () => {
-    const trimmed = adminToken.trim();
+    const trimmed = adminTokenInput.trim();
     if (!trimmed) {
-      sessionStorage.removeItem(FOUNDER_ADMIN_TOKEN_STORAGE_KEY);
-      setTokenSaved(false);
+      setAdminToken("");
       return;
     }
-    sessionStorage.setItem(FOUNDER_ADMIN_TOKEN_STORAGE_KEY, trimmed);
-    setTokenSaved(true);
     setAdminToken(trimmed);
+    setAdminTokenInput(trimmed);
   };
 
   const clearToken = () => {
-    sessionStorage.removeItem(FOUNDER_ADMIN_TOKEN_STORAGE_KEY);
-    setTokenSaved(false);
     setAdminToken("");
+    setAdminTokenInput("");
     setData(null);
     setError(null);
   };
 
   useEffect(() => {
-    if (!tokenSaved || !adminToken.trim()) return;
+    if (!adminToken.trim()) return;
     let cancelled = false;
     setLoading(true);
     setError(null);
@@ -104,7 +100,7 @@ export function FounderApp(): JSX.Element {
     return () => {
       cancelled = true;
     };
-  }, [range, adminToken, tokenSaved]);
+  }, [range, adminToken]);
 
   if (missingEnv.length > 0) {
     return (
@@ -193,15 +189,15 @@ export function FounderApp(): JSX.Element {
           <div className="row">
             <input
               type="password"
-              value={adminToken}
-              onChange={(e) => setAdminToken(e.target.value)}
+              value={adminTokenInput}
+              onChange={(e) => setAdminTokenInput(e.target.value)}
               placeholder="Enter founder admin token"
             />
-            <button type="button" onClick={saveToken} disabled={!adminToken.trim()}>Save token</button>
+            <button type="button" onClick={saveToken} disabled={!adminTokenInput.trim()}>Use token</button>
             <button className="ghost" type="button" onClick={clearToken}>Clear</button>
           </div>
           <div className="muted small">
-            Founder metrics live at <code>/founder</code>. The token is stored in session storage for this browser tab only.
+            Founder metrics live at <code>/founder</code>. The token stays in memory only and is cleared on refresh or tab close.
           </div>
         </FounderPanel>
 
@@ -212,7 +208,7 @@ export function FounderApp(): JSX.Element {
               type="button"
               className={range === r ? "timeframe-btn timeframe-btn--active" : "timeframe-btn"}
               onClick={() => setRange(r)}
-              disabled={!tokenSaved}
+              disabled={!adminToken.trim()}
             >
               {r}
             </button>
@@ -220,7 +216,7 @@ export function FounderApp(): JSX.Element {
         </div>
 
         {error && <div className="badge">{error}</div>}
-        {!tokenSaved && <div className="badge">Save a valid admin token to load founder metrics.</div>}
+        {!adminToken.trim() && <div className="badge">Enter a valid admin token to load founder metrics.</div>}
         {loading && <FounderPanel title="Loading">Fetching founder metrics…</FounderPanel>}
 
         {!loading && data && (
