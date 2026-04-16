@@ -83,10 +83,24 @@ jobs:
 
       - name: Validate deploy env
         run: |
+          # Match apps/api + scripts/deploy_staging: unset BILLING_WEBHOOKS_ENABLED defaults to on.
+          raw="${BILLING_WEBHOOKS_ENABLED:-1}"
+          raw_lc=$(echo "$raw" | tr '[:upper:]' '[:lower:]')
+          billing_on=1
+          case "$raw_lc" in
+            0|false|off|no|disabled) billing_on=0 ;;
+          esac
           missing=()
-          for key in CLOUDFLARE_API_TOKEN DATABASE_URL BASE_URL MEMORYNODE_API_KEY SUPABASE_URL SUPABASE_SERVICE_ROLE_KEY API_KEY_SALT MASTER_ADMIN_TOKEN EMBEDDINGS_MODE BILLING_WEBHOOKS_ENABLED PAYU_MERCHANT_KEY PAYU_MERCHANT_SALT PAYU_BASE_URL PAYU_VERIFY_URL PUBLIC_APP_URL; do
+          for key in CLOUDFLARE_API_TOKEN DATABASE_URL BASE_URL MEMORYNODE_API_KEY SUPABASE_URL SUPABASE_SERVICE_ROLE_KEY API_KEY_SALT MASTER_ADMIN_TOKEN EMBEDDINGS_MODE BILLING_WEBHOOKS_ENABLED PUBLIC_APP_URL; do
             [[ -z "${!key}" ]] && missing+=("$key")
           done
+          if [[ "$billing_on" -eq 1 ]]; then
+            for key in PAYU_MERCHANT_KEY PAYU_MERCHANT_SALT PAYU_BASE_URL PAYU_VERIFY_URL; do
+              [[ -z "${!key}" ]] && missing+=("$key")
+            done
+          else
+            echo "Billing webhooks disabled (BILLING_WEBHOOKS_ENABLED=$raw): PayU secrets not required for deploy."
+          fi
           if [[ "$EMBEDDINGS_MODE" == "openai" && -z "$OPENAI_API_KEY" ]]; then
             missing+=("OPENAI_API_KEY")
           fi
@@ -152,10 +166,23 @@ jobs:
 
       - name: Validate deploy env
         run: |
+          raw="${BILLING_WEBHOOKS_ENABLED:-1}"
+          raw_lc=$(echo "$raw" | tr '[:upper:]' '[:lower:]')
+          billing_on=1
+          case "$raw_lc" in
+            0|false|off|no|disabled) billing_on=0 ;;
+          esac
           missing=()
-          for key in CLOUDFLARE_API_TOKEN DATABASE_URL BASE_URL MEMORYNODE_API_KEY SUPABASE_URL SUPABASE_SERVICE_ROLE_KEY SUPABASE_ANON_KEY ALLOWED_ORIGINS API_KEY_SALT MASTER_ADMIN_TOKEN EMBEDDINGS_MODE RATE_LIMIT_MODE BILLING_WEBHOOKS_ENABLED PAYU_MERCHANT_KEY PAYU_MERCHANT_SALT PAYU_BASE_URL PAYU_VERIFY_URL PUBLIC_APP_URL; do
+          for key in CLOUDFLARE_API_TOKEN DATABASE_URL BASE_URL MEMORYNODE_API_KEY SUPABASE_URL SUPABASE_SERVICE_ROLE_KEY SUPABASE_ANON_KEY ALLOWED_ORIGINS API_KEY_SALT MASTER_ADMIN_TOKEN EMBEDDINGS_MODE RATE_LIMIT_MODE BILLING_WEBHOOKS_ENABLED PUBLIC_APP_URL; do
             [[ -z "${!key}" ]] && missing+=("$key")
           done
+          if [[ "$billing_on" -eq 1 ]]; then
+            for key in PAYU_MERCHANT_KEY PAYU_MERCHANT_SALT PAYU_BASE_URL PAYU_VERIFY_URL; do
+              [[ -z "${!key}" ]] && missing+=("$key")
+            done
+          else
+            echo "Billing webhooks disabled (BILLING_WEBHOOKS_ENABLED=$raw): PayU secrets not required for deploy."
+          fi
           if [[ "$EMBEDDINGS_MODE" == "openai" && -z "$OPENAI_API_KEY" ]]; then
             missing+=("OPENAI_API_KEY")
           fi
