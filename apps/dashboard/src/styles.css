@@ -21,6 +21,139 @@
   gap: 16px;
 }
 
+/* Founder app: full-width shell + chart cards */
+.shell.shell--founder {
+  max-width: none;
+  width: 100%;
+  min-height: 100vh;
+  box-sizing: border-box;
+  padding: clamp(16px, 2vw, 40px) clamp(20px, 3vw, 56px) 56px;
+}
+
+.founder-root {
+  width: 100%;
+  min-height: 0;
+}
+
+.founder-root:fullscreen {
+  background: var(--bg-app);
+  overflow: auto;
+}
+
+.founder-hero-actions {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+.founder-layout {
+  display: grid;
+  grid-template-columns: 1fr;
+  gap: 20px;
+  align-items: start;
+}
+
+@media (min-width: 1024px) {
+  .founder-layout {
+    grid-template-columns: 1fr 1fr;
+  }
+}
+
+.founder-col-title {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--muted);
+  margin: 0 0 12px;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+
+.founder-chart-card {
+  border: 1px solid var(--panel-border);
+  border-radius: 14px;
+  padding: 18px 20px 20px;
+  background: var(--surface-elevated);
+  margin-bottom: 14px;
+}
+
+.founder-chart-card:last-child {
+  margin-bottom: 0;
+}
+
+.founder-chart-card__label {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text);
+  margin-bottom: 10px;
+}
+
+.founder-chart-card__nums {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 10px 16px;
+}
+
+.founder-num-current {
+  font-size: 32px;
+  font-weight: 700;
+  letter-spacing: -0.02em;
+  line-height: 1.1;
+}
+
+.founder-num-prev {
+  font-size: 14px;
+}
+
+.founder-chart-card__detail {
+  margin-top: 8px;
+}
+
+.founder-chart-card__delta {
+  margin-top: 6px;
+}
+
+.founder-chart-bars {
+  margin-top: 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.founder-chart-bar-row {
+  display: grid;
+  grid-template-columns: 72px 1fr;
+  align-items: center;
+  gap: 10px;
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--muted);
+}
+
+.founder-chart-bar-track {
+  height: 12px;
+  border-radius: 6px;
+  background: rgba(148, 163, 184, 0.12);
+  overflow: hidden;
+}
+
+.founder-chart-bar-fill {
+  height: 100%;
+  border-radius: 6px;
+  min-width: 0;
+  transition: width 0.22s ease;
+}
+
+.founder-chart-bar-fill--prev {
+  background: rgba(148, 163, 184, 0.42);
+}
+
+.founder-chart-bar-fill--cur {
+  background: linear-gradient(90deg, var(--accent), var(--accent-2));
+}
+
 .topbar {
   display: flex;
   justify-content: space-between;
