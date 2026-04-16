@@ -50,6 +50,11 @@ function resolveEnvOrAlias(primary, aliases = []) {
   return first ? first[1] : "";
 }
 
+function billingWebhooksEnabled() {
+  const raw = `${process.env.BILLING_WEBHOOKS_ENABLED ?? "1"}`.trim().toLowerCase();
+  return !["0", "false", "off", "no", ""].includes(raw);
+}
+
 function formatMissing(missing, target) {
   const hintStage = target === "staging" ? "staging" : "production";
   const bash = missing
@@ -256,10 +261,14 @@ async function main() {
   // Post-deploy smoke
   await smoke(baseUrl, apiKey);
 
-  // Optional PayU webhook test if secrets present
-  if (process.env.PAYU_MERCHANT_KEY && process.env.PAYU_MERCHANT_SALT) {
-    console.log("\n[optional] Running payu:webhook-test (PAYU_MERCHANT_KEY + PAYU_MERCHANT_SALT present)");
+  // Optional PayU webhook test when billing is enabled and secrets are present.
+  if (billingWebhooksEnabled() && process.env.PAYU_MERCHANT_KEY && process.env.PAYU_MERCHANT_SALT) {
+    console.log(
+      "\n[optional] Running payu:webhook-test (billing enabled and PAYU_MERCHANT_KEY + PAYU_MERCHANT_SALT present)",
+    );
     run("pnpm payu:webhook-test");
+  } else if (!billingWebhooksEnabled()) {
+    console.log("\n[optional] Skipping payu:webhook-test (BILLING_WEBHOOKS_ENABLED=0)");
   } else {
     console.log("\n[optional] Skipping payu:webhook-test (PAYU_MERCHANT_KEY/PAYU_MERCHANT_SALT not set)");
   }
