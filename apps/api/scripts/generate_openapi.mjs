@@ -673,7 +673,8 @@ const doc = generator.generateDocument({
     title: "MemoryNode API",
     version: "1.0.0",
     description:
-      "MemoryNode – long-term memory layer for AI agents. " +
+      "MemoryNode — reliable per-user memory for customer-facing AI (support bots, SMB chat, SaaS copilots). " +
+      "Store, search, and prompt-ready context over HTTPS; hybrid retrieval is server-managed. " +
       "This spec is auto-generated from Zod schemas in apps/api/src/contracts/.",
   },
   servers: [

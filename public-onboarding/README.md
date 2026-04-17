@@ -1,6 +1,8 @@
 # MemoryNode
 
-**MemoryNode is the memory layer for AI applications.** Agents and chat apps need persistent, queryable memory—without it, every session starts from zero. MemoryNode provides store-and-retrieve memory and semantic search as a single API; embeddings and search infrastructure are managed for you.
+**Reliable per-user memory for customer-facing AI** — support bots, SMB chat, and SaaS copilots need persistent, queryable memory. MemoryNode provides store-and-retrieve memory and semantic search as a single API; embeddings and search infrastructure are managed for you.
+
+**Canonical story:** [docs/external/POSITIONING.md](../docs/external/POSITIONING.md) in the main repo.
 
 **Use it when** you're building chatbots, copilots, or agents that must remember users and context across sessions.
 
@@ -37,26 +39,30 @@ You send text and optional metadata; you get back relevant memories. No vector D
 
 ---
 
-## Quickstart
+## Quickstart (standalone package)
 
-**Prerequisites:** Node.js 18+
+**Prerequisites:** Node.js 20+
+
+From **this folder** (`public-onboarding`):
 
 ```bash
-git clone https://github.com/gaurav007pimpalkar-Trinity/memorynode.git
-cd memorynode
 npm install
-```
-
-Set your API key and run (replace with your key):
-
-```bash
 export API_KEY=your_api_key_here
 npm start
 ```
 
+**From the MemoryNode monorepo root** (uses workspace `pnpm`):
+
+```bash
+pnpm install
+cd public-onboarding
+export API_KEY=your_api_key_here
+pnpm start
+```
+
 **What happens:** The script adds a sample memory, runs a semantic search, and prints the results. You should see `Added memory: <id>` and a `Search results` JSON block. No code to write—`index.mjs` is ready to run.
 
-**Without cloning:** `npm install @memorynodeai/sdk`, then use the same code as in `index.mjs` (see repo); set `API_KEY` and run `node index.mjs`.
+**Without cloning the monorepo:** `npm install @memorynodeai/sdk`, then use the same code as in `index.mjs` (see repo); set `API_KEY` and run `node index.mjs`.
 
 ---
 
@@ -95,13 +101,15 @@ console.log("Search results:", JSON.stringify(results, null, 2));
 - **Base URL:** Default is `https://api.memorynode.ai`. Override with `BASE_URL` for self-hosted or staging.
 - **Secrets:** Keep `API_KEY` in environment or a secret manager; never commit it.
 - **Errors:** The SDK throws on non-2xx responses; handle network and rate-limit errors in your app.
-- **Limits and scaling:** See [docs.memorynode.ai](https://docs.memorynode.ai) for usage caps, rate limits, and best practices.
+- **Limits and scaling:** See [docs/external/README.md](../docs/external/README.md) for usage caps, rate limits, and recipes.
 
 ---
 
 ## Documentation
 
-API reference, guides, and context/export usage: **[docs.memorynode.ai](https://docs.memorynode.ai)**.
+- **Recipes:** [support](../docs/external/RECIPE_SUPPORT_AGENT.md) · [SaaS copilot](../docs/external/RECIPE_SAAS_COPILOT.md) · [SMB](../docs/external/RECIPE_SMB_CHATBOT.md)
+- **Quickstart (curl):** [docs/external/QUICKSTART.md](../docs/external/QUICKSTART.md)
+- **Trust:** [docs/external/TRUST.md](../docs/external/TRUST.md)
 
 **Repository:** [github.com/gaurav007pimpalkar-Trinity/memorynode](https://github.com/gaurav007pimpalkar-Trinity/memorynode)
 

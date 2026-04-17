@@ -11,8 +11,10 @@
 - `docs/internal/PROD_READY.md` – final go/no-go checklist.
 - `docs/internal/ALERTS.md` – lightweight monitoring + alert thresholds and Cloudflare setup notes.
 - `docs/external/README.md` – product overview (what it is, who for, capabilities).
+- `docs/external/POSITIONING.md` – canonical ICP, promise, and non-goals (keep marketing aligned).
 - `docs/external/QUICKSTART.md` – get value quickly (API key, store, search).
 - `docs/external/API_USAGE.md` – how to call the API and SDK (inputs, outputs, errors).
+- `docs/internal/GTM_PLAYBOOK_2026.md` – messaging, agency one-pager, checklist, metrics (internal).
 
 ## Documentation Map (Reading Order)
 
@@ -21,7 +23,9 @@ Follow this path depending on what you need:
 ### New developer? Start here:
 
 1. **`docs/external/README.md`** — what the product is and what you can do
+1. **`docs/external/POSITIONING.md`** — who it is for and what we explicitly are not
 1. **`docs/external/QUICKSTART.md`** — get from zero to first memory and search
+1. **`docs/external/RECIPE_*.md`** — support, SaaS copilot, SMB chatbot copy-paste paths
 1. **`docs/external/API_USAGE.md`** — API and SDK usage (inputs, outputs, errors)
 
 ### Solo founder / non-technical CTO?

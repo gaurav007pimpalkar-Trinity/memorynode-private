@@ -1,5 +1,7 @@
 # MemoryNode Frontends
 
+Product positioning (ICP and non-goals): [docs/external/POSITIONING.md](../../docs/external/POSITIONING.md).
+
 Shared frontend codebase for:
 - `console.memorynode.ai` -> customer console
 - `app.memorynode.ai/founder` -> founder dashboard

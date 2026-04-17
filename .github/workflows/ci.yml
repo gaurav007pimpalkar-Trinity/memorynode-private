@@ -102,6 +102,7 @@ jobs:
           node --check scripts/verify_staging.mjs
           node --check scripts/beta_verify.mjs
           node --check examples/node-quickstart/index.mjs
+          node --check examples/support-bot-minimal/index.mjs
           node --check examples/nextjs-middleware/demo.mjs
           node --check examples/langchain-wrapper/demo.mjs
           pwsh -NoProfile -Command '

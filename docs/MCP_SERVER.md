@@ -10,6 +10,13 @@ Thin MCP (Model Context Protocol) adapter for MemoryNode. Exposes **search** and
 
 All ranking and workspace isolation stay server-side; the MCP server only forwards requests with your API key.
 
+### When to use REST vs MCP
+
+- **REST** (or the **TypeScript SDK**) — your **app backend**, edge functions, or jobs that already speak HTTP. Best when you control retries, auth, and per-tenant routing in your own code.
+- **MCP** — **AI tools and editors** (e.g. Cursor) that expose Model Context Protocol tools/resources. Best when you want agents to read/write memory without writing a custom HTTP wrapper for each client.
+
+For product positioning and ICP, see [external/POSITIONING.md](./external/POSITIONING.md).
+
 ## Required env vars
 
 | Variable | Description |

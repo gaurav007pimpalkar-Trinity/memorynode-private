@@ -1,6 +1,10 @@
 # Quickstart
 
-Get from zero to stored and retrieved memory in a few minutes. No marketing fluff.
+**Why:** Customer-facing AI fails when it **forgets**. MemoryNode is the hosted **save → search → context** loop so you ship memory without running pgvector yourself.
+
+**After this page:** pick a **[use-case recipe](./RECIPE_SUPPORT_AGENT.md)** (support, SaaS copilot, or SMB chat) for copy-paste patterns.
+
+Get from zero to stored and retrieved memory in a few minutes.
 
 ## 1. Setup
 

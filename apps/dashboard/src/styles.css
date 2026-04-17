@@ -1180,3 +1180,49 @@ a.explore-tile {
     pointer-events: auto;
   }
 }
+
+/* Developer onboarding (Overview) */
+.developer-next-steps {
+  margin-bottom: 1.25rem;
+  padding: 1rem 1.25rem;
+  border: 1px solid var(--panel-border);
+  border-radius: 10px;
+  background: var(--surface-elevated);
+}
+
+.developer-next-steps-title {
+  margin: 0 0 0.35rem 0;
+  font-size: 1rem;
+  font-weight: 600;
+}
+
+.developer-next-steps-lead {
+  margin: 0 0 0.65rem 0;
+  line-height: 1.45;
+}
+
+.developer-next-steps-list {
+  margin: 0;
+  padding-left: 1.25rem;
+  line-height: 1.55;
+}
+
+.developer-next-steps-list a {
+  color: var(--accent);
+}
+
+.developer-next-steps-code {
+  font-size: 0.85em;
+  padding: 0.1em 0.35em;
+  border-radius: 4px;
+  background: rgba(15, 23, 42, 0.85);
+  border: 1px solid var(--panel-border);
+}
+
+.overview-empty-api-hint {
+  margin: 0 0 1rem 0;
+  padding: 0.65rem 0.85rem;
+  border-radius: 8px;
+  border: 1px dashed var(--panel-border);
+  background: rgba(15, 23, 42, 0.45);
+}

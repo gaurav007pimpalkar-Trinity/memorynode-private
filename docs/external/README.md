@@ -1,6 +1,6 @@
 # MemoryNode
 
-**A memory layer for AI applications** — store what matters, retrieve it when your app needs it.
+**Reliable per-user memory for customer-facing AI** — save what matters, retrieve it when your app needs it. See **[POSITIONING.md](./POSITIONING.md)** for ICP, promise, and non-goals.
 
 ---
 
@@ -21,19 +21,32 @@ MemoryNode gives your AI app a place to remember. You send in facts, preferences
 
 You use the **API** (with an API key) or the **TypeScript SDK**. The **dashboard** is where you sign up, create workspaces, create and revoke API keys, and upgrade your plan.
 
+**REST vs MCP:** Use **REST** (or the SDK) from your app servers. Use **MCP** when AI tools/editors should call memory over the Model Context Protocol — see **[MCP_SERVER.md](../MCP_SERVER.md)**.
+
 ---
 
 ## Who it’s for
 
-- Developers building **chatbots** or **copilots** that need to remember what users said or did.
-- Teams shipping **AI assistants** that should recall preferences and history.
-- Anyone who wants **per-user memory and retrieval** without running their own vector store or search stack.
+- **Support and success copilots** — [Support-style recipe](./RECIPE_SUPPORT_AGENT.md).
+- **SaaS in-app assistants** — [Copilot recipe](./RECIPE_SAAS_COPILOT.md).
+- **SMB / high-volume chat** — [Chatbot recipe](./RECIPE_SMB_CHATBOT.md); handle caps and rate limits in your UX.
 
 ---
 
 ## How to get started
 
-Get from zero to your first stored and retrieved memory in a few minutes: **[Quickstart](./QUICKSTART.md)**. SDK and source: **[MemoryNode SDK](https://github.com/gaurav007pimpalkar-Trinity/memorynode)**.
+1. **[Quickstart](./QUICKSTART.md)** — zero to first memory in minutes.
+2. **Recipes** — [support](./RECIPE_SUPPORT_AGENT.md) · [SaaS copilot](./RECIPE_SAAS_COPILOT.md) · [SMB](./RECIPE_SMB_CHATBOT.md).
+3. **Runnable demo** — [examples/support-bot-minimal](../../examples/support-bot-minimal/README.md) in this repo.
+
+SDK and source: **[MemoryNode SDK](https://github.com/gaurav007pimpalkar-Trinity/memorynode)**.
+
+---
+
+## Trust and audiences
+
+- **[Trust](./TRUST.md)** · **[Data retention](../DATA_RETENTION.md)** · **[Security](../SECURITY.md)**
+- **[US vs India audiences](./AUDIENCES_US_IN.md)** — same product, different proof order.
 
 ---
 

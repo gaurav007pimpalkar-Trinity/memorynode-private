@@ -1,6 +1,8 @@
 # @memorynodeai/sdk
 
-Official JavaScript/TypeScript client for **MemoryNode** — a memory layer for AI applications. Store and retrieve user memories (facts, preferences, events) with semantic search and RAG-ready context.
+Official JavaScript/TypeScript client for **MemoryNode** — **reliable per-user memory for customer-facing AI**. Store and retrieve memories (facts, preferences, events) with hybrid search and prompt-ready context from your **backend** (never ship the API key to browsers in production).
+
+Product story and ICP: [POSITIONING.md](https://github.com/gaurav007pimpalkar-Trinity/memorynode/blob/main/docs/external/POSITIONING.md) (monorepo).
 
 ## Install
 

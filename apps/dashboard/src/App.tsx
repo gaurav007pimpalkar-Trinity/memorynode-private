@@ -5,6 +5,7 @@ import { ApiKeyRow, InviteRow, MemoryRow, UsageRow } from "./types";
 import { loadWorkspaceId, persistWorkspaceId } from "./state";
 import { apiEnvError, apiGet, apiPost, ensureDashboardSession, dashboardLogout, setOnUnauthorized, userFacingErrorMessage } from "./apiClient";
 import { mapSearchResultsToRows, type MemorySearchRow, type SearchApiResult } from "./memorySearch";
+import { DeveloperNextSteps } from "./DeveloperNextSteps";
 
 type Tab =
   | "overview"
@@ -743,6 +744,7 @@ export function App(): JSX.Element {
                 <OverviewView
                   workspaceReady={workspaceReady}
                   sessionReady={sessionReady}
+                  hasApiKey={firstApiKeyCreated}
                   onQuickSetup={() => {
                     setOnboardingCollapsed(false);
                     selectTab("team");
@@ -801,8 +803,10 @@ function AuthLanding() {
         <div className="auth-showcase">
           <div className="auth-card">
             <div className="auth-chip">MemoryNode</div>
-            <h1>Your AI memory layer awaits</h1>
-            <p className="muted">Sign in to continue building context-aware products with persistent memory.</p>
+            <h1>Memory for customer-facing AI</h1>
+            <p className="muted">
+              Sign in to manage workspaces, API keys, and billing — so your support bots, chat apps, and copilots remember users without running vector search yourself.
+            </p>
             <AuthPanel />
             <p className="auth-terms muted small">By continuing, you agree to our Terms and Privacy Policy.</p>
           </div>
@@ -842,10 +846,12 @@ type OverviewStatsResponse = {
 function OverviewView({
   workspaceReady,
   sessionReady,
+  hasApiKey,
   onQuickSetup,
 }: {
   workspaceReady: boolean;
   sessionReady: boolean;
+  hasApiKey: boolean;
   onQuickSetup: () => void;
 }): JSX.Element {
   const [range, setRange] = useState<"1d" | "7d" | "30d" | "all">("all");
@@ -929,6 +935,16 @@ function OverviewView({
           {error}
         </div>
       )}
+      {workspaceReady && sessionReady ? <DeveloperNextSteps hasApiKey={hasApiKey} /> : null}
+      {workspaceReady && sessionReady && stats && !loading && stats.memories === 0 && stats.search_requests === 0 ? (
+        <div className="overview-empty-api-hint muted small" role="status">
+          No API memories or searches in this range yet. Follow <strong>Next: ship memory</strong> above or open{" "}
+          <a href="https://docs.memorynode.ai/quickstart" target="_blank" rel="noopener noreferrer">
+            Quickstart
+          </a>
+          .
+        </div>
+      ) : null}
       <div className="overview-cards overview-cards--hero">
         {cards.map((card) => (
           <div key={card.label} className="metric-card">

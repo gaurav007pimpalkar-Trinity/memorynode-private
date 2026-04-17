@@ -1,14 +1,24 @@
 # MemoryNode.ai
 
-**Memory layer for AI applications.** Store user facts and conversation; retrieve the right context for your chatbot or assistant with one API. No vector DB or search stack to run yourself.
+**Reliable per-user memory for customer-facing AI** — support bots, SMB chat agents, and SaaS copilots that must remember the customer across sessions. Store facts with one API; retrieve the right context with hybrid search — **no vector DB or search stack to run yourself.**
 
-## Quickstart (5 minutes)
+Canonical positioning: **[docs/external/POSITIONING.md](docs/external/POSITIONING.md)**.
 
-1. **Get an API key** — [Sign up](https://memorynode.ai), create a workspace, create an API key.
-2. **Insert a memory** — `POST /v1/memories` with `user_id`, `text`, optional `namespace`.
-3. **Search** — `POST /v1/search` with same `user_id`/`namespace` and a `query`; use results or `POST /v1/context` for prompt-ready text.
+## Who it is for
 
-Full steps: **[Quickstart](docs/external/QUICKSTART.md)**.
+- **Support and success** — ticket continuity, fewer repeated questions.
+- **High-volume chat** (web, WhatsApp-style backends) — cap-aware, simple integration.
+- **B2B SaaS copilots** — scoped `user_id` + `namespace` per tenant.
+
+**Not the focus:** universal “sync every SaaS tool” knowledge platforms — see non-goals in [POSITIONING.md](docs/external/POSITIONING.md).
+
+## Quick outcome (~15 minutes)
+
+1. **Sign up** — [console.memorynode.ai](https://console.memorynode.ai): workspace + API key.
+2. **Insert** — `POST /v1/memories` with `user_id`, `text`, optional `namespace`.
+3. **Search or context** — `POST /v1/search` or `POST /v1/context` with the same `user_id` / `namespace`.
+
+Full steps: **[Quickstart](docs/external/QUICKSTART.md)** · **Recipes:** [support](docs/external/RECIPE_SUPPORT_AGENT.md) · [SaaS copilot](docs/external/RECIPE_SAAS_COPILOT.md) · [SMB chat](docs/external/RECIPE_SMB_CHATBOT.md) · **Runnable:** [examples/support-bot-minimal](examples/support-bot-minimal/README.md)
 
 ## API example
 
@@ -22,7 +32,7 @@ curl -X POST "https://api.memorynode.ai/v1/search" \
   -d '{"user_id":"user-1","query":"theme preference","top_k":5}'
 ```
 
-Or run the example script: `API_KEY=mn_live_xxx node examples/basic-usage.js`
+Or run: `API_KEY=mn_live_xxx node examples/basic-usage.js`
 
 ## MCP example
 
@@ -33,7 +43,11 @@ pnpm add @memorynodeai/mcp-server
 # Configure MCP with MEMORYNODE_API_KEY, MEMORYNODE_BASE_URL, optional MEMORYNODE_NAMESPACE; then use memory_search, memory_context, and memory_insert tools.
 ```
 
-See **[MCP server](packages/mcp-server/README.md)** and **[QUICKSTART – Connect MCP](docs/external/QUICKSTART.md#4-connect-mcp)**.
+See **[MCP server](packages/mcp-server/README.md)** and **[QUICKSTART – Connect MCP](docs/external/QUICKSTART.md#4-connect-mcp)**. **When to use REST vs MCP:** [docs/MCP_SERVER.md](docs/MCP_SERVER.md).
+
+## Trust
+
+- **[Trust (customer-facing)](docs/external/TRUST.md)** · **[Data retention](docs/DATA_RETENTION.md)** · **[Security](docs/SECURITY.md)**
 
 ## Architecture (overview)
 
@@ -52,7 +66,7 @@ See **[MCP server](packages/mcp-server/README.md)** and **[QUICKSTART – Connec
 | `packages/sdk` | TypeScript SDK |
 | `packages/mcp-server` | MCP server for AI tools |
 | `packages/shared` | Shared types and plans |
-| `docs/external/` | Developer docs (Quickstart, API usage) |
+| `docs/external/` | Developer docs (Quickstart, recipes, API usage) |
 
 ## Develop
 
