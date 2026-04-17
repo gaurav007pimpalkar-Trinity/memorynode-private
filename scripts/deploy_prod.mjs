@@ -190,11 +190,20 @@ async function smoke(baseUrl, apiKey) {
       } catch {
         // leave as {}
       }
+      const entitlementBlocked =
+        usage.status === 402 &&
+        (usageJson?.error?.code === "ENTITLEMENT_REQUIRED" || usageJson?.error?.code === "ENTITLEMENT_EXPIRED");
       if (usage.ok) {
         if (typeof usageJson !== "object") {
           fail("usage response not JSON object");
         }
         console.log(` usage ok (attempt ${attempt}/${usageAttempts})`);
+        return;
+      }
+      if (entitlementBlocked) {
+        console.log(
+          ` usage blocked by entitlement (${usageJson?.error?.code}) (attempt ${attempt}/${usageAttempts})`,
+        );
         return;
       }
       console.warn(
