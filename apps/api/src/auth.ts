@@ -50,6 +50,16 @@ function hasRpcClient(supabase: SupabaseClient): supabase is SupabaseClient & { 
   return typeof (supabase as unknown as { rpc?: unknown }).rpc === "function";
 }
 
+function isAuthMissError(err: unknown): boolean {
+  const code = typeof (err as { code?: unknown } | null)?.code === "string"
+    ? (err as { code: string }).code
+    : "";
+  const message = typeof (err as { message?: unknown } | null)?.message === "string"
+    ? (err as { message: string }).message.toLowerCase()
+    : "";
+  return code === "PGRST116" || message.includes("no rows");
+}
+
 export function normalizePlanStatus(status: unknown): AuthContext["planStatus"] {
   if (typeof status === "string" && ALLOWED_PLAN_STATUS.has(status)) {
     return status as AuthContext["planStatus"];
@@ -237,7 +247,7 @@ export async function authenticate(
     );
     data = rpcResult.data;
     error = rpcResult.error;
-    authLookupError = rpcResult.error;
+    authLookupError = rpcResult.error && !isAuthMissError(rpcResult.error) ? rpcResult.error : null;
   } else {
     error = { message: "rpc unavailable" };
     authLookupError = error;
@@ -255,7 +265,9 @@ export async function authenticate(
     );
     data = fallback.data;
     error = fallback.error;
-    authLookupError = fallback.error ?? authLookupError;
+    if (fallback.error && !isAuthMissError(fallback.error)) {
+      authLookupError = fallback.error;
+    }
     apiKeyRow = Array.isArray(data) ? data[0] : (data as Record<string, unknown> | null);
     authMatched = !error && Boolean(apiKeyRow?.workspace_id);
   }
