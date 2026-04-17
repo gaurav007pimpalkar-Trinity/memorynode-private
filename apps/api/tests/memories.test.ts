@@ -68,32 +68,30 @@ class FakeDeleteBuilder {
 }
 
 class FakeSupabaseDelete {
-  logs: Record<string, FakeDeleteBuilder> = {};
-  from(table: string) {
-    const builder = new FakeDeleteBuilder(table, table === "memories" ? 1 : null);
-    this.logs[table] = builder;
-    return builder;
+  rpcCalls: Array<{ name: string; args: Record<string, unknown> }> = [];
+  async rpc(name: string, args: Record<string, unknown>) {
+    this.rpcCalls.push({ name, args });
+    return { data: [{ deleted: true }], error: null };
   }
 }
 
 describe("deleteMemoryCascade scoping", () => {
-  it("applies workspace and memory filters to chunks and memories", async () => {
+  it("calls scoped delete RPC with workspace and memory ids", async () => {
     const supabase = new FakeSupabaseDelete();
     const result = await deleteMemoryCascade(
-      supabase as unknown as { from: (table: string) => FakeDeleteBuilder },
+      supabase as unknown as { rpc: (name: string, args: Record<string, unknown>) => Promise<unknown> },
       "ws1",
       "mem1",
     );
     expect(result).toBe(true);
-    const chunkFilters = supabase.logs["memory_chunks"].filters;
-    const memFilters = supabase.logs["memories"].filters;
-    expect(chunkFilters).toEqual([
-      { col: "workspace_id", val: "ws1" },
-      { col: "memory_id", val: "mem1" },
-    ]);
-    expect(memFilters).toEqual([
-      { col: "workspace_id", val: "ws1" },
-      { col: "id", val: "mem1" },
+    expect(supabase.rpcCalls).toEqual([
+      {
+        name: "delete_memory_scoped",
+        args: {
+          p_workspace_id: "ws1",
+          p_memory_id: "mem1",
+        },
+      },
     ]);
   });
 
@@ -123,13 +121,18 @@ describe("deleteMemoryCascade scoping", () => {
     };
 
     const supabase = {
-      from(table: "memory_chunks" | "memories") {
-        return {
-          delete: (_opts?: { count?: string }) => {
-            const builder = makeDeleteBuilder(table);
-            return builder;
-          },
-        };
+      async rpc(name: string, args: Record<string, unknown>) {
+        if (name !== "delete_memory_scoped") return { data: null, error: { message: "unsupported rpc" } };
+        const workspaceId = String(args.p_workspace_id);
+        const memoryId = String(args.p_memory_id);
+        const before = store.memories.length;
+        store.memory_chunks = store.memory_chunks.filter(
+          (row) => !(row.workspace_id === workspaceId && row.memory_id === memoryId),
+        );
+        store.memories = store.memories.filter(
+          (row) => !(row.workspace_id === workspaceId && row.id === memoryId),
+        );
+        return { data: [{ deleted: store.memories.length < before }], error: null };
       },
     };
 

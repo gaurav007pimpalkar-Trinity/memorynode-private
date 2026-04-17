@@ -30,6 +30,33 @@ function buildStore(count: number): MemoryRow[] {
 
 function makeSupabase(memories: MemoryRow[]) {
   return {
+    async rpc(name: string, args: Record<string, unknown>) {
+      if (name !== "list_memories_scoped") {
+        return { data: null, error: { message: "unsupported rpc" } };
+      }
+      const page = Number(args.p_page ?? 1);
+      const pageSize = Number(args.p_page_size ?? 20);
+      let data = memories
+        .filter((r) => r.workspace_id === args.p_workspace_id)
+        .filter((r) => (args.p_namespace ? r.namespace === args.p_namespace : true))
+        .filter((r) => (args.p_user_id ? r.user_id === args.p_user_id : true))
+        .filter((r) => (args.p_memory_type ? (r as { memory_type?: string }).memory_type === args.p_memory_type : true))
+        .filter((r) => {
+          if (!args.p_metadata) return true;
+          const meta = r.metadata ?? {};
+          return Object.entries(args.p_metadata as Record<string, unknown>).every(([k, v]) => meta[k] === v);
+        });
+      if (args.p_start_time) data = data.filter((r) => r.created_at >= String(args.p_start_time));
+      if (args.p_end_time) data = data.filter((r) => r.created_at <= String(args.p_end_time));
+      data = data.sort((a, b) => {
+        if (a.created_at === b.created_at) return b.id.localeCompare(a.id);
+        return b.created_at.localeCompare(a.created_at);
+      });
+      const total = data.length;
+      const offset = Math.max(0, (Math.max(1, page) - 1) * Math.max(1, pageSize));
+      const pageRows = data.slice(offset, offset + pageSize + 1).map((row) => ({ ...row, total_count: total }));
+      return { data: pageRows, error: null };
+    },
     from(table: "memories") {
       let data = memories.slice();
       const orderBy: Array<{ col: string; ascending: boolean }> = [];
@@ -157,6 +184,21 @@ describe("performListMemories pagination", () => {
     expect(filtered.results.every((r) => (r.metadata as any).topic === "ai")).toBe(true);
     const expectedHasMore = expectedCount > pageSize;
     expect(filtered.has_more).toBe(expectedHasMore);
+  });
+
+  it("fails closed when scoped RPC fails", async () => {
+    const supabase = {
+      async rpc() {
+        return { data: null, error: { message: "rpc unavailable" } };
+      },
+    };
+    await expect(
+      performListMemories(
+        auth,
+        { page: 1, page_size: 5, namespace: undefined, user_id: undefined, filters: {} },
+        supabase as any,
+      ),
+    ).rejects.toMatchObject({ code: "DB_ERROR" });
   });
 });
 /* eslint-disable @typescript-eslint/no-explicit-any, @typescript-eslint/no-unused-vars */

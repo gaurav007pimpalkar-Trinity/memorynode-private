@@ -1,4 +1,4 @@
-import { capsByPlan, exceedsCaps, UsageSnapshot, UsageDelta } from "../src/limits.js";
+import { capsByPlan, exceedsCaps, getRouteRateLimitMax, UsageSnapshot, UsageDelta } from "../src/limits.js";
 import { safeKvTtl } from "../src/index.js";
 
 describe("capsByPlan", () => {
@@ -48,5 +48,20 @@ describe("safeKvTtl", () => {
   it("handles invalid numbers", () => {
     expect(safeKvTtl(NaN)).toBe(60);
     expect(safeKvTtl(-5)).toBe(60);
+  });
+});
+
+describe("getRouteRateLimitMax", () => {
+  it("uses route-specific defaults lower than base when unset", () => {
+    const max = getRouteRateLimitMax({ RATE_LIMIT_MAX: "100" }, "import");
+    expect(max).toBe(10);
+  });
+
+  it("uses configured route limit and clamps by base max", () => {
+    const max = getRouteRateLimitMax(
+      { RATE_LIMIT_MAX: "50", RATE_LIMIT_SEARCH_MAX: "120" },
+      "search",
+    );
+    expect(max).toBe(50);
   });
 });

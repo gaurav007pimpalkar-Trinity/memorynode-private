@@ -45,6 +45,18 @@ function makeStore() {
 function makeSupabase(store: ReturnType<typeof makeStore>) {
   return {
     rpc(name: string, args: Record<string, any>) {
+      if (name === "delete_memory_scoped") {
+        const workspaceId = String(args.p_workspace_id);
+        const memoryId = String(args.p_memory_id);
+        const before = store.memories.length;
+        store.memory_chunks = store.memory_chunks.filter(
+          (row) => !(row.workspace_id === workspaceId && row.memory_id === memoryId),
+        );
+        store.memories = store.memories.filter(
+          (row) => !(row.workspace_id === workspaceId && row.id === memoryId),
+        );
+        return Promise.resolve({ data: [{ deleted: store.memories.length < before }], error: null });
+      }
       if (name === "match_chunks_vector" || name === "match_chunks_text") {
         const rows = store.memory_chunks.filter(
           (c) =>

@@ -167,6 +167,24 @@ export function makeSimpleSupabase(options?: MockSupabaseOptions) {
     },
 
     rpc(name: string, args?: Record<string, unknown>) {
+      if (name === "get_api_key_salt") {
+        return Promise.resolve({ data: "salt", error: null });
+      }
+      if (name === "authenticate_api_key") {
+        return Promise.resolve({
+          data: [{
+            api_key_id: "k1",
+            workspace_id: workspace.id,
+            key_created_at: new Date().toISOString(),
+            plan: workspace.plan,
+            plan_status: workspace.plan_status,
+          }],
+          error: null,
+        });
+      }
+      if (name === "touch_api_key_usage") {
+        return Promise.resolve({ data: null, error: null });
+      }
       if (name === "bump_usage_rpc" || name === "bump_usage") {
         return {
           data: {
