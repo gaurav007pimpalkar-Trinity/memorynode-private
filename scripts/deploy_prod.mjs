@@ -171,23 +171,51 @@ async function smoke(baseUrl, apiKey) {
   console.log(" healthz ok");
 
   console.log("[smoke] GET /v1/usage/today");
-  const usage = await fetch(`${baseUrl}/v1/usage/today`, {
-    headers: { Authorization: `Bearer ${apiKey}` },
-  });
-  const usageText = await usage.text();
-  let usageJson = {};
-  try {
-    usageJson = JSON.parse(usageText);
-  } catch {
-    // leave as {}
+  const usageAttempts = 3;
+  let lastUsageStatus = 0;
+  let lastUsageBody = "<none>";
+  for (let i = 0; i < usageAttempts; i++) {
+    const attempt = i + 1;
+    const usageUrl = `${baseUrl}/v1/usage/today?ts=${Date.now()}&attempt=${attempt}`;
+    try {
+      const usage = await fetch(usageUrl, {
+        headers: { Authorization: `Bearer ${apiKey}` },
+      });
+      const usageText = await usage.text();
+      lastUsageStatus = usage.status;
+      lastUsageBody = usageText;
+      let usageJson = {};
+      try {
+        usageJson = JSON.parse(usageText);
+      } catch {
+        // leave as {}
+      }
+      if (usage.ok) {
+        if (typeof usageJson !== "object") {
+          fail("usage response not JSON object");
+        }
+        console.log(` usage ok (attempt ${attempt}/${usageAttempts})`);
+        return;
+      }
+      console.warn(
+        ` usage attempt ${attempt}/${usageAttempts} failed: status=${usage.status} body=${usageText.slice(0, 300)}`,
+      );
+      if (attempt < usageAttempts && (usage.status === 401 || usage.status >= 500)) {
+        await wait(2000);
+        continue;
+      }
+      fail(`usage failed: status=${usage.status} body=${usageText.slice(0, 300)}`);
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      console.warn(` usage attempt ${attempt}/${usageAttempts} fetch error: ${message}`);
+      if (attempt < usageAttempts) {
+        await wait(2000);
+        continue;
+      }
+      fail(`usage failed: network error after ${usageAttempts} attempts: ${message}`);
+    }
   }
-  if (!usage.ok) {
-    fail(`usage failed: status=${usage.status} body=${usageText.slice(0, 300)}`);
-  }
-  if (typeof usageJson !== "object") {
-    fail("usage response not JSON object");
-  }
-  console.log(" usage ok");
+  fail(`usage failed: status=${lastUsageStatus} body=${lastUsageBody.slice(0, 300)}`);
 }
 
 async function main() {

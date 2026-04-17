@@ -230,14 +230,17 @@ export async function authenticate(
   const hashed = await hashApiKey(rawKey, saltOutcome.salt);
   let data: unknown = null;
   let error: unknown = null;
+  let authLookupError: unknown = null;
   if (hasRpcClient(supabase)) {
     const rpcResult = await withSupabaseQueryRetry(async () =>
       supabase.rpc("authenticate_api_key", { p_key_hash: hashed }),
     );
     data = rpcResult.data;
     error = rpcResult.error;
+    authLookupError = rpcResult.error;
   } else {
     error = { message: "rpc unavailable" };
+    authLookupError = error;
   }
   let apiKeyRow = Array.isArray(data) ? data[0] : (data as Record<string, unknown> | null);
   let authMatched = !error && Boolean(apiKeyRow?.workspace_id);
@@ -252,6 +255,7 @@ export async function authenticate(
     );
     data = fallback.data;
     error = fallback.error;
+    authLookupError = fallback.error ?? authLookupError;
     apiKeyRow = Array.isArray(data) ? data[0] : (data as Record<string, unknown> | null);
     authMatched = !error && Boolean(apiKeyRow?.workspace_id);
   }
@@ -262,13 +266,20 @@ export async function authenticate(
     const errorCode = typeof (error as { code?: unknown } | null)?.code === "string"
       ? (error as { code: string }).code
       : undefined;
+    const authLookupErrorCode = typeof (authLookupError as { code?: unknown } | null)?.code === "string"
+      ? (authLookupError as { code: string }).code
+      : undefined;
     console.info("auth_debug_verify", {
       matched: authMatched,
       ...(errorCode ? { error_code: errorCode } : {}),
+      ...(authLookupErrorCode ? { auth_lookup_error_code: authLookupErrorCode } : {}),
     });
   }
 
   if (!authMatched || !data) {
+    if (authLookupError) {
+      throw createHttpError(500, "DB_ERROR", "Authentication backend unavailable");
+    }
     throw createHttpError(401, "UNAUTHORIZED", "Invalid API key");
   }
 
