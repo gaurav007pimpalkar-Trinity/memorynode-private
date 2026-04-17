@@ -1,5 +1,4 @@
 import type { InternalCreditsBreakdown } from "./plans.js";
-import type { CostModelInput, CostModelOptions, CreditsBreakdown } from "./costModel.js";
 
 export type WorkspaceId = string;
 export type MemoryId = string;

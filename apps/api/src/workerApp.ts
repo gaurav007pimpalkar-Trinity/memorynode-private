@@ -4246,7 +4246,7 @@ type BumpWithinCapResult =
   | { ok: true; usage: UsageRow }
   | { ok: false; limit: string; used: number; cap: number };
 
-async function recordUsageEventIfWithinCap(
+async function _recordUsageEventIfWithinCap(
   supabase: SupabaseClient,
   workspaceId: string,
   day: string,
