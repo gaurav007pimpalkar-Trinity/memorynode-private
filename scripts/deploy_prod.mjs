@@ -85,9 +85,9 @@ function resolveBuildVersion() {
   }
 }
 
-async function getHealth(baseUrl) {
+async function getHealth(healthUrl) {
   try {
-    const res = await fetch(`${baseUrl}/healthz`);
+    const res = await fetch(healthUrl);
     const text = await res.text();
     let json = null;
     try {
@@ -95,9 +95,32 @@ async function getHealth(baseUrl) {
     } catch {
       // ignore parse errors
     }
-    return { ok: res.ok, status: res.status, json, text };
+    return {
+      ok: res.ok,
+      status: res.status,
+      json,
+      text,
+      headers: {
+        cfCacheStatus: res.headers.get("cf-cache-status") || "<absent>",
+        age: res.headers.get("age") || "<absent>",
+        cfRay: res.headers.get("cf-ray") || "<absent>",
+        cacheControl: res.headers.get("cache-control") || "<absent>",
+      },
+    };
   } catch (err) {
-    return { ok: false, status: 0, json: null, text: "", error: err };
+    return {
+      ok: false,
+      status: 0,
+      json: null,
+      text: "",
+      error: err,
+      headers: {
+        cfCacheStatus: "<unavailable>",
+        age: "<unavailable>",
+        cfRay: "<unavailable>",
+        cacheControl: "<unavailable>",
+      },
+    };
   }
 }
 
@@ -201,7 +224,7 @@ async function main() {
   console.log(` MEMORYNODE_API_KEY=${mask(apiKey)}`);
   console.log(` BUILD_VERSION=${buildVersion}`);
 
-  const pre = await getHealth(baseUrl);
+  const pre = await getHealth(`${baseUrl}/healthz?ts=${Date.now()}`);
   const oldVersion = pre?.json?.build_version ?? pre?.json?.version;
   if (pre.ok) {
     console.log(` prehealth: status=${pre.status}, oldVersion=${oldVersion ?? "<none>"}`);
@@ -234,30 +257,43 @@ async function main() {
   let seenVersion = null;
   let lastStatus = 0;
   let lastBody = "<none>";
-  const attempts = 10;
+  let lastHealthUrl = `${baseUrl}/healthz`;
+  const attempts = 25;
+  const propagationDelayNoticeAfter = 10;
   for (let i = 0; i < attempts; i++) {
-    const res = await getHealth(baseUrl);
+    const attempt = i + 1;
+    const healthUrl = `${baseUrl}/healthz?ts=${Date.now()}&attempt=${attempt}`;
+    lastHealthUrl = healthUrl;
+    const res = await getHealth(healthUrl);
     lastStatus = res.status;
     lastBody = res?.text ?? "<none>";
     seenVersion = res?.json?.build_version ?? res?.json?.version;
     const stageSeenRaw = res.json?.stage?.toLowerCase?.();
     const stageMatch = !stageSeenRaw || stageSeenRaw === expectedStage || stageSeenRaw === "prod";
+    const bodySnippet = (res?.text ?? "<none>").slice(0, 280);
+    console.log(
+      ` attempt ${attempt}/${attempts}: url=${healthUrl} status=${res.status} seenVersion=${seenVersion ?? "<none>"} cf-cache-status=${res.headers.cfCacheStatus} age=${res.headers.age} cf-ray=${res.headers.cfRay}`,
+    );
+    if (!seenVersion) {
+      console.log(`  response body: ${bodySnippet}`);
+    }
     if (res.ok && res.json?.status === "ok" && seenVersion === buildVersion && stageMatch) {
       const stageSeen = res.json?.stage ?? "<unset>";
       console.log(
-        ` healthz ok: status=${res.status}, version=${seenVersion}, stage=${stageSeen}, attempts=${i + 1}`,
+        ` healthz ok: status=${res.status}, version=${seenVersion}, stage=${stageSeen}, attempts=${attempt}, url=${healthUrl}`,
       );
       break;
     }
-    const stageMsg = res.json?.stage ? ` stage=${res.json.stage}` : "";
-    console.log(
-      ` attempt ${i + 1}/${attempts}: status=${res.status}, seenVersion=${seenVersion ?? "<none>"}${stageMsg} (expect ${buildVersion}, stage=${expectedStage})`,
-    );
+    if (attempt === propagationDelayNoticeAfter) {
+      console.warn(
+        ` propagation delay suspected after ${propagationDelayNoticeAfter} attempts; continuing verification window...`,
+      );
+    }
     await wait(3000);
   }
   if (seenVersion !== buildVersion) {
     fail(
-      `Deployed version not observed. oldVersion=${oldVersion ?? "<none>"} lastVersion=${seenVersion ?? "<none>"} lastStatus=${lastStatus} lastBody=${lastBody}`,
+      `Deployed version not observed. expectedBuildVersion=${buildVersion} oldVersion=${oldVersion ?? "<none>"} lastObservedBuildVersion=${seenVersion ?? "<none>"} attemptsMade=${attempts} finalUrl=${lastHealthUrl} lastStatus=${lastStatus} lastBody=${lastBody}`,
     );
   }
 
