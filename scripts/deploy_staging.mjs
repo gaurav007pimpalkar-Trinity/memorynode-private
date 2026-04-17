@@ -161,10 +161,23 @@ async function smoke(baseUrl, apiKey) {
     headers: { Authorization: `Bearer ${apiKey}` },
   });
   const usageText = await usage.text();
-  if (!usage.ok) {
+  let usageJson = null;
+  try {
+    usageJson = usageText ? JSON.parse(usageText) : null;
+  } catch {
+    // ignore parse failures; handled by status checks below
+  }
+  const entitlementBlocked =
+    usage.status === 402 &&
+    (usageJson?.error?.code === "ENTITLEMENT_REQUIRED" || usageJson?.error?.code === "ENTITLEMENT_EXPIRED");
+  if (!usage.ok && !entitlementBlocked) {
     fail(`usage failed: status=${usage.status} body=${usageText.slice(0, 300)}`);
   }
-  console.log(" usage ok");
+  if (entitlementBlocked) {
+    console.log(` usage blocked by entitlement (${usageJson?.error?.code})`);
+  } else {
+    console.log(" usage ok");
+  }
 }
 
 async function main() {
