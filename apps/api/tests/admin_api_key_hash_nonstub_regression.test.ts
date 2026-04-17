@@ -52,6 +52,7 @@ function sha256Hex(input: string): string {
 
 function makeSupabaseMock(apiKeySalt: string): SupabaseLike {
   const workspaces = new Map<string, WorkspaceRow>();
+  const entitlements = new Map<string, Record<string, unknown>>();
   const state: MockState = {
     insertedKeyHash: null,
     lookupHash: null,
@@ -99,6 +100,18 @@ function makeSupabaseMock(apiKeySalt: string): SupabaseLike {
                   plan_status: "active",
                 };
                 workspaces.set(id, row);
+                entitlements.set(id, {
+                  id: `ent-${id}`,
+                  workspace_id: id,
+                  source_txn_id: `txn-${id}`,
+                  plan_code: "launch",
+                  status: "active",
+                  starts_at: new Date(Date.now() - 60_000).toISOString(),
+                  expires_at: null,
+                  caps_json: { writes: 250, reads: 1000, embeds: 500 },
+                  created_at: new Date().toISOString(),
+                  updated_at: new Date().toISOString(),
+                });
                 return { data: { id: row.id, name: row.name }, error: null };
               },
             }),
@@ -110,6 +123,21 @@ function makeSupabaseMock(apiKeySalt: string): SupabaseLike {
                 if (!row) return { data: null, error: null };
                 return { data: { plan: row.plan, plan_status: row.plan_status }, error: null };
               },
+            }),
+          }),
+        };
+      }
+
+      if (table === "workspace_entitlements") {
+        return {
+          select: () => ({
+            eq: (_col: string, workspaceId: string) => ({
+              order: () => ({
+                limit: async () => ({
+                  data: entitlements.has(workspaceId) ? [entitlements.get(workspaceId)] : [],
+                  error: null,
+                }),
+              }),
             }),
           }),
         };

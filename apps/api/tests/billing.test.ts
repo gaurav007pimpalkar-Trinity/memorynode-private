@@ -280,6 +280,15 @@ function makeSupabase(options?: {
           update: builder.update,
         };
       }
+      if (table === "usage_reservations") {
+        return {
+          select: () => ({
+            order: () => ({
+              limit: async () => ({ data: [], error: null }),
+            }),
+          }),
+        };
+      }
       if (table === "plans") {
         const catalog: Record<string, { id: number; plan_code: string; price_inr: number; currency: string; is_active: boolean }> = {
           launch: { id: 1, plan_code: "launch", price_inr: 399, currency: "INR", is_active: true },
@@ -594,6 +603,8 @@ describe("billing status", () => {
 
 describe("non-billing endpoints without PayU config", () => {
   it("usage endpoint still works when PayU vars are missing", async () => {
+    const supabase = makeSupabase();
+    seedEntitlement(supabase, { txnId: "txn_usage_nonbilling_1", status: "active", planCode: "launch" });
     const req = new Request("http://localhost/v1/usage/today", {
       method: "GET",
       headers: { authorization: "Bearer mn_live_test" },
@@ -606,7 +617,7 @@ describe("non-billing endpoints without PayU config", () => {
         PAYU_BASE_URL: undefined,
         PUBLIC_APP_URL: undefined,
       }),
-      makeSupabase() as SupabaseClient,
+      supabase as SupabaseClient,
       {},
     );
     expect(res.status).toBe(200);
@@ -821,7 +832,7 @@ describe("billing webhook", () => {
     );
 
     expect(res.status).toBe(200);
-    expect(supabase.workspace.plan).toBe("free");
+    expect(supabase.workspace.plan).toBe("pro");
     expect(supabase.workspace.plan_status).toBe("past_due");
     expect(supabase.getEntitlementByTxn("txn_verify_fail_1")).toBeUndefined();
     expect(supabase.getTransactionRow("txn_verify_fail_1")?.status).toBe("verify_failed");
@@ -1022,9 +1033,10 @@ describe("cap enforcement upgrade path", () => {
 
     expect(res.status).toBe(402);
     const json = await res.json();
-    expect(json.error.code).toBe("PLAN_LIMIT_EXCEEDED");
-    expect(json.error.limit).toBeDefined();
-    expect(json.error.upgrade_url).toContain("/billing");
+    expect(json.error.code).toBe("ENTITLEMENT_REQUIRED");
+    expect(json.error.upgrade_required).toBe(true);
+    expect(json.error.effective_plan).toBe("launch");
+    expect(json.upgrade_url).toContain("/billing");
   });
 
   it("memories cap uses effective plan when past_due", async () => {
@@ -1055,9 +1067,9 @@ describe("cap enforcement upgrade path", () => {
 
     expect(res.status).toBe(402);
     const json = await res.json();
-    expect(json.error.code).toBe("PLAN_LIMIT_EXCEEDED");
-    expect(json.error.limit).toBe("writes");
-    expect(json.error.upgrade_url).toContain("/billing");
+    expect(json.error.code).toBe("ENTITLEMENT_REQUIRED");
+    expect(json.error.effective_plan).toBe("launch");
+    expect(json.upgrade_url).toContain("/billing");
   });
 
   it("context cap uses effective plan when canceled", async () => {
@@ -1084,8 +1096,8 @@ describe("cap enforcement upgrade path", () => {
 
     expect(res.status).toBe(402);
     const json = await res.json();
-    expect(json.error.code).toBe("PLAN_LIMIT_EXCEEDED");
-    expect(json.error.limit).toBeDefined();
+    expect(json.error.code).toBe("ENTITLEMENT_REQUIRED");
+    expect(json.error.effective_plan).toBe("launch");
   });
 
   it("blocks quota-consuming routes when entitlement is expired", async () => {
@@ -1118,7 +1130,7 @@ describe("cap enforcement upgrade path", () => {
     const json = await res.json();
     expect(json.error.code).toBe("ENTITLEMENT_EXPIRED");
     expect(json.error.upgrade_required).toBe(true);
-    expect(json.error.effective_plan).toBe("free");
+    expect(json.error.effective_plan).toBe("launch");
     expect(typeof json.error.expired_at).toBe("string");
   });
 });

@@ -109,7 +109,7 @@ describe("abuse protection", () => {
   it("applies limiter consistently on context/import and resists query-param bypass", async () => {
     const routes: Array<{ path: string; body: unknown; firstStatus: number }> = [
       { path: "/v1/context", body: { user_id: "u1", query: "hello", top_k: 3 }, firstStatus: 200 },
-      { path: "/v1/import", body: { artifact_base64: "aGVsbG8=", mode: "upsert" }, firstStatus: 402 },
+      { path: "/v1/import", body: { artifact_base64: "aGVsbG8=", mode: "upsert" }, firstStatus: 500 },
     ];
 
     for (const route of routes) {

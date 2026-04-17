@@ -91,9 +91,10 @@ export function capsByPlanCode(planCode: string | null | undefined): UsageCaps {
   return getUsageCapsForPlanCode(planCode);
 }
 
-/** Deprecated: legacy launch/pro/team mapping retained only for internal fixtures/tests; do not use for new code. Not in OpenAPI or public types. */
-export const capsByPlan: Record<"launch" | "pro" | "team", UsageCaps> = {
+/** Deprecated: legacy launch/free/pro/team mapping retained only for internal fixtures/tests; do not use for new code. Not in OpenAPI or public types. */
+export const capsByPlan: Record<"launch" | "free" | "pro" | "team", UsageCaps> = {
   launch: getUsageCapsForPlanCode("launch"), // Launch: 250, 1000, 500
+  free: getUsageCapsForPlanCode("launch"),   // Legacy alias for launch
   pro: getUsageCapsForPlanCode("build"),   // Build: 1000, 3000, 1000
   team: getUsageCapsForPlanCode("deploy"), // Deploy: 5000, 10000, 10000
 };

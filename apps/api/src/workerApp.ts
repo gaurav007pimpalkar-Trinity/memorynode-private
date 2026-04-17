@@ -2152,6 +2152,7 @@ let stubState: {
     entitlements: StubRow[];
     invoice_lines: StubRow[];
     usage_alert_events: StubRow[];
+    usage_reservations: StubRow[];
     api_audit_log: StubRow[];
     app_settings: StubRow[];
     product_events: StubRow[];
@@ -2179,6 +2180,7 @@ function createStubSupabase(env: Env) {
         entitlements: [] as StubRow[],
         invoice_lines: [] as StubRow[],
         usage_alert_events: [] as StubRow[],
+        usage_reservations: [] as StubRow[],
         api_audit_log: [] as StubRow[],
         app_settings: [{ api_key_salt: env.API_KEY_SALT ?? "" }],
         product_events: [] as StubRow[],
@@ -2316,6 +2318,22 @@ function createStubSupabase(env: Env) {
         if (!Object.prototype.hasOwnProperty.call(r, "created_at"))
           (r as Record<string, unknown>).created_at = new Date().toISOString();
         db[table].push(structuredClone(r));
+        if (table === "workspaces") {
+          const nowIso = new Date().toISOString();
+          db.entitlements.push({
+            id: crypto.randomUUID(),
+            workspace_id: String((r as Record<string, unknown>).id),
+            source_txn_id: `stub_entitlement_${String((r as Record<string, unknown>).id)}`,
+            plan_code: "launch",
+            status: "active",
+            starts_at: new Date(Date.now() - 60_000).toISOString(),
+            expires_at: null,
+            caps_json: capsByPlanCode("launch"),
+            metadata: { source: "stub_workspace_bootstrap" },
+            created_at: nowIso,
+            updated_at: nowIso,
+          });
+        }
       });
       return {
         select(_sel?: string) {
@@ -2412,7 +2430,8 @@ function createStubSupabase(env: Env) {
 
   return {
     from(table: string) {
-      return tableBuilder(table as keyof typeof db);
+      const mapped = table === "workspace_entitlements" ? "entitlements" : table;
+      return tableBuilder(mapped as keyof typeof db);
     },
     rpc(name: string, params: Record<string, unknown>) {
       switch (name) {

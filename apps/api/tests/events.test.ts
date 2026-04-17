@@ -311,6 +311,22 @@ function makeSupabase(options?: {
   } as unknown as SupabaseMock;
 }
 
+function seedEntitlement(supabase: SupabaseClient, options?: { planCode?: string; caps?: { writes: number; reads: number; embeds: number } }) {
+  const inserted = supabase.from("workspace_entitlements").insert({
+    workspace_id: "ws1",
+    source_txn_id: "txn_events_seed",
+    plan_code: options?.planCode ?? "launch",
+    status: "active",
+    starts_at: new Date(Date.now() - 60_000).toISOString(),
+    expires_at: null,
+    caps_json: options?.caps ?? { writes: 2000, reads: 10000, embeds: 2000 },
+    metadata: {},
+    created_at: new Date().toISOString(),
+    updated_at: new Date().toISOString(),
+  });
+  expect(inserted.error).toBeNull();
+}
+
 describe("product events", () => {
   const env = {
     SUPABASE_URL: "",
@@ -370,6 +386,7 @@ describe("product events", () => {
 
   it("emits first_ingest_success only once", async () => {
     const supabase = makeSupabase({ usage: { writes: 0, reads: 0, embeds: 0 } });
+    seedEntitlement(supabase);
     const req = new Request("http://localhost/v1/memories", {
       method: "POST",
       headers: { authorization: "Bearer mn_live_x", "content-type": "application/json" },
@@ -383,6 +400,7 @@ describe("product events", () => {
 
   it("emits cap_exceeded when usage over limit", async () => {
     const supabase = makeSupabase({ usage: { writes: 0, reads: 5000, embeds: 0 }, plan_status: "past_due" });
+    seedEntitlement(supabase, { caps: { writes: 100, reads: 100, embeds: 100 } });
     const req = new Request("http://localhost/v1/search", {
       method: "POST",
       headers: { authorization: "Bearer mn_live_x", "content-type": "application/json" },

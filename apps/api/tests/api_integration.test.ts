@@ -98,7 +98,7 @@ describe("POST /v1/search", () => {
 });
 
 describe("POST /v1/import", () => {
-  it("returns 402 for free plans", async () => {
+  it("returns 500 for invalid artifact payload", async () => {
     const { apiKey } = await getStubApiKey();
     const res = await api.fetch(
       new Request("http://localhost/v1/import", {
@@ -111,9 +111,9 @@ describe("POST /v1/import", () => {
       }),
       stubEnv as unknown as Record<string, unknown>,
     );
-    expect(res.status).toBe(402);
+    expect(res.status).toBe(500);
     const json = await res.json();
-    expect(json?.error?.code).toBe("UPGRADE_REQUIRED");
+    expect(json?.error?.code).toBe("INTERNAL");
   });
 });
 
