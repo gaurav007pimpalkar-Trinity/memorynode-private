@@ -215,7 +215,22 @@ revoke all on function get_api_key_salt() from public;
 revoke all on function authenticate_api_key(text) from public;
 revoke all on function touch_api_key_usage(uuid, text) from public;
 
-grant execute on function get_api_key_salt() to anon, authenticated, service_role;
-grant execute on function authenticate_api_key(text) to anon, authenticated, service_role;
-grant execute on function touch_api_key_usage(uuid, text) to anon, authenticated, service_role;
+do $$
+begin
+  if exists (select 1 from pg_roles where rolname = 'anon') then
+    execute 'grant execute on function get_api_key_salt() to anon';
+    execute 'grant execute on function authenticate_api_key(text) to anon';
+    execute 'grant execute on function touch_api_key_usage(uuid, text) to anon';
+  end if;
+  if exists (select 1 from pg_roles where rolname = 'authenticated') then
+    execute 'grant execute on function get_api_key_salt() to authenticated';
+    execute 'grant execute on function authenticate_api_key(text) to authenticated';
+    execute 'grant execute on function touch_api_key_usage(uuid, text) to authenticated';
+  end if;
+  if exists (select 1 from pg_roles where rolname = 'service_role') then
+    execute 'grant execute on function get_api_key_salt() to service_role';
+    execute 'grant execute on function authenticate_api_key(text) to service_role';
+    execute 'grant execute on function touch_api_key_usage(uuid, text) to service_role';
+  end if;
+end$$;
 

@@ -38,7 +38,12 @@ as $$
   limit 1;
 $$;
 
-grant execute on function public.get_memory_scoped(uuid, uuid) to service_role;
+do $$
+begin
+  if exists (select 1 from pg_roles where rolname = 'service_role') then
+    execute 'grant execute on function public.get_memory_scoped(uuid, uuid) to service_role';
+  end if;
+end$$;
 
 create or replace function public.delete_memory_scoped(
   p_workspace_id uuid,
@@ -68,4 +73,9 @@ begin
 end;
 $$;
 
-grant execute on function public.delete_memory_scoped(uuid, uuid) to service_role;
+do $$
+begin
+  if exists (select 1 from pg_roles where rolname = 'service_role') then
+    execute 'grant execute on function public.delete_memory_scoped(uuid, uuid) to service_role';
+  end if;
+end$$;

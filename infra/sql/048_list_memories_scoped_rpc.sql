@@ -65,14 +65,19 @@ as $$
   offset greatest(0, (greatest(1, p_page) - 1) * greatest(1, p_page_size));
 $$;
 
-grant execute on function public.list_memories_scoped(
-  uuid,
-  integer,
-  integer,
-  text,
-  text,
-  text,
-  jsonb,
-  timestamptz,
-  timestamptz
-) to service_role;
+do $$
+begin
+  if exists (select 1 from pg_roles where rolname = 'service_role') then
+    execute 'grant execute on function public.list_memories_scoped(
+      uuid,
+      integer,
+      integer,
+      text,
+      text,
+      text,
+      jsonb,
+      timestamptz,
+      timestamptz
+    ) to service_role';
+  end if;
+end$$;
