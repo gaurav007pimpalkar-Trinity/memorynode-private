@@ -49,6 +49,16 @@ function makeSupabasePlanV2(options: {
     extraction_calls: options.usage?.extraction_calls ?? 0,
     embed_tokens_used: options.usage?.embed_tokens_used ?? 0,
   };
+  const reservations: Array<{
+    id: string;
+    request_id: string;
+    writes_delta: number;
+    reads_delta: number;
+    embeds_delta: number;
+    embed_tokens_delta: number;
+    extraction_calls_delta: number;
+    status: "reserved" | "committed";
+  }> = [];
 
   return {
     from(table: string) {
@@ -143,6 +153,59 @@ function makeSupabasePlanV2(options: {
       return {};
     },
     rpc(name: string, params?: Record<string, unknown>) {
+      if (name === "reserve_usage_if_within_cap") {
+        const requestId = String(params?.p_request_id ?? "");
+        const existing = reservations.find((r) => r.request_id === requestId);
+        if (existing) {
+          return {
+            data: [{ reservation_id: existing.id, exceeded: false, limit_name: null, used_value: 0, cap_value: 0 }],
+            error: null,
+          };
+        }
+        const pW = (params?.p_writes_delta as number) ?? 0;
+        const pR = (params?.p_reads_delta as number) ?? 0;
+        const pE = (params?.p_embeds_delta as number) ?? 0;
+        const pEt = (params?.p_embed_tokens_delta as number) ?? 0;
+        const pEx = (params?.p_extraction_calls_delta as number) ?? 0;
+        const capW = (params?.p_writes_cap as number) ?? 0;
+        const capR = (params?.p_reads_cap as number) ?? 0;
+        const capE = (params?.p_embeds_cap as number) ?? 0;
+        const capEt = (params?.p_embed_tokens_cap as number) ?? 0;
+        const capEx = (params?.p_extraction_calls_cap as number) ?? 0;
+        if (usage.writes + pW > capW) return { data: [{ reservation_id: null, exceeded: true, limit_name: "writes", used_value: usage.writes, cap_value: capW }], error: null };
+        if (usage.reads + pR > capR) return { data: [{ reservation_id: null, exceeded: true, limit_name: "reads", used_value: usage.reads, cap_value: capR }], error: null };
+        if (usage.embeds + pE > capE) return { data: [{ reservation_id: null, exceeded: true, limit_name: "embeds", used_value: usage.embeds, cap_value: capE }], error: null };
+        if (usage.embed_tokens_used + pEt > capEt) return { data: [{ reservation_id: null, exceeded: true, limit_name: "embed_tokens", used_value: usage.embed_tokens_used, cap_value: capEt }], error: null };
+        if (usage.extraction_calls + pEx > capEx) return { data: [{ reservation_id: null, exceeded: true, limit_name: "extraction_calls", used_value: usage.extraction_calls, cap_value: capEx }], error: null };
+        const id = `res-${reservations.length + 1}`;
+        reservations.push({
+          id,
+          request_id: requestId,
+          writes_delta: pW,
+          reads_delta: pR,
+          embeds_delta: pE,
+          embed_tokens_delta: pEt,
+          extraction_calls_delta: pEx,
+          status: "reserved",
+        });
+        return {
+          data: [{ reservation_id: id, exceeded: false, limit_name: null, used_value: 0, cap_value: 0 }],
+          error: null,
+        };
+      }
+      if (name === "commit_usage_reservation") {
+        const reservationId = String(params?.p_reservation_id ?? "");
+        const row = reservations.find((r) => r.id === reservationId);
+        if (!row) return { data: false, error: null };
+        if (row.status === "committed") return { data: true, error: null };
+        row.status = "committed";
+        usage.writes += row.writes_delta;
+        usage.reads += row.reads_delta;
+        usage.embeds += row.embeds_delta;
+        usage.embed_tokens_used += row.embed_tokens_delta;
+        usage.extraction_calls += row.extraction_calls_delta;
+        return { data: true, error: null };
+      }
       if (name === "bump_usage_if_within_cap" || name === "record_usage_event_if_within_cap") {
         const pW = (params?.p_writes as number) ?? 0;
         const pR = (params?.p_reads as number) ?? 0;
@@ -185,7 +248,7 @@ function makeSupabasePlanV2(options: {
 }
 
 describe("Plan v2: extraction cap enforcement", () => {
-  it("returns 402 PLAN_LIMIT_EXCEEDED when extract=true and plan has extraction_calls_per_day 0", async () => {
+  it("returns 402 daily_cap_exceeded when extract=true and plan has extraction_calls_per_day 0", async () => {
     const supabase = makeSupabasePlanV2({ planCode: "free" });
     const res = await handleCreateMemory(
       new Request("http://localhost/v1/memories", {
@@ -199,14 +262,14 @@ describe("Plan v2: extraction cap enforcement", () => {
     );
     expect(res.status).toBe(402);
     const json = await res.json();
-    expect(json.error?.code).toBe("PLAN_LIMIT_EXCEEDED");
+    expect(json.error?.code).toBe("daily_cap_exceeded");
     expect(json.error?.limit).toBe("extraction_calls");
     expect(json.error?.cap).toBe(0);
   });
 });
 
 describe("Plan v2: token cap enforcement", () => {
-  it("returns 402 PLAN_LIMIT_EXCEEDED when embed_tokens would exceed plan cap", async () => {
+  it("returns 402 daily_cap_exceeded when embed_tokens would exceed plan cap", async () => {
     const limits = getLimitsForPlanCode("free");
     const supabase = makeSupabasePlanV2({
       planCode: "free",
@@ -224,7 +287,7 @@ describe("Plan v2: token cap enforcement", () => {
     );
     expect(res.status).toBe(402);
     const json = await res.json();
-    expect(json.error?.code).toBe("PLAN_LIMIT_EXCEEDED");
+    expect(json.error?.code).toBe("daily_cap_exceeded");
     expect(json.error?.limit).toBe("embed_tokens");
   });
 });
@@ -248,7 +311,7 @@ describe("Plan v2: atomic cap enforcement", () => {
     );
     expect(res.status).toBe(402);
     const json = await res.json();
-    expect(json.error?.code).toBe("PLAN_LIMIT_EXCEEDED");
+    expect(json.error?.code).toBe("daily_cap_exceeded");
     expect(json.error?.limit).toBe("writes");
   });
 
@@ -271,7 +334,7 @@ describe("Plan v2: atomic cap enforcement", () => {
     );
     expect(res.status).toBe(402);
     const json = await res.json();
-    expect(json.error?.code).toBe("PLAN_LIMIT_EXCEEDED");
+    expect(json.error?.code).toBe("daily_cap_exceeded");
     expect(json.error?.limit).toBe("reads");
   });
 });
@@ -340,7 +403,7 @@ describe("Plan v2: import cap enforcement", () => {
     );
     expect(res.status).toBe(402);
     const json = await res.json();
-    expect(json.error?.code).toBe("PLAN_LIMIT_EXCEEDED");
+    expect(json.error?.code).toBe("daily_cap_exceeded");
   });
 });
 
@@ -375,8 +438,58 @@ describe("Plan v2: workspace RPM", () => {
   });
 });
 
+describe("Plan v2: workspace in-flight concurrency", () => {
+  it("returns 429 when parallel requests exceed workspace in-flight cap", async () => {
+    const doStub = makeRateLimitDoStub(100, 60_000);
+    const env = makeEnv({
+      RATE_LIMIT_DO: doStub,
+      WORKSPACE_CONCURRENCY_MAX: "1",
+      WORKSPACE_CONCURRENCY_TTL_MS: "30000",
+    });
+    const supabase = makeSupabasePlanV2({
+      planCode: "free",
+      usage: { writes: 0, reads: 0, embeds: 0, extraction_calls: 0, embed_tokens_used: 0 },
+    });
+
+    const makeReq = (requestId: string) =>
+      handleSearch(
+        new Request("http://localhost/v1/search", {
+          method: "POST",
+          headers: { authorization: "Bearer mn_live_test", "content-type": "application/json" },
+          body: JSON.stringify({ user_id: "u1", query: "q" }),
+        }),
+        env as Record<string, unknown>,
+        supabase,
+        {},
+        requestId,
+      );
+
+    const ns = (env as Record<string, unknown>).RATE_LIMIT_DO as {
+      idFromName: (name: string) => string;
+      get: (id: string) => { fetch: (request: Request) => Promise<Response> };
+    };
+    const held = await ns.get(ns.idFromName("conc-ws:ws1")).fetch(
+      new Request("https://rate-limit/concurrency", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          action: "concurrency_acquire",
+          limit: 1,
+          ttl_ms: 30_000,
+          token: "occupied-ws1",
+        }),
+      }),
+    );
+    expect(held.status).toBe(200);
+
+    const [a, b] = await Promise.all([makeReq("req-c-1"), makeReq("req-c-2")]);
+    expect(a.status).toBe(429);
+    expect(b.status).toBe(429);
+  });
+});
+
 describe("Plan v2: error shape", () => {
-  it("returns consistent PLAN_LIMIT_EXCEEDED with limit, used, cap", async () => {
+  it("returns consistent daily_cap_exceeded with limit, used, cap", async () => {
     const limits = getLimitsForPlanCode("free");
     const supabase = makeSupabasePlanV2({
       planCode: "free",
@@ -395,7 +508,7 @@ describe("Plan v2: error shape", () => {
     expect(res.status).toBe(402);
     const json = await res.json();
     expect(json.error).toBeDefined();
-    expect(json.error.code).toBe("PLAN_LIMIT_EXCEEDED");
+    expect(json.error.code).toBe("daily_cap_exceeded");
     expect(typeof json.error.limit).toBe("string");
     expect(typeof json.error.used).toBe("number");
     expect(typeof json.error.cap).toBe("number");

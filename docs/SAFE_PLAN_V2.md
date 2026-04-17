@@ -11,7 +11,9 @@ Plan v2 adds:
 - **Token-based accounting** (`embed_tokens_used`, estimated as `ceil(text.length/4)`)
 - **Extraction gating** (per-plan `extraction_calls_per_day`; Launch has 0)
 - **Workspace-level rate limit** (120 RPM default, 300 RPM for Scale/Scale+)
+- **Workspace in-flight concurrency cap** (active request cap per workspace; returns 429 on saturation)
 - **Consistent 402 error shape** (`PLAN_LIMIT_EXCEEDED` with `limit`, `used`, `cap`)
+- **Unified internal credits ledger** for cross-feature economics visibility (INR hard cap remains authoritative)
 
 No new infrastructure: Cloudflare Worker + Supabase only. Existing API shape is preserved.
 
@@ -68,6 +70,24 @@ Deploy the API Worker after the migration. The Worker already:
 ---
 
 ## Enforcement Flows
+
+### Period semantics (dual-hard)
+
+- **Daily fair-use caps are hard** (writes/reads/embed tokens/etc).
+- **Billing-period cap is hard** (`limit = budget` from entitlement period).
+- Exceeding either returns 402 and does not record incremental usage for that request.
+
+### Reserve-before-execute flow (strict)
+
+All quota-consuming operations (`/v1/memories`, `/v1/search`, `/v1/context`, `/v1/import`) now follow:
+
+1) Compute estimated INR + internal credits from shared cost model (`packages/shared/src/costModel.ts`)
+2) Call DB `reserve_usage_if_within_cap` (atomic guard + reservation row)
+3) If reservation fails, return 402 immediately (`daily_cap_exceeded` / `monthly_cap_exceeded`)
+4) Execute request work
+5) Commit via DB `commit_usage_reservation` (single-source usage event + daily aggregates)
+
+This ensures no expensive request executes before budget approval.
 
 ### POST /v1/memories
 
@@ -149,7 +169,7 @@ All plan-limit 402 responses use:
 | Token / embed runaway | `embed_tokens_used` + `embeds` cap; reserve before embed                    |
 | Import bulk abuse      | Pre-calc deltas; atomic reserve before any insert                          |
 | Eval run abuse         | Items capped at 100; total delta reserved once before run                  |
-| Workspace burst        | Workspace RPM (120 / 300) in addition to key rate limit                     |
+| Workspace burst        | Workspace RPM (120 / 300) + in-flight concurrency cap in addition to key rate limit |
 | Text bloat             | Plan-based `max_text_chars` (15k–50k)                                      |
 
 All of this is enforced in the Worker using the same Supabase RPC and tables; no queues or new services.

@@ -255,6 +255,38 @@ export interface UsageCaps {
   reads: number;
   embeds: number;
 }
+import {
+  computeCredits,
+  type CostModelInput as InternalCreditsInput,
+  type CreditsBreakdown as InternalCreditsBreakdown,
+  CREDIT_WEIGHTS,
+} from "./costModel.js";
+
+export type { InternalCreditsInput, InternalCreditsBreakdown };
+export const INTERNAL_CREDIT_WEIGHTS = CREDIT_WEIGHTS;
+
+/** @deprecated Use computeCredits from costModel.ts */
+export function computeInternalCredits(input: InternalCreditsInput): {
+  total: number;
+  breakdown: InternalCreditsBreakdown;
+} {
+  return computeCredits(input);
+}
+
+/** Included internal credits budget implied by plan limits (dual model: credits + INR hard cap). */
+export function computePlanIncludedInternalCredits(limits: PlanLimits): {
+  total: number;
+  breakdown: InternalCreditsBreakdown;
+} {
+  return computeInternalCredits({
+    writes: limits.included_writes ?? limits.writes_per_day,
+    reads: limits.included_reads ?? limits.reads_per_day,
+    embed_tokens: limits.included_embed_tokens ?? limits.embed_tokens_per_day,
+    extraction_calls: limits.extraction_calls_per_day,
+    gen_tokens: limits.included_gen_tokens ?? 0,
+    storage_gb: limits.included_storage_gb ?? 0,
+  });
+}
 
 /** Returns UsageCaps for a plan code. Unknown => Launch-like caps. */
 export function getUsageCapsForPlanCode(planCode: string | null | undefined): UsageCaps {

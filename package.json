@@ -38,6 +38,7 @@
     "check:least-privilege": "node scripts/check_least_privilege_contract.mjs",
     "check:config": "node scripts/check_config.mjs",
     "check:docs-billing": "node scripts/check_docs_billing.mjs",
+    "check:economics-gate": "node scripts/check_economics_gate.mjs",
     "ci:trust-gates": "node scripts/ci_trust_gates.mjs",
     "migrations:list": "node scripts/migrations_list.mjs",
     "migrations:check": "node scripts/migrations_check.mjs",

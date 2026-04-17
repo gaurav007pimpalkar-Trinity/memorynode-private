@@ -8,10 +8,16 @@
  */
 
 import type { SupabaseClient } from "@supabase/supabase-js";
-import type { PlanLimits } from "@memorynodeai/shared";
+import { computeInternalCredits, estimateCostInr, type PlanLimits } from "@memorynodeai/shared";
 import type { Env } from "../env.js";
 import type { AuthContext } from "../auth.js";
-import { authenticate, rateLimit, rateLimitWorkspace } from "../auth.js";
+import {
+  acquireWorkspaceConcurrencySlot,
+  authenticate,
+  rateLimit,
+  rateLimitWorkspace,
+  releaseWorkspaceConcurrencySlot,
+} from "../auth.js";
 import type { HandlerDeps } from "../router.js";
 import { MemoryInsertSchema, parseWithSchema } from "../contracts/index.js";
 import type { MemoryType } from "../contracts/index.js";
@@ -178,18 +184,14 @@ export const MAX_EXTRACT_ITEMS = 10;
 const MAX_CHUNKS_PER_EXTRACTED_ITEM = 2;
 /** ~200 tokens per embed (align with shared TOKENS_PER_EMBED_ASSUMED). Used for extraction child embed token reserve. */
 const TOKENS_PER_EMBED = 200;
-const EMBED_COST_USD_PER_1K_TOKENS = 0.00002;
-const DEFAULT_USD_TO_INR = 83;
-const DEFAULT_COST_DRIFT_MULTIPLIER = 1.35;
-
 function estimateEmbedTokenCostInr(embedTokens: number, env: Env): number {
-  const usdToInr = Number(env.USD_TO_INR) || DEFAULT_USD_TO_INR;
-  const multiplierRaw = Number(env.COST_DRIFT_MULTIPLIER ?? DEFAULT_COST_DRIFT_MULTIPLIER);
-  const multiplier = Number.isFinite(multiplierRaw) && multiplierRaw > 1
-    ? Math.min(3, multiplierRaw)
-    : DEFAULT_COST_DRIFT_MULTIPLIER;
-  const inr = ((Math.max(0, embedTokens) / 1000) * EMBED_COST_USD_PER_1K_TOKENS) * usdToInr * multiplier;
-  return Number(inr.toFixed(6));
+  return estimateCostInr(
+    { embed_tokens: embedTokens },
+    {
+      usd_to_inr: Number(env.USD_TO_INR),
+      drift_multiplier: Number(env.COST_DRIFT_MULTIPLIER),
+    },
+  );
 }
 
 async function extractItems(text: string, env: Env): Promise<ExtractedItem[]> {
@@ -485,80 +487,92 @@ export function createMemoryHandlers(
         );
       }
 
-      const chunks = d.chunkText(text);
-      const chunkCount = chunks.length;
-      const estimatedEmbedTokens = chunks.reduce((sum, ch) => sum + d.estimateEmbedTokens(ch.length), 0);
-
-      const today = d.todayUtc();
-      // When extract is true, reserve the maximum possible extraction cost up front so that no
-      // child embed or insert runs without quota. This uses the same atomic cap check as all other
-      // paths; we never call bump_usage_rpc for extraction children.
-      const extractWrites = extract ? MAX_EXTRACT_ITEMS : 0;
-      const extractEmbeds = extract ? MAX_EXTRACT_ITEMS * MAX_CHUNKS_PER_EXTRACTED_ITEM : 0;
-      const extractEmbedTokens = extract ? extractEmbeds * TOKENS_PER_EMBED : 0;
-      const reserveResult = await d.reserveQuotaAndMaybeRespond(
-        quota,
-        supabase,
-        auth.workspaceId,
-        today,
-        {
-          writesDelta: 1 + extractWrites,
-          readsDelta: 0,
-          embedsDelta: chunkCount + extractEmbeds,
-          embedTokensDelta: estimatedEmbedTokens + extractEmbedTokens,
-          extractionCallsDelta: extract ? 1 : 0,
-        },
-        rateHeaders,
-        env,
-        jsonResponse,
-        { route: "/v1/memories", requestId },
-      );
-      if (reserveResult.response) return reserveResult.response;
-      const reservationId = reserveResult.reservationId;
+      const concurrency = await acquireWorkspaceConcurrencySlot(auth.workspaceId, env);
+      if (!concurrency.allowed) {
+        return jsonResponse(
+          { error: { code: "rate_limited", message: "Workspace in-flight concurrency limit exceeded" } },
+          429,
+          { ...rateHeaders, ...concurrency.headers },
+        );
+      }
+      const concurrencyHeaders = { ...rateHeaders, ...concurrency.headers };
 
       try {
-        await checkGlobalCostGuard(supabase, env);
-      } catch (e) {
-        if (e instanceof AIBudgetExceededError) {
+        const chunks = d.chunkText(text);
+        const chunkCount = chunks.length;
+        const estimatedEmbedTokens = chunks.reduce((sum, ch) => sum + d.estimateEmbedTokens(ch.length), 0);
+
+        const today = d.todayUtc();
+        // When extract is true, reserve the maximum possible extraction cost up front so that no
+        // child embed or insert runs without quota. This uses the same atomic cap check as all other
+        // paths; we never call bump_usage_rpc for extraction children.
+        const extractWrites = extract ? MAX_EXTRACT_ITEMS : 0;
+        const extractEmbeds = extract ? MAX_EXTRACT_ITEMS * MAX_CHUNKS_PER_EXTRACTED_ITEM : 0;
+        const extractEmbedTokens = extract ? extractEmbeds * TOKENS_PER_EMBED : 0;
+        const reserveResult = await d.reserveQuotaAndMaybeRespond(
+          quota,
+          supabase,
+          auth.workspaceId,
+          today,
+          {
+            writesDelta: 1 + extractWrites,
+            readsDelta: 0,
+            embedsDelta: chunkCount + extractEmbeds,
+            embedTokensDelta: estimatedEmbedTokens + extractEmbedTokens,
+            extractionCallsDelta: extract ? 1 : 0,
+          },
+          concurrencyHeaders,
+          env,
+          jsonResponse,
+          { route: "/v1/memories", requestId },
+        );
+        if (reserveResult.response) return reserveResult.response;
+        const reservationId = reserveResult.reservationId;
+
+        try {
+          await checkGlobalCostGuard(supabase, env);
+        } catch (e) {
+          if (e instanceof AIBudgetExceededError) {
+            if (reservationId) {
+              await d.markUsageReservationRefundPending(
+                supabase,
+                reservationId,
+                "ai_budget_exceeded_pre_embed",
+              );
+            }
+            return jsonResponse(
+              {
+                error: {
+                  code: "ai_budget_exceeded",
+                  message: "AI usage temporarily paused due to budget protection.",
+                },
+              },
+              503,
+              concurrencyHeaders,
+            );
+          }
+          throw e;
+        }
+
+        let embedResult: EmbedResult;
+        try {
+          embedResult = await d.embedText(chunks, env);
+        } catch (err) {
           if (reservationId) {
             await d.markUsageReservationRefundPending(
               supabase,
               reservationId,
-              "ai_budget_exceeded_pre_embed",
+              err instanceof Error ? err.message : String(err),
             );
           }
-          return jsonResponse(
-            {
-              error: {
-                code: "ai_budget_exceeded",
-                message: "AI usage temporarily paused due to budget protection.",
-              },
-            },
-            503,
-            rateHeaders,
-          );
+          throw err;
         }
-        throw e;
-      }
+        const embeddings = embedResult.embeddings;
+        const actualEmbedTokens = embedResult.tokensUsed;
 
-      let embedResult: EmbedResult;
-      try {
-        embedResult = await d.embedText(chunks, env);
-      } catch (err) {
-        if (reservationId) {
-          await d.markUsageReservationRefundPending(
-            supabase,
-            reservationId,
-            err instanceof Error ? err.message : String(err),
-          );
-        }
-        throw err;
-      }
-      const embeddings = embedResult.embeddings;
-      const actualEmbedTokens = embedResult.tokensUsed;
-
-      if (actualEmbedTokens > estimatedEmbedTokens) {
+        if (actualEmbedTokens > estimatedEmbedTokens) {
         const tokenDelta = actualEmbedTokens - estimatedEmbedTokens;
+        const internalCredits = computeInternalCredits({ embed_tokens: tokenDelta });
         try {
           await supabase.rpc("record_usage_event_if_within_cap", {
             p_workspace_id: auth.workspaceId,
@@ -578,7 +592,12 @@ export function createMemoryHandlers(
             p_storage_bytes: 0,
             p_estimated_cost_inr: estimateEmbedTokenCostInr(tokenDelta, env),
             p_billable: true,
-            p_metadata: {},
+            p_metadata: {
+              internal_credits_model: "v1",
+              internal_credits_total: internalCredits.total,
+              internal_credits: internalCredits.breakdown,
+              reconcile: "embed_token_overage",
+            },
             p_writes_cap: quota.planLimits.writes_per_day,
             p_reads_cap: quota.planLimits.reads_per_day,
             p_embeds_cap: Math.floor(quota.planLimits.embed_tokens_per_day / 200),
@@ -592,7 +611,7 @@ export function createMemoryHandlers(
         }
       }
 
-      const { data: memoryInsert, error: memoryError } = await supabase
+        const { data: memoryInsert, error: memoryError } = await supabase
         .from("memories")
         .insert({
           workspace_id: auth.workspaceId,
@@ -605,7 +624,7 @@ export function createMemoryHandlers(
         .select("id")
         .single();
 
-      if (memoryError || !memoryInsert) {
+        if (memoryError || !memoryInsert) {
         if (reservationId) {
           await d.markUsageReservationRefundPending(
             supabase,
@@ -625,9 +644,9 @@ export function createMemoryHandlers(
         );
       }
 
-      const memoryId = memoryInsert.id as string;
+        const memoryId = memoryInsert.id as string;
 
-      const rows = chunks.map((chunk, idx) => ({
+        const rows = chunks.map((chunk, idx) => ({
         workspace_id: auth.workspaceId,
         memory_id: memoryId,
         user_id,
@@ -637,8 +656,8 @@ export function createMemoryHandlers(
         embedding: d.vectorToPgvectorString(embeddings[idx]),
       }));
 
-      const { error: chunkError } = await supabase.from("memory_chunks").insert(rows);
-      if (chunkError) {
+        const { error: chunkError } = await supabase.from("memory_chunks").insert(rows);
+        if (chunkError) {
         if (reservationId) {
           await d.markUsageReservationRefundPending(
             supabase,
@@ -653,8 +672,8 @@ export function createMemoryHandlers(
         );
       }
 
-      let extractionResult: { children_created: number; skipped: boolean; error?: string } | undefined;
-      if (extract) {
+        let extractionResult: { children_created: number; skipped: boolean; error?: string } | undefined;
+        if (extract) {
         try {
           await checkGlobalCostGuard(supabase, env);
         } catch (e) {
@@ -674,7 +693,7 @@ export function createMemoryHandlers(
                 },
               },
               503,
-              rateHeaders,
+              concurrencyHeaders,
             );
           }
           throw e;
@@ -689,10 +708,10 @@ export function createMemoryHandlers(
               extractionResult.error,
             );
           }
-          return jsonResponse(
+            return jsonResponse(
             { error: { code: "EXTRACTION_ERROR", message: extractionResult.error } },
             503,
-            rateHeaders,
+              concurrencyHeaders,
           );
         }
 
@@ -731,21 +750,24 @@ export function createMemoryHandlers(
         true,
       );
 
-      /* Quota already reserved via reserveQuotaAndMaybeRespond */
-      const response: Record<string, unknown> = { memory_id: memoryId, chunks: rows.length };
-      if (extractionResult) {
-        response.extraction = {
-          triggered: true,
-          children_created: extractionResult.children_created,
-          skipped: extractionResult.skipped,
-          ...(extractionResult.error ? { error: extractionResult.error } : {}),
-        };
-      }
+        /* Quota already reserved via reserveQuotaAndMaybeRespond */
+        const response: Record<string, unknown> = { memory_id: memoryId, chunks: rows.length };
+        if (extractionResult) {
+          response.extraction = {
+            triggered: true,
+            children_created: extractionResult.children_created,
+            skipped: extractionResult.skipped,
+            ...(extractionResult.error ? { error: extractionResult.error } : {}),
+          };
+        }
 
-      if (reservationId) {
-        await d.markUsageReservationCommitted(supabase, reservationId);
+        if (reservationId) {
+          await d.markUsageReservationCommitted(supabase, reservationId);
+        }
+        return jsonResponse(response, 200, concurrencyHeaders);
+      } finally {
+        await releaseWorkspaceConcurrencySlot(auth.workspaceId, concurrency.leaseToken, env);
       }
-      return jsonResponse(response, 200, rateHeaders);
     },
 
     async handleListMemories(request, env, supabase, url, auditCtx, requestId = "", deps?) {
@@ -949,13 +971,23 @@ export function createMemoryHandlers(
           rate.headers,
         );
       }
+      const wsRpm = quota.planLimits.workspace_rpm ?? 120;
+      const wsRate = await rateLimitWorkspace(auth.workspaceId, wsRpm, env);
+      if (!wsRate.allowed) {
+        return jsonResponse(
+          { error: { code: "rate_limited", message: "Workspace rate limit exceeded" } },
+          429,
+          { ...rate.headers, ...wsRate.headers },
+        );
+      }
+      const rateHeaders = { ...rate.headers, ...wsRate.headers };
 
       const deleted = await d.deleteMemoryCascade(supabase, auth.workspaceId, memoryId);
       if (!deleted) {
-        return jsonResponse({ error: { code: "NOT_FOUND", message: "Memory not found" } }, 404, rate.headers);
+        return jsonResponse({ error: { code: "NOT_FOUND", message: "Memory not found" } }, 404, rateHeaders);
       }
 
-      return jsonResponse({ deleted: true, id: memoryId }, 200, rate.headers);
+      return jsonResponse({ deleted: true, id: memoryId }, 200, rateHeaders);
     },
   };
 }

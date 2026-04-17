@@ -15,7 +15,8 @@ MemoryNode gives your AI app a place to remember. You send in facts, preferences
 - **Store memories** — Send user facts, preferences, or conversation snippets. You choose how to scope them (e.g. by user and optional namespace).
 - **Search** — Ask a question in natural language; get the most relevant memories back. Use the same user and namespace you used when storing.
 - **Get context for prompts** — One call returns formatted context and citations, ready to drop into your AI prompt.
-- **See usage** — Check how much you’ve used and your plan limits via the API or dashboard.
+- **See usage** — Check how much you’ve used and your plan limits via the API or dashboard (daily fair-use cap and billing-period cap are both enforced as hard limits).
+- **Clear cap errors** — API returns `daily_cap_exceeded` for fair-use daily cap and `monthly_cap_exceeded` for billing-period cap so apps can guide users correctly.
 - **Export and import** — Take a copy of your memories for backup or to move them elsewhere.
 
 You use the **API** (with an API key) or the **TypeScript SDK**. The **dashboard** is where you sign up, create workspaces, create and revoke API keys, and upgrade your plan.

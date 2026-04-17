@@ -1,0 +1,20 @@
+{
+  "plan_thresholds": {
+    "launch": {
+      "fixed_inr": 260,
+      "max_cost_ratio_pct": 98
+    },
+    "build": {
+      "fixed_inr": 850,
+      "max_cost_ratio_pct": 98
+    },
+    "deploy": {
+      "fixed_inr": 2800,
+      "max_cost_ratio_pct": 98
+    },
+    "scale": {
+      "fixed_inr": 9000,
+      "max_cost_ratio_pct": 98
+    }
+  }
+}

@@ -1801,6 +1801,7 @@ function UsageView({ workspaceId, embedded = false }: { workspaceId: string; emb
   const content = (
     <>
       <div className="muted small">Using session (workspace-scoped).</div>
+      <div className="muted small">Enforcement: daily fair-use cap (hard) and billing-period cap (hard).</div>
       {loading && <div>Loading…</div>}
       {error && (
         <div className="badge">
@@ -1837,6 +1838,11 @@ function UsageView({ workspaceId, embedded = false }: { workspaceId: string; emb
                 {usage.embeds} / {usage.limits?.embeds ?? "?"}
               </span>
             </div>
+            {(usage as { period?: { start?: string | null; end?: string | null } }).period && (
+              <div className="muted small mt-sm">
+                Billing period: {(usage as { period?: { start?: string | null } }).period?.start ?? "n/a"} to {(usage as { period?: { end?: string | null } }).period?.end ?? "n/a"}
+              </div>
+            )}
           </div>
         </div>
       )}

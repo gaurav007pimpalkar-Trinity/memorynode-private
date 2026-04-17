@@ -30,6 +30,7 @@ try {
     "pnpm check:least-privilege",
     "pnpm check:wrangler",
     "pnpm check:config",
+    "pnpm check:economics-gate",
     "pnpm secrets:check",
     "pnpm secrets:check:tracked",
     "pnpm migrations:check",

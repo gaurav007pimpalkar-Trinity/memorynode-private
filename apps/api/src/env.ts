@@ -39,6 +39,12 @@ export interface Env {
   RATE_LIMIT_BILLING_MAX?: string;
   RATE_LIMIT_ADMIN_MAX?: string;
   RATE_LIMIT_DASHBOARD_SESSION_MAX?: string;
+  /** Active in-flight request cap per workspace (quota-consuming routes). */
+  WORKSPACE_CONCURRENCY_MAX?: string;
+  /** Lease TTL in ms for workspace in-flight slots. */
+  WORKSPACE_CONCURRENCY_TTL_MS?: string;
+  /** Optional INR burst guard (workspace estimated INR per 60s window). */
+  WORKSPACE_COST_PER_MINUTE_CAP_INR?: string;
   ALLOWED_ORIGINS?: string;
   MAX_BODY_BYTES?: string;
   AUDIT_IP_SALT?: string;

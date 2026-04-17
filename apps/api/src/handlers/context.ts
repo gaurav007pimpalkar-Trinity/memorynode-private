@@ -11,7 +11,12 @@
 
 import type { SupabaseClient } from "@supabase/supabase-js";
 import type { Env } from "../env.js";
-import { authenticate, rateLimit } from "../auth.js";
+import {
+  acquireWorkspaceConcurrencySlot,
+  authenticate,
+  rateLimit,
+  releaseWorkspaceConcurrencySlot,
+} from "../auth.js";
 import { getRouteRateLimitMax } from "../limits.js";
 import type { HandlerDeps } from "../router.js";
 import type { SearchHandlerDeps } from "./search.js";
@@ -242,6 +247,16 @@ export function createContextHandlers(
       const embedsDelta = searchMode === "keyword" ? 0 : 1;
       const embedTokensDelta = d.estimateEmbedTokens(parseResult.data.query.length);
       const today = d.todayUtc();
+      const concurrency = await acquireWorkspaceConcurrencySlot(auth.workspaceId, env);
+      if (!concurrency.allowed) {
+        return jsonResponse(
+          { error: { code: "rate_limited", message: "Workspace in-flight concurrency limit exceeded" } },
+          429,
+          { ...rateHeaders, ...concurrency.headers },
+        );
+      }
+      const concurrencyHeaders = { ...rateHeaders, ...concurrency.headers };
+      try {
       const reserveResult = await d.reserveQuotaAndMaybeRespond(
         quota,
         supabase,
@@ -254,7 +269,7 @@ export function createContextHandlers(
           embedTokensDelta,
           extractionCallsDelta: 0,
         },
-        rateHeaders,
+        concurrencyHeaders,
         env,
         jsonResponse,
         { route: "/v1/context", requestId },
@@ -325,8 +340,11 @@ export function createContextHandlers(
           has_more: outcome.has_more,
         },
         200,
-        rateHeaders,
+        concurrencyHeaders,
       );
+      } finally {
+        await releaseWorkspaceConcurrencySlot(auth.workspaceId, concurrency.leaseToken, env);
+      }
     },
   };
 }

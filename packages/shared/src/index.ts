@@ -1,3 +1,6 @@
+import type { InternalCreditsBreakdown } from "./plans.js";
+import type { CostModelInput, CostModelOptions, CreditsBreakdown } from "./costModel.js";
+
 export type WorkspaceId = string;
 export type MemoryId = string;
 
@@ -149,6 +152,20 @@ export interface UsageTodayResponse {
     included_gen_tokens: number;
     included_storage_gb: number;
   };
+  internal_credits?: {
+    model: "v1";
+    used_total: number;
+    used_breakdown: InternalCreditsBreakdown;
+    included_total: number;
+    included_breakdown: InternalCreditsBreakdown;
+  };
+  semantics?: "dual_hard";
+  period?: {
+    start: string | null;
+    end: string | null;
+    daily_cap: "hard";
+    monthly_cap: "hard";
+  };
 }
 
 export interface CreateWorkspaceResponse {
@@ -178,17 +195,41 @@ export interface RevokeApiKeyResponse {
 }
 
 // Plans & limits (single source of truth)
-export type { PlanId, Plan, PlanLimits, UsageCaps } from "./plans.js";
+export type {
+  PlanId,
+  Plan,
+  PlanLimits,
+  UsageCaps,
+  InternalCreditsInput,
+  InternalCreditsBreakdown,
+} from "./plans.js";
 export {
   PLANS_BY_ID,
   CHECKOUT_PLAN_IDS,
   RATE_LIMIT_RPM_DEFAULT,
   RATE_LIMIT_RPM_NEW_KEY,
   TOKENS_PER_EMBED_ASSUMED,
+  INTERNAL_CREDIT_WEIGHTS,
   getPlan,
   getDefaultCaps,
   getLimitsForPlanCode,
   embedsCapFromEmbedTokens,
   getUsageCapsForPlanCode,
   getWorkspaceRpmForPlanCode,
+  computeInternalCredits,
+  computePlanIncludedInternalCredits,
 } from "./plans.js";
+
+export type {
+  CostModelInput,
+  CostModelOptions,
+  CreditsBreakdown,
+} from "./costModel.js";
+
+export {
+  COST_MODEL_VERSION,
+  COST_MODEL_CONSTANTS,
+  CREDIT_WEIGHTS,
+  computeCredits,
+  estimateCostInr,
+} from "./costModel.js";

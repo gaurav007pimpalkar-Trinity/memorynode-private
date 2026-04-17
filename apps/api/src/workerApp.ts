@@ -9,7 +9,14 @@ import {
   MAX_TOPK,
   type UsageSnapshot,
 } from "./limits.js";
-import { getPlan, getLimitsForPlanCode, type PlanLimits } from "@memorynodeai/shared";
+import {
+  COST_MODEL_VERSION,
+  computeInternalCredits,
+  estimateCostInr,
+  getPlan,
+  getLimitsForPlanCode,
+  type PlanLimits,
+} from "@memorynodeai/shared";
 import type { Env } from "./env.js";
 import {
   getEnvironmentStage,
@@ -558,6 +565,9 @@ type QuotaResolution = {
   planStatus: AuthContext["planStatus"];
   blocked: false;
   degradedEntitlements: boolean;
+  periodStart?: string | null;
+  periodEnd?: string | null;
+  semantics?: "dual_hard";
 } | {
   caps: UsageSnapshot;
   planLimits: PlanLimits;
@@ -567,6 +577,9 @@ type QuotaResolution = {
   errorCode: "ENTITLEMENT_EXPIRED" | "ENTITLEMENT_REQUIRED";
   message: string;
   expiredAt: string | null;
+  periodStart?: string | null;
+  periodEnd?: string | null;
+  semantics?: "dual_hard";
 };
 
 function normalizePayUTxnStatus(raw: string | null | undefined): PayUTransactionStatus {
@@ -676,6 +689,7 @@ async function resolveQuotaForWorkspace(
         planStatus: fallbackStatus,
         blocked: false,
         degradedEntitlements: true,
+        semantics: "dual_hard",
       };
     }
     const rows = (query.data ?? []) as Array<{
@@ -695,6 +709,7 @@ async function resolveQuotaForWorkspace(
         errorCode: "ENTITLEMENT_REQUIRED",
         message: "No active paid entitlement found. Start a plan to use API endpoints.",
         expiredAt: null,
+        semantics: "dual_hard",
       };
     }
 
@@ -716,6 +731,9 @@ async function resolveQuotaForWorkspace(
         planStatus: "active",
         blocked: false,
         degradedEntitlements: false,
+        periodStart: active.starts_at ?? null,
+        periodEnd: active.expires_at ?? null,
+        semantics: "dual_hard",
       };
     }
 
@@ -733,6 +751,7 @@ async function resolveQuotaForWorkspace(
         errorCode: "ENTITLEMENT_EXPIRED",
         message: "Active entitlement expired. Renew to continue quota-consuming API calls.",
         expiredAt: expired.expires_at ?? null,
+        semantics: "dual_hard",
       };
     }
   } catch {
@@ -747,6 +766,7 @@ async function resolveQuotaForWorkspace(
     errorCode: "ENTITLEMENT_REQUIRED",
     message: "Unable to verify active entitlement. Please complete billing before using API endpoints.",
     expiredAt: null,
+    semantics: "dual_hard",
   };
 }
 
@@ -1097,14 +1117,19 @@ function planLimitExceededResponse(
   jsonResponse: (data: unknown, status?: number, extraHeaders?: Record<string, string>) => Response,
   env: Env,
 ): Response {
+  const monthly = limit === "budget";
+  const message = monthly
+    ? "Monthly billing-period cap exceeded."
+    : "Daily fair-use cap exceeded.";
   return jsonResponse(
     {
       error: {
-        code: "PLAN_LIMIT_EXCEEDED",
+        code: monthly ? "monthly_cap_exceeded" : "daily_cap_exceeded",
         limit,
         used,
         cap,
-        message: `Plan limit exceeded: ${limit}`,
+        message,
+        ...(monthly ? { action: "upgrade_required" } : { retry_after: "next_day" }),
         upgrade_url: buildUpgradeUrl(env),
       },
     },
@@ -2582,6 +2607,165 @@ function createStubSupabase(env: Env) {
           } as unknown as StubRow);
           return Promise.resolve({ data: id, error: null });
         }
+        case "reserve_usage_if_within_cap": {
+          const reservations = ((db as unknown as { usage_reservations?: StubRow[] }).usage_reservations ??= []);
+          const day = String(params.p_day ?? todayUtc());
+          const workspaceId = String(params.p_workspace_id);
+          const requestId = String(params.p_request_id ?? "");
+          if (!requestId) {
+            return Promise.resolve({ data: null, error: { message: "request_id required" } as unknown as { message: string } });
+          }
+          const existingReservation = reservations.find(
+            (r) =>
+              (r as { workspace_id?: string }).workspace_id === workspaceId &&
+              (r as { request_id?: string | null }).request_id === requestId &&
+              (r as { status?: string }).status !== "refunded",
+          );
+          if (existingReservation) {
+            const routeMatches = String((existingReservation as { route?: string | null }).route ?? "") === String(params.p_route ?? "");
+            const payloadMatches =
+              Number((existingReservation as { writes_delta?: number }).writes_delta ?? 0) === Number(params.p_writes_delta ?? 0) &&
+              Number((existingReservation as { reads_delta?: number }).reads_delta ?? 0) === Number(params.p_reads_delta ?? 0) &&
+              Number((existingReservation as { embeds_delta?: number }).embeds_delta ?? 0) === Number(params.p_embeds_delta ?? 0) &&
+              Number((existingReservation as { embed_tokens_delta?: number }).embed_tokens_delta ?? 0) === Number(params.p_embed_tokens_delta ?? 0) &&
+              Number((existingReservation as { extraction_calls_delta?: number }).extraction_calls_delta ?? 0) === Number(params.p_extraction_calls_delta ?? 0);
+            if (!routeMatches || !payloadMatches) {
+              return Promise.resolve({ data: null, error: { message: "REQUEST_ID_CONFLICT" } as unknown as { message: string } });
+            }
+            return Promise.resolve({
+              data: [{
+                reservation_id: (existingReservation as { id?: string }).id ?? null,
+                exceeded: false,
+                limit_name: null,
+                used_value: 0,
+                cap_value: 0,
+              }],
+              error: null,
+            });
+          }
+          const usage = db.usage_daily.find(
+            (r) => r.workspace_id === workspaceId && r.day === day,
+          ) ?? {
+            workspace_id: workspaceId,
+            day,
+            writes: 0,
+            reads: 0,
+            embeds: 0,
+            extraction_calls: 0,
+            embed_tokens_used: 0,
+          };
+          const reserved = reservations
+            .filter(
+              (r) =>
+                (r as { workspace_id?: string }).workspace_id === workspaceId &&
+                (r as { status?: string }).status === "reserved",
+            )
+            .reduce<{ writes: number; reads: number; embeds: number; embed_tokens: number; extraction_calls: number }>(
+              (acc, r) => {
+                acc.writes += Number((r as { writes_delta?: number }).writes_delta ?? 0);
+                acc.reads += Number((r as { reads_delta?: number }).reads_delta ?? 0);
+                acc.embeds += Number((r as { embeds_delta?: number }).embeds_delta ?? 0);
+                acc.embed_tokens += Number((r as { embed_tokens_delta?: number }).embed_tokens_delta ?? 0);
+                acc.extraction_calls += Number((r as { extraction_calls_delta?: number }).extraction_calls_delta ?? 0);
+                return acc;
+              },
+              { writes: 0, reads: 0, embeds: 0, embed_tokens: 0, extraction_calls: 0 },
+            );
+          const writes = Number(usage.writes ?? 0) + reserved.writes + Number(params.p_writes_delta ?? 0);
+          const reads = Number(usage.reads ?? 0) + reserved.reads + Number(params.p_reads_delta ?? 0);
+          const embeds = Number(usage.embeds ?? 0) + reserved.embeds + Number(params.p_embeds_delta ?? 0);
+          const embedTokens = Number(usage.embed_tokens_used ?? 0) + reserved.embed_tokens + Number(params.p_embed_tokens_delta ?? 0);
+          const extractionCalls = Number(usage.extraction_calls ?? 0) + reserved.extraction_calls + Number(params.p_extraction_calls_delta ?? 0);
+          const costPerMinuteCap = Number(params.p_cost_per_minute_cap_inr ?? 0);
+          if (Number.isFinite(costPerMinuteCap) && costPerMinuteCap > 0) {
+            const minuteReservedCost = reservations
+              .filter(
+                (r) =>
+                  (r as { workspace_id?: string }).workspace_id === workspaceId &&
+                  (r as { status?: string }).status === "reserved",
+              )
+              .reduce((sum, r) => sum + Number((r as { estimated_cost_inr?: number }).estimated_cost_inr ?? 0), 0);
+            const projected = minuteReservedCost + Number(params.p_estimated_cost_inr ?? 0);
+            if (projected > costPerMinuteCap) {
+              return Promise.resolve({
+                data: [{
+                  reservation_id: null,
+                  exceeded: true,
+                  limit_name: "cost_per_minute",
+                  used_value: projected,
+                  cap_value: costPerMinuteCap,
+                }],
+                error: null,
+              });
+            }
+          }
+          if (writes > Number(params.p_writes_cap ?? Number.MAX_SAFE_INTEGER)) {
+            return Promise.resolve({ data: [{ reservation_id: null, exceeded: true, limit_name: "writes", used_value: writes, cap_value: Number(params.p_writes_cap ?? 0) }], error: null });
+          }
+          if (reads > Number(params.p_reads_cap ?? Number.MAX_SAFE_INTEGER)) {
+            return Promise.resolve({ data: [{ reservation_id: null, exceeded: true, limit_name: "reads", used_value: reads, cap_value: Number(params.p_reads_cap ?? 0) }], error: null });
+          }
+          if (embeds > Number(params.p_embeds_cap ?? Number.MAX_SAFE_INTEGER)) {
+            return Promise.resolve({ data: [{ reservation_id: null, exceeded: true, limit_name: "embeds", used_value: embeds, cap_value: Number(params.p_embeds_cap ?? 0) }], error: null });
+          }
+          if (embedTokens > Number(params.p_embed_tokens_cap ?? Number.MAX_SAFE_INTEGER)) {
+            return Promise.resolve({ data: [{ reservation_id: null, exceeded: true, limit_name: "embed_tokens", used_value: embedTokens, cap_value: Number(params.p_embed_tokens_cap ?? 0) }], error: null });
+          }
+          if (extractionCalls > Number(params.p_extraction_calls_cap ?? Number.MAX_SAFE_INTEGER)) {
+            return Promise.resolve({ data: [{ reservation_id: null, exceeded: true, limit_name: "extraction_calls", used_value: extractionCalls, cap_value: Number(params.p_extraction_calls_cap ?? 0) }], error: null });
+          }
+          const id = `res_${Math.random().toString(36).slice(2, 12)}`;
+          reservations.push({
+            id,
+            workspace_id: workspaceId,
+            day,
+            writes_delta: Number(params.p_writes_delta ?? 0),
+            reads_delta: Number(params.p_reads_delta ?? 0),
+            embeds_delta: Number(params.p_embeds_delta ?? 0),
+            embed_tokens_delta: Number(params.p_embed_tokens_delta ?? 0),
+            extraction_calls_delta: Number(params.p_extraction_calls_delta ?? 0),
+            estimated_cost_inr: Number(params.p_estimated_cost_inr ?? 0),
+            internal_credits_total: Number(params.p_internal_credits_total ?? 0),
+            route: params.p_route as string | null,
+            request_id: requestId,
+            idempotency_key: `${String(params.p_route ?? "unknown")}:${requestId}`,
+            status: "reserved",
+          } as unknown as StubRow);
+          return Promise.resolve({
+            data: [{ reservation_id: id, exceeded: false, limit_name: null, used_value: 0, cap_value: 0 }],
+            error: null,
+          });
+        }
+        case "commit_usage_reservation": {
+          const reservations = ((db as unknown as { usage_reservations?: StubRow[] }).usage_reservations ??= []);
+          const id = String(params.p_reservation_id ?? "");
+          const row = reservations.find((r) => (r as { id?: string }).id === id) as Record<string, unknown> | undefined;
+          if (!row) return Promise.resolve({ data: false, error: null });
+          if (String(row.status ?? "") === "committed") return Promise.resolve({ data: true, error: null });
+          row.status = "committed";
+          row.committed_at = new Date().toISOString();
+          const workspaceId = String(row.workspace_id ?? "");
+          const day = String(row.day ?? todayUtc());
+          let usage = db.usage_daily.find((u) => u.workspace_id === workspaceId && u.day === day);
+          if (!usage) {
+            usage = {
+              workspace_id: workspaceId,
+              day,
+              writes: 0,
+              reads: 0,
+              embeds: 0,
+              extraction_calls: 0,
+              embed_tokens_used: 0,
+            } as StubRow;
+            db.usage_daily.push(usage);
+          }
+          usage.writes = Number(usage.writes ?? 0) + Number(row.writes_delta ?? 0);
+          usage.reads = Number(usage.reads ?? 0) + Number(row.reads_delta ?? 0);
+          usage.embeds = Number(usage.embeds ?? 0) + Number(row.embeds_delta ?? 0);
+          usage.extraction_calls = Number(usage.extraction_calls ?? 0) + Number(row.extraction_calls_delta ?? 0);
+          usage.embed_tokens_used = Number(usage.embed_tokens_used ?? 0) + Number(row.embed_tokens_delta ?? 0);
+          return Promise.resolve({ data: true, error: null });
+        }
         case "mark_usage_reservation_committed": {
           const reservations = ((db as unknown as { usage_reservations?: StubRow[] }).usage_reservations ??= []);
           const id = params.p_reservation_id as string;
@@ -4034,19 +4218,6 @@ function estimateEmbedTokens(textLength: number): number {
   return Math.ceil(Math.max(0, textLength) / 4);
 }
 
-const DEFAULT_USD_TO_INR = 83;
-const EMBED_COST_USD_PER_1K_TOKENS = 0.00002;
-const EXTRACTION_COST_USD_PER_CALL = 0.00015;
-const READ_DB_COST_INR = 0.0005;
-const WRITE_DB_COST_INR = 0.002;
-const DEFAULT_COST_DRIFT_MULTIPLIER = 1.35;
-
-function resolveCostDriftMultiplier(env: Env): number {
-  const parsed = Number(env.COST_DRIFT_MULTIPLIER ?? DEFAULT_COST_DRIFT_MULTIPLIER);
-  if (!Number.isFinite(parsed) || parsed <= 1) return DEFAULT_COST_DRIFT_MULTIPLIER;
-  return Math.min(3, parsed);
-}
-
 function estimateRequestCostInr(
   deltas: {
     writesDelta: number;
@@ -4056,17 +4227,18 @@ function estimateRequestCostInr(
   },
   env: Env,
 ): number {
-  const usdToInr = Number(env.USD_TO_INR) || DEFAULT_USD_TO_INR;
-  const embedCostInr =
-    ((Math.max(0, deltas.embedTokensDelta) / 1000) * EMBED_COST_USD_PER_1K_TOKENS) * usdToInr;
-  const extractionCostInr =
-    Math.max(0, deltas.extractionCallsDelta) * EXTRACTION_COST_USD_PER_CALL * usdToInr;
-  const dbCostInr =
-    Math.max(0, deltas.readsDelta) * READ_DB_COST_INR +
-    Math.max(0, deltas.writesDelta) * WRITE_DB_COST_INR;
-  const raw = embedCostInr + extractionCostInr + dbCostInr;
-  const guarded = raw * resolveCostDriftMultiplier(env);
-  return Number(guarded.toFixed(6));
+  return estimateCostInr(
+    {
+      writes: deltas.writesDelta,
+      reads: deltas.readsDelta,
+      embed_tokens: deltas.embedTokensDelta,
+      extraction_calls: deltas.extractionCallsDelta,
+    },
+    {
+      usd_to_inr: Number(env.USD_TO_INR),
+      drift_multiplier: Number(env.COST_DRIFT_MULTIPLIER),
+    },
+  );
 }
 
 /** Result of atomic cap check + bump. On success usage was incremented; on exceeded nothing was changed. */
@@ -4107,6 +4279,12 @@ async function recordUsageEventIfWithinCap(
     },
     env,
   );
+  const internalCredits = computeInternalCredits({
+    writes: deltas.writesDelta,
+    reads: deltas.readsDelta,
+    embed_tokens: deltas.embedTokensDelta,
+    extraction_calls: deltas.extractionCallsDelta,
+  });
   const idempotencyKey = `${meta?.route ?? "route"}:${meta?.requestId ?? crypto.randomUUID()}:${workspaceId}:${day}:${deltas.writesDelta}:${deltas.readsDelta}:${deltas.embedsDelta}:${deltas.embedTokensDelta}:${deltas.extractionCallsDelta}`;
   const { data, error } = await supabase.rpc("record_usage_event_if_within_cap", {
     p_workspace_id: workspaceId,
@@ -4126,7 +4304,11 @@ async function recordUsageEventIfWithinCap(
     p_storage_bytes: 0,
     p_estimated_cost_inr: estimatedCostInr,
     p_billable: true,
-    p_metadata: {},
+    p_metadata: {
+      internal_credits_model: COST_MODEL_VERSION,
+      internal_credits_total: internalCredits.total,
+      internal_credits: internalCredits.breakdown,
+    },
     p_writes_cap: caps.writes,
     p_reads_cap: caps.reads,
     p_embeds_cap: caps.embeds,
@@ -4226,21 +4408,93 @@ async function reserveQuotaAndMaybeRespond(
   meta?: { route?: string; requestId?: string },
 ): Promise<{ response: Response | null; reservationId: string | null }> {
   if (quota.blocked) return { response: null, reservationId: null };
-  const result = await recordUsageEventIfWithinCap(
-    supabase,
-    workspaceId,
-    day,
-    deltas,
-    quota.planLimits,
+  const requestId = meta?.requestId?.trim() || crypto.randomUUID();
+  const caps = {
+    writes: quota.planLimits.writes_per_day,
+    reads: quota.planLimits.reads_per_day,
+    embeds: Math.floor(quota.planLimits.embed_tokens_per_day / 200),
+    embed_tokens: quota.planLimits.embed_tokens_per_day,
+    extraction_calls: quota.planLimits.extraction_calls_per_day,
+    gen_tokens: Math.max(0, quota.planLimits.included_gen_tokens ?? 0),
+    storage_bytes: Math.floor(Math.max(0, quota.planLimits.included_storage_gb ?? 0) * 1_000_000_000),
+  };
+  const estimatedCostInr = estimateRequestCostInr(
+    {
+      writesDelta: deltas.writesDelta,
+      readsDelta: deltas.readsDelta,
+      embedTokensDelta: deltas.embedTokensDelta,
+      extractionCallsDelta: deltas.extractionCallsDelta,
+    },
     env,
-    meta,
   );
-  if (!result.ok) {
+  const internalCredits = computeInternalCredits({
+    writes: deltas.writesDelta,
+    reads: deltas.readsDelta,
+    embed_tokens: deltas.embedTokensDelta,
+    extraction_calls: deltas.extractionCallsDelta,
+  });
+  const { data, error } = await supabase.rpc("reserve_usage_if_within_cap", {
+    p_workspace_id: workspaceId,
+    p_day: day,
+    p_request_id: requestId,
+    p_route: meta?.route ?? "unknown",
+    p_writes_delta: deltas.writesDelta,
+    p_reads_delta: deltas.readsDelta,
+    p_embeds_delta: deltas.embedsDelta,
+    p_embed_tokens_delta: deltas.embedTokensDelta,
+    p_extraction_calls_delta: deltas.extractionCallsDelta,
+    p_estimated_cost_inr: estimatedCostInr,
+    p_internal_credits_total: internalCredits.total,
+    p_writes_cap: caps.writes,
+    p_reads_cap: caps.reads,
+    p_embeds_cap: caps.embeds,
+    p_embed_tokens_cap: caps.embed_tokens,
+    p_extraction_calls_cap: caps.extraction_calls,
+    p_gen_tokens_cap: caps.gen_tokens,
+    p_storage_bytes_cap: caps.storage_bytes,
+    p_cost_per_minute_cap_inr: Number(env.WORKSPACE_COST_PER_MINUTE_CAP_INR ?? 0),
+  });
+  if (error) {
+    if ((error.message ?? "").includes("REQUEST_ID_CONFLICT")) {
+      throw createHttpError(409, "IDEMPOTENCY_CONFLICT", "request_id reused with different payload or route");
+    }
+    throw createHttpError(500, "DB_ERROR", `Failed to reserve usage budget: ${error.message}`);
+  }
+  const rows = Array.isArray(data) ? data : data ? [data] : [];
+  const row = rows[0] as {
+    reservation_id?: string | null;
+    exceeded?: boolean;
+    limit_name?: string | null;
+    used_value?: number | null;
+    cap_value?: number | null;
+  } | undefined;
+  if (!row) {
+    throw createHttpError(500, "DB_ERROR", "reserve_usage_if_within_cap returned no row");
+  }
+  if (row.exceeded === true && row.limit_name) {
+    if (row.limit_name === "cost_per_minute") {
+      return {
+        response: jsonResponse(
+          {
+            error: {
+              code: "rate_limited",
+              limit: row.limit_name,
+              used: Number(row.used_value ?? 0),
+              cap: Number(row.cap_value ?? 0),
+              message: "Workspace burst spend limit exceeded",
+            },
+          },
+          429,
+          { ...(rateHeaders ?? {}), "retry-after": "60" },
+        ),
+        reservationId: null,
+      };
+    }
     return {
       response: planLimitExceededResponse(
-        result.limit,
-        result.used,
-        result.cap,
+        row.limit_name,
+        Number(row.used_value ?? 0),
+        Number(row.cap_value ?? 0),
         rateHeaders,
         jsonResponse,
         env,
@@ -4248,24 +4502,28 @@ async function reserveQuotaAndMaybeRespond(
       reservationId: null,
     };
   }
-  let reservationId: string | null = null;
-  try {
-    const { data, error } = await supabase.rpc("create_usage_reservation", {
-      p_workspace_id: workspaceId,
-      p_day: day,
-      p_writes_delta: deltas.writesDelta,
-      p_reads_delta: deltas.readsDelta,
-      p_embeds_delta: deltas.embedsDelta,
-      p_embed_tokens_delta: deltas.embedTokensDelta,
-      p_extraction_calls_delta: deltas.extractionCallsDelta,
-      p_route: meta?.route ?? null,
-      p_request_id: meta?.requestId ?? null,
-    });
-    if (!error && typeof data === "string" && data.trim().length > 0) {
-      reservationId = data;
+  const reservationId = typeof row.reservation_id === "string" && row.reservation_id.trim().length > 0
+    ? row.reservation_id
+    : null;
+  void (async () => {
+    try {
+      await supabase.rpc("process_usage_reservation_refunds", { p_limit: 25 });
+    } catch {
+      /* best effort */
     }
-  } catch {
-    // best effort; usage remains capped and accounted even when reservation logging fails
+  })();
+  if (Math.random() < 0.01) {
+    void (async () => {
+      try {
+        await supabase.rpc("reconcile_usage_aggregates", {
+          p_workspace_id: workspaceId,
+          p_day: day,
+          p_limit: 1,
+        });
+      } catch {
+        /* best effort */
+      }
+    })();
   }
   return { response: null, reservationId };
 }
@@ -4275,7 +4533,7 @@ async function markUsageReservationCommitted(
   reservationId: string,
 ): Promise<void> {
   try {
-    await supabase.rpc("mark_usage_reservation_committed", { p_reservation_id: reservationId });
+    await supabase.rpc("commit_usage_reservation", { p_reservation_id: reservationId });
   } catch {
     /* best effort */
   }

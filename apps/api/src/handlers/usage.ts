@@ -9,7 +9,7 @@ import type { AuthContext } from "../auth.js";
 import { authenticate, rateLimit } from "../auth.js";
 import type { HandlerDeps } from "../router.js";
 import type { UsageSnapshot } from "../limits.js";
-import type { PlanLimits } from "@memorynodeai/shared";
+import { computeInternalCredits, computePlanIncludedInternalCredits, type PlanLimits } from "@memorynodeai/shared";
 
 export interface UsageRowLike {
   writes: number;
@@ -28,6 +28,9 @@ export interface QuotaResolutionLike {
   effectivePlan: string;
   planStatus: AuthContext["planStatus"];
   blocked: boolean;
+  periodStart?: string | null;
+  periodEnd?: string | null;
+  semantics?: "dual_hard";
 }
 
 export interface UsageHandlerDeps extends HandlerDeps {
@@ -101,6 +104,15 @@ export function createUsageHandlers(
       const rateHeaders = { ...rate.headers, ...wsRate.headers };
       const usage = await d.getUsage(supabase, auth.workspaceId, day);
       const caps = quota.caps;
+      const usedCredits = computeInternalCredits({
+        writes: usage.writes,
+        reads: usage.reads,
+        embed_tokens: usage.embed_tokens_used ?? 0,
+        extraction_calls: usage.extraction_calls ?? 0,
+        gen_tokens: (usage.gen_input_tokens_used ?? 0) + (usage.gen_output_tokens_used ?? 0),
+        storage_gb: (usage.storage_bytes_used ?? 0) / 1_000_000_000,
+      });
+      const includedCredits = computePlanIncludedInternalCredits(quota.planLimits);
       return jsonResponse(
         {
           day,
@@ -119,6 +131,20 @@ export function createUsageHandlers(
             included_embed_tokens: quota.planLimits.included_embed_tokens ?? quota.planLimits.embed_tokens_per_day,
             included_gen_tokens: quota.planLimits.included_gen_tokens ?? 0,
             included_storage_gb: quota.planLimits.included_storage_gb ?? 0,
+          },
+          internal_credits: {
+            model: "v1",
+            used_total: usedCredits.total,
+            used_breakdown: usedCredits.breakdown,
+            included_total: includedCredits.total,
+            included_breakdown: includedCredits.breakdown,
+          },
+          semantics: quota.semantics ?? "dual_hard",
+          period: {
+            start: quota.periodStart ?? null,
+            end: quota.periodEnd ?? null,
+            daily_cap: "hard",
+            monthly_cap: "hard",
           },
         },
         200,

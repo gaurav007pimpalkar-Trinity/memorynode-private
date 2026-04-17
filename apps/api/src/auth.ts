@@ -453,6 +453,108 @@ export async function rateLimitWorkspace(
   return { allowed: data.allowed, headers };
 }
 
+const WORKSPACE_CONCURRENCY_MAX_DEFAULT = 8;
+const WORKSPACE_CONCURRENCY_TTL_MS_DEFAULT = 30_000;
+
+function resolveWorkspaceConcurrencyMax(env: Env): number {
+  const parsed = Number(env.WORKSPACE_CONCURRENCY_MAX ?? WORKSPACE_CONCURRENCY_MAX_DEFAULT);
+  if (!Number.isFinite(parsed) || parsed <= 0) return WORKSPACE_CONCURRENCY_MAX_DEFAULT;
+  return Math.max(1, Math.floor(parsed));
+}
+
+function resolveWorkspaceConcurrencyTtlMs(env: Env): number {
+  const parsed = Number(env.WORKSPACE_CONCURRENCY_TTL_MS ?? WORKSPACE_CONCURRENCY_TTL_MS_DEFAULT);
+  if (!Number.isFinite(parsed) || parsed <= 0) return WORKSPACE_CONCURRENCY_TTL_MS_DEFAULT;
+  return Math.max(1_000, Math.min(120_000, Math.floor(parsed)));
+}
+
+export async function acquireWorkspaceConcurrencySlot(
+  workspaceId: string,
+  env: Env,
+): Promise<{ allowed: boolean; leaseToken: string | null; headers: Record<string, string> }> {
+  if ((env.RATE_LIMIT_MODE ?? "on").toLowerCase() === "off") {
+    return { allowed: true, leaseToken: null, headers: {} };
+  }
+  if (!isRateLimitBindingPresent(env)) {
+    const stage = getEnvironmentStage(env);
+    if (stage === "staging" || stage === "prod") {
+      throw createHttpError(
+        503,
+        "RATE_LIMIT_UNAVAILABLE",
+        "Concurrency limiter unavailable: RATE_LIMIT_DO binding missing in this environment",
+      );
+    }
+    return { allowed: true, leaseToken: null, headers: {} };
+  }
+  const ns = env.RATE_LIMIT_DO;
+  const name = `conc-ws:${workspaceId}`;
+  const id = ns.idFromName(name);
+  const stub = ns.get(id);
+  let resp: Response;
+  try {
+    resp = await stub.fetch("https://rate-limit/concurrency", {
+      method: "POST",
+      body: JSON.stringify({
+        action: "concurrency_acquire",
+        limit: resolveWorkspaceConcurrencyMax(env),
+        ttl_ms: resolveWorkspaceConcurrencyTtlMs(env),
+      }),
+      headers: { "content-type": "application/json" },
+    });
+  } catch {
+    throw createHttpError(503, "RATE_LIMIT_UNAVAILABLE", "Concurrency limiter unavailable");
+  }
+  if (!resp.ok) {
+    throw createHttpError(503, "RATE_LIMIT_UNAVAILABLE", "Concurrency limiter unavailable");
+  }
+  const data = (await resp.json()) as {
+    allowed: boolean;
+    count: number;
+    limit: number;
+    token?: string;
+    retry_after?: number;
+  };
+  const retryAfter = Math.max(0, Number(data.retry_after ?? 1));
+  const headers = {
+    "x-workspace-inflight-limit": String(Math.max(0, Number(data.limit ?? 0))),
+    "x-workspace-inflight-count": String(Math.max(0, Number(data.count ?? 0))),
+    "retry-after": String(retryAfter),
+  };
+  return {
+    allowed: data.allowed === true,
+    leaseToken: data.allowed === true && typeof data.token === "string" && data.token.length > 0
+      ? data.token
+      : null,
+    headers,
+  };
+}
+
+export async function releaseWorkspaceConcurrencySlot(
+  workspaceId: string,
+  leaseToken: string | null | undefined,
+  env: Env,
+): Promise<void> {
+  if (!leaseToken || leaseToken.trim().length === 0) return;
+  if ((env.RATE_LIMIT_MODE ?? "on").toLowerCase() === "off") return;
+  if (!isRateLimitBindingPresent(env)) return;
+  const ns = env.RATE_LIMIT_DO;
+  const name = `conc-ws:${workspaceId}`;
+  const id = ns.idFromName(name);
+  const stub = ns.get(id);
+  try {
+    await stub.fetch("https://rate-limit/concurrency", {
+      method: "POST",
+      body: JSON.stringify({
+        action: "concurrency_release",
+        token: leaseToken,
+      }),
+      headers: { "content-type": "application/json" },
+    });
+  } catch {
+    /* best effort */
+  }
+}
+
 /**
  * When `ADMIN_ALLOWED_IPS` is set, reject admin token auth unless the client IP matches (exact).
  * Uses `cf-connecting-ip` or first `x-forwarded-for`. `*` in the list disables IP restriction.

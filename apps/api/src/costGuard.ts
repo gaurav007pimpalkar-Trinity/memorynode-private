@@ -6,6 +6,7 @@
  */
 
 import type { SupabaseClient } from "@supabase/supabase-js";
+import { estimateCostInr } from "@memorynodeai/shared";
 
 /** Thrown when the global AI cost budget is exceeded. Callers should return HTTP 503. */
 export class AIBudgetExceededError extends Error {
@@ -15,11 +16,9 @@ export class AIBudgetExceededError extends Error {
   }
 }
 
-/** Rough pricing (USD). text-embedding-3-small: ~$0.00002/1K tokens; gpt-4o-mini extraction: ~$0.00015/call. */
-const EMBED_COST_USD_PER_1K_TOKENS = 0.00002;
-const EXTRACTION_LLM_COST_USD_PER_CALL = 0.00015;
 /** USD to INR for budget comparison (configurable via env if needed). */
 const DEFAULT_USD_TO_INR = 83;
+const DEFAULT_COST_DRIFT_MULTIPLIER = 1.35;
 
 const CACHE_TTL_MS = 60_000;
 
@@ -32,6 +31,7 @@ export interface CostGuardEnv {
   AI_COST_BUDGET_INR?: string;
   /** Optional: USD to INR rate for cost estimation (default 83). */
   USD_TO_INR?: string;
+  COST_DRIFT_MULTIPLIER?: string;
   ENVIRONMENT?: string;
   NODE_ENV?: string;
   /** Optional emergency override ("1" => fail-open when guard signal is unavailable). */
@@ -51,6 +51,7 @@ function shouldFailClosed(env: CostGuardEnv): boolean {
 async function getCurrentMonthCostInr(
   supabase: SupabaseClient,
   usdToInr: number,
+  driftMultiplier: number,
 ): Promise<number> {
   const now = new Date();
   const year = now.getUTCFullYear();
@@ -76,11 +77,16 @@ async function getCurrentMonthCostInr(
     totalExtractionCalls += Number((row as { extraction_calls?: number }).extraction_calls ?? 0);
   }
 
-  const embedCostUsd = (totalEmbedTokens / 1000) * EMBED_COST_USD_PER_1K_TOKENS;
-  const llmCostUsd = totalExtractionCalls * EXTRACTION_LLM_COST_USD_PER_CALL;
-  const costUsd = embedCostUsd + llmCostUsd;
-  const costInr = costUsd * usdToInr;
-  return costInr;
+  return estimateCostInr(
+    {
+      embed_tokens: totalEmbedTokens,
+      extraction_calls: totalExtractionCalls,
+    },
+    {
+      usd_to_inr: usdToInr,
+      drift_multiplier: driftMultiplier,
+    },
+  );
 }
 
 /**
@@ -100,6 +106,7 @@ export async function checkGlobalCostGuard(
   }
 
   const usdToInr = Number(env.USD_TO_INR) || DEFAULT_USD_TO_INR;
+  const driftMultiplier = Number(env.COST_DRIFT_MULTIPLIER ?? DEFAULT_COST_DRIFT_MULTIPLIER);
   const now = Date.now();
   if (cachedCostInr != null && now - cachedAt < CACHE_TTL_MS) {
     if (cachedCostInr >= budgetInr) {
@@ -118,7 +125,7 @@ export async function checkGlobalCostGuard(
   refreshing = true;
   try {
     try {
-      const costInr = await getCurrentMonthCostInr(supabase, usdToInr);
+      const costInr = await getCurrentMonthCostInr(supabase, usdToInr, driftMultiplier);
       cachedCostInr = costInr;
       cachedAt = now;
       if (costInr >= budgetInr) {

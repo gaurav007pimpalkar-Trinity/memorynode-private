@@ -60,7 +60,9 @@ export function userFacingErrorMessage(err: unknown): string {
     if (err.status === 401) return "Session expired or invalid. Please sign in again.";
     if (err.status === 403) return "You don't have permission for this action.";
     if (err.status === 404) return "Not found.";
-    if (err.status === 402) return "Over daily cap. Upgrade or try again later.";
+    if (code === "DAILY_CAP_EXCEEDED") return "Daily fair-use cap exceeded. Try again tomorrow.";
+    if (code === "MONTHLY_CAP_EXCEEDED") return "Monthly cap exceeded. Upgrade to continue.";
+    if (err.status === 402) return "Usage cap exceeded. Upgrade or try again later.";
     if (err.status >= 500) return "Something went wrong. Please try again.";
     return err.message || `Request failed (${err.status})`;
   }

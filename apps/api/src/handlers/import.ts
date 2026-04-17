@@ -7,7 +7,12 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
 import type { Env } from "../env.js";
 import type { AuthContext } from "../auth.js";
-import { authenticate, rateLimit } from "../auth.js";
+import {
+  acquireWorkspaceConcurrencySlot,
+  authenticate,
+  rateLimit,
+  releaseWorkspaceConcurrencySlot,
+} from "../auth.js";
 import { getRouteRateLimitMax } from "../limits.js";
 import type { HandlerDeps } from "../router.js";
 import { ImportPayloadSchema, parseWithSchema } from "../contracts/index.js";
@@ -155,6 +160,15 @@ export function createImportHandlers(
           rateHeaders,
         );
       }
+      const concurrency = await acquireWorkspaceConcurrencySlot(auth.workspaceId, env);
+      if (!concurrency.allowed) {
+        return jsonResponse(
+          { error: { code: "rate_limited", message: "Workspace in-flight concurrency limit exceeded" } },
+          429,
+          { ...rateHeaders, ...concurrency.headers },
+        );
+      }
+      const concurrencyHeaders = { ...rateHeaders, ...concurrency.headers };
       let reservationIdFromGuard: string | null = null;
       const preInsertGuard = async (deltas: {
         writesDelta: number;
@@ -169,7 +183,7 @@ export function createImportHandlers(
           auth.workspaceId,
           d.todayUtc(),
           deltas,
-          rateHeaders,
+          concurrencyHeaders,
           env,
           jsonResponse,
           { route: "/v1/import", requestId },
@@ -177,44 +191,47 @@ export function createImportHandlers(
         reservationIdFromGuard = reserveResult.reservationId;
         return reserveResult;
       };
-
       const maxBytes = Number(env.MAX_IMPORT_BYTES ?? d.defaultMaxImportBytes);
       let outcome: ImportOutcomeWithCap | (ImportOutcomeLike & { reservation_id?: string | null });
       try {
-        outcome = await d.importArtifact(
-          auth,
-          supabase,
-          payload.artifact_base64,
-          maxBytes,
-          payload.mode,
-          { preInsertGuard },
-        ) as ImportOutcomeWithCap | (ImportOutcomeLike & { reservation_id?: string | null });
-      } catch (err) {
-        if (reservationIdFromGuard) {
-          await d.markUsageReservationRefundPending(
+        try {
+          outcome = await d.importArtifact(
+            auth,
             supabase,
-            reservationIdFromGuard,
-            err instanceof Error ? err.message : String(err),
-          );
+            payload.artifact_base64,
+            maxBytes,
+            payload.mode,
+            { preInsertGuard },
+          ) as ImportOutcomeWithCap | (ImportOutcomeLike & { reservation_id?: string | null });
+        } catch (err) {
+          if (reservationIdFromGuard) {
+            await d.markUsageReservationRefundPending(
+              supabase,
+              reservationIdFromGuard,
+              err instanceof Error ? err.message : String(err),
+            );
+          }
+          throw err;
         }
-        throw err;
-      }
 
-      if ("cap_exceeded" in outcome && outcome.cap_exceeded) {
-        return outcome.response;
+        if ("cap_exceeded" in outcome && outcome.cap_exceeded) {
+          return outcome.response;
+        }
+        const reservationId =
+          (outcome as unknown as { reservation_id?: string | null }).reservation_id ??
+          reservationIdFromGuard;
+        const success = outcome as ImportOutcomeLike;
+        if (reservationId) {
+          await d.markUsageReservationCommitted(supabase, reservationId);
+        }
+        return jsonResponse(
+          { imported_memories: success.imported_memories, imported_chunks: success.imported_chunks },
+          200,
+          concurrencyHeaders,
+        );
+      } finally {
+        await releaseWorkspaceConcurrencySlot(auth.workspaceId, concurrency.leaseToken, env);
       }
-      const reservationId =
-        (outcome as unknown as { reservation_id?: string | null }).reservation_id ??
-        reservationIdFromGuard;
-      const success = outcome as ImportOutcomeLike;
-      if (reservationId) {
-        await d.markUsageReservationCommitted(supabase, reservationId);
-      }
-      return jsonResponse(
-        { imported_memories: success.imported_memories, imported_chunks: success.imported_chunks },
-        200,
-        rateHeaders,
-      );
     },
   };
 }

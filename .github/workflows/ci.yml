@@ -84,6 +84,9 @@ jobs:
       - name: Check docs billing (PayU)
         run: pnpm check:docs-billing
 
+      - name: Economics release gate
+        run: pnpm check:economics-gate
+
       - name: CI trust gates (G1–G5)
         run: pnpm ci:trust-gates
 

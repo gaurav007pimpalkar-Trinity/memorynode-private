@@ -6,7 +6,7 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
 import type { Env } from "../env.js";
 import type { AuthContext } from "../auth.js";
-import { authenticate, rateLimit } from "../auth.js";
+import { authenticate, rateLimit, rateLimitWorkspace } from "../auth.js";
 import { getRouteRateLimitMax } from "../limits.js";
 import type { HandlerDeps } from "../router.js";
 
@@ -131,6 +131,15 @@ export function createBillingHandlers(
           rate.headers,
         );
       }
+      const wsRate = await rateLimitWorkspace(auth.workspaceId, 120, env);
+      if (!wsRate.allowed) {
+        return jsonResponse(
+          { error: { code: "rate_limited", message: "Workspace rate limit exceeded" } },
+          429,
+          { ...rate.headers, ...wsRate.headers },
+        );
+      }
+      const rateHeaders = { ...rate.headers, ...wsRate.headers };
 
       const { data, error } = await supabase
         .from("workspaces")
@@ -149,7 +158,7 @@ export function createBillingHandlers(
         return jsonResponse(
           { error: { code: "DB_ERROR", message: error?.message ?? "Failed to load billing status" } },
           500,
-          rate.headers,
+          rateHeaders,
         );
       }
 
@@ -164,7 +173,7 @@ export function createBillingHandlers(
           effective_plan: quota.effectivePlan,
         },
         200,
-        rate.headers,
+        rateHeaders,
       );
     },
 
@@ -207,6 +216,15 @@ export function createBillingHandlers(
           rate.headers,
         );
       }
+      const wsRate = await rateLimitWorkspace(auth.workspaceId, 120, env);
+      if (!wsRate.allowed) {
+        return jsonResponse(
+          { error: { code: "rate_limited", message: "Workspace rate limit exceeded" } },
+          429,
+          { ...rate.headers, ...wsRate.headers },
+        );
+      }
+      const rateHeaders = { ...rate.headers, ...wsRate.headers };
 
       const { data, error } = await supabase
         .from("workspaces")
@@ -218,7 +236,7 @@ export function createBillingHandlers(
         return jsonResponse(
           { error: { code: "DB_ERROR", message: error?.message ?? "Failed to load workspace" } },
           500,
-          rate.headers,
+          rateHeaders,
         );
       }
 
@@ -266,7 +284,7 @@ export function createBillingHandlers(
           return jsonResponse(
             { error: { code: "CONFLICT", message: "Existing transaction id belongs to a different workspace" } },
             409,
-            rate.headers,
+            rateHeaders,
           );
         }
         if (
@@ -276,7 +294,7 @@ export function createBillingHandlers(
           return jsonResponse(
             { error: { code: "CONFLICT", message: "Existing transaction metadata mismatch for idempotency key" } },
             409,
-            rate.headers,
+            rateHeaders,
           );
         }
       } else {
@@ -296,7 +314,7 @@ export function createBillingHandlers(
           return jsonResponse(
             { error: { code: "DB_ERROR", message: createdTxn.error.message ?? "Failed to create transaction row" } },
             500,
-            rate.headers,
+            rateHeaders,
           );
         }
       }
@@ -325,7 +343,7 @@ export function createBillingHandlers(
         return jsonResponse(
           { error: { code: "DB_ERROR", message: updatedWorkspace.error.message ?? "Failed to persist PayU transaction id" } },
           500,
-          rate.headers,
+          rateHeaders,
         );
       }
 
@@ -395,7 +413,7 @@ export function createBillingHandlers(
           fields: checkoutFields,
         },
         200,
-        rate.headers,
+        rateHeaders,
       );
     },
 
@@ -411,6 +429,15 @@ export function createBillingHandlers(
           rate.headers,
         );
       }
+      const wsRate = await rateLimitWorkspace(auth.workspaceId, 120, env);
+      if (!wsRate.allowed) {
+        return jsonResponse(
+          { error: { code: "rate_limited", message: "Workspace rate limit exceeded" } },
+          429,
+          { ...rate.headers, ...wsRate.headers },
+        );
+      }
+      const rateHeaders = { ...rate.headers, ...wsRate.headers };
       return jsonResponse(
         {
           error: {
@@ -420,7 +447,7 @@ export function createBillingHandlers(
           ...(requestId ? { request_id: requestId } : {}),
         },
         410,
-        rate.headers,
+        rateHeaders,
       );
     },
   };
