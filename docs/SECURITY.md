@@ -3,14 +3,16 @@
 ## Our Security Stance
 
 **What we do:**
+
 - **Authentication:** Supabase Auth (magic link, OAuth); session tokens in httpOnly cookies for dashboard; API keys for programmatic access.
-- **Authorization:** Row-level security (RLS) in Supabase; workspace-scoped access; server validates membership on every call.
+- **Authorization (Phase A, startup-safe):** Request-path access remains on the current architecture, but critical tenant flows are fail-closed (no scoped-to-direct fallback), tenant isolation is enforced with workspace scoping + RLS policies, and CI blocks service-role creep via an explicit allowlist boundary. Service-role usage is allowed only in approved modules and rejected elsewhere by CI. Full `rls-first` request-scoped credentials are deferred to a later phase.
 - **Credentials:** We never store long-lived API keys in the browser. Keys are shown once at creation; thereafter only prefix in UI.
 - **Audit trail:** API request logs (route, method, status, workspace); billing webhook events; retention per DATA_RETENTION.md.
 - **Billing:** PayU with hash verification, verify-before-grant, idempotency. Webhook payloads do not grant access until verified.
 - **Headers:** CSP, X-Content-Type-Options, Referrer-Policy; CSRF protection on mutating dashboard calls.
 
 **What we don’t do:**
+
 - Store raw API keys in localStorage, sessionStorage, or IndexedDB.
 - Grant entitlements from unverified webhook payloads.
 - Ship demo or hardcoded auth in production.
@@ -61,7 +63,7 @@
 | --- | --- | --- | --- |
 | `PAYU_MERCHANT_KEY` | Cloudflare Worker secret | Identifies the merchant for PayU API calls and webhook hash verification | API Worker only |
 | `PAYU_MERCHANT_SALT` | Cloudflare Worker secret | HMAC-SHA512 hash computation for checkout requests and webhook signature verification | API Worker only |
-| `PAYU_WEBHOOK_SECRET` | Cloudflare Worker secret (optional) | Additional webhook signature verification layer (if configured in PayU dashboard) | API Worker only |
+| `PAYU_WEBHOOK_SECRET` | Cloudflare Worker secret | **Required in production** when billing is enabled (`scripts/check_config.mjs`); `x-payu-signature` verification when set in PayU dashboard | API Worker only |
 
 ### Storage Rules
 
@@ -168,11 +170,14 @@ These are **non-negotiable** for production:
 
 **Downtime note**: between rotating in PayU dashboard and updating Worker secrets, inbound webhooks will fail signature verification (`billing_webhook_signature_invalid`). Keep this window as short as possible (<5 minutes).
 
-### Internal Admin Secrets (`MASTER_ADMIN_TOKEN`, `API_KEY_SALT`)
+### Internal Admin Secrets (`MASTER_ADMIN_TOKEN`, `API_KEY_SALT`, optional `ADMIN_ALLOWED_IPS`)
 
 - Generate fresh random values.
 - Update Worker secrets.
 - For `API_KEY_SALT`, rotate API keys after update.
+- **`ADMIN_ALLOWED_IPS`**: optional comma-separated exact IPs for `x-admin-token` routes (`cf-connecting-ip`). Use in production to restrict admin API to known egress (CI, bastion). Set to `*` only as a temporary break-glass (disables IP check).
+- **Signed admin auth (recommended default for staging/prod):** require `x-admin-timestamp`, `x-admin-nonce`, and `x-admin-signature` (HMAC-SHA256 over `METHOD\\nPATH\\nTIMESTAMP\\nNONCE` using `MASTER_ADMIN_TOKEN` as key). Requests older than 5 minutes or nonce replays are rejected.
+- **Break-glass mode:** set `ADMIN_BREAK_GLASS=1` only during emergency operations to temporarily allow legacy `x-admin-token`; all break-glass auth events must be audited and rotated immediately after use.
 
 ---
 

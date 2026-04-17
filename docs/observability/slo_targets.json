@@ -1,0 +1,33 @@
+{
+  "$schema": "https://memorynode.ai/schemas/slo_targets.json",
+  "version": "1",
+  "window_days": 28,
+  "services": [
+    {
+      "id": "api",
+      "availability_target_pct": 99.9,
+      "latency_p99_ms_target": 2000,
+      "error_budget_policy": "freeze_nonessential_releases_on_exhaustion"
+    },
+    {
+      "id": "billing_webhook",
+      "processing_within_seconds_target_pct": 99,
+      "processing_within_seconds": 300
+    },
+    {
+      "id": "dashboard_session",
+      "availability_target_pct": 99.9,
+      "latency_p99_ms_target": 1000
+    }
+  ],
+  "paging": {
+    "critical": {
+      "target_ack_minutes": 5,
+      "target_mitigate_minutes": 30
+    },
+    "warning": {
+      "target_ack_minutes": 30,
+      "target_mitigate_minutes": 240
+    }
+  }
+}

@@ -40,6 +40,8 @@ Follow this path depending on what you need:
 
 1. **`docs/internal/OBSERVABILITY.md`** — golden metrics, structured events, 60-second health checklist
 1. **`docs/internal/ALERTS.md`** — alert definitions mapped 1:1 to golden metrics, triage playbooks
+1. **`docs/internal/INCIDENT_RUNBOOKS.md`** — severity model, escalation ownership, and incident playbooks
+1. **`docs/internal/LEAST_PRIVILEGE_ROADMAP.md`** — service-role → RPC-first → RLS-first migration guide
 1. **`docs/OPERATIONS.md`** — incident checklist, rollback notes, operator procedures
 1. **`docs/SECURITY.md`** — secrets hygiene, PayU secret rotation, incident response
 1. **`docs/internal/BILLING_RUNBOOK.md`** — PayU webhook ops, replay/reprocess, reconciliation
@@ -279,7 +281,7 @@ It checks `/healthz`, validates authenticated usage/search/context paths, and ve
    - `MASTER_ADMIN_TOKEN`
    - `EMBEDDINGS_MODE` (`openai` or `stub`; use `stub` for local dev to avoid OpenAI calls)
 
-Migration manifest (CI-checked): `MIGRATIONS_TOTAL=48; MIGRATIONS_LATEST=046_founder_phase1_request_telemetry.sql`
+Migration manifest (CI-checked): `MIGRATIONS_TOTAL=50; MIGRATIONS_LATEST=048_list_memories_scoped_rpc.sql`
 
 ## Admin & Bootstrap
 - Admin endpoints require header `x-admin-token: $MASTER_ADMIN_TOKEN`.

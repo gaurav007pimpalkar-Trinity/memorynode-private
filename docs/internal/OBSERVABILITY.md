@@ -150,6 +150,8 @@ All SLOs use a **28-day rolling** window unless otherwise stated. Internal dashb
 
 **Staged publishing (CEO guardrail):** Don't publish aggressive numbers before measured baseline. Month 1: availability SLO only. Month 2+: add latency once baseline exists.
 
+**Machine-readable SLO contract:** `docs/observability/slo_targets.json` (validated by `pnpm check:observability-contracts` in CI/release gate).
+
 ### 4.1 SLO Targets (Staged)
 
 | SLO | Internal target (example) | Public (when baseline supports) | Measured from |
