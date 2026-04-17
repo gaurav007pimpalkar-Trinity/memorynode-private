@@ -203,9 +203,13 @@ describe("rate limit keying and headers", () => {
     await handleBillingStatus(reqA, env as unknown as Record<string, unknown>, supabase as unknown as SupabaseClient, {});
     await handleBillingStatus(reqB, env as unknown as Record<string, unknown>, supabase as unknown as SupabaseClient, {});
 
-    expect(names.length).toBe(2);
-    expect(names[0]).not.toBe(names[1]);
-    expect(names[0].startsWith("rl:")).toBe(true);
+    expect(names.length).toBe(4);
+    const keyLimiterNames = names.filter((name) => name.startsWith("rl:"));
+    const workspaceLimiterNames = names.filter((name) => name.startsWith("rl-ws:"));
+    expect(keyLimiterNames.length).toBe(2);
+    expect(workspaceLimiterNames.length).toBe(2);
+    expect(keyLimiterNames[0]).not.toBe(keyLimiterNames[1]);
+    expect(workspaceLimiterNames[0]).toBe(workspaceLimiterNames[1]);
   });
 
   it("returns retry-after and reset headers when limited", async () => {

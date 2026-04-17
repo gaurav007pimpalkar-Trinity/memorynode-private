@@ -59,6 +59,16 @@ function makeSupabase(options?: {
   const payuTransactions = new Map<string, Record<string, unknown>>();
   const entitlements: Array<Record<string, unknown>> = [];
   let entitlementId = 1;
+  const reservations: Array<{
+    id: string;
+    request_id: string;
+    writes_delta: number;
+    reads_delta: number;
+    embeds_delta: number;
+    embed_tokens_delta: number;
+    extraction_calls_delta: number;
+    status: "reserved" | "committed";
+  }> = [];
 
   return {
     events,
@@ -274,6 +284,70 @@ function makeSupabase(options?: {
       return { rpc: () => ({ data: [], error: null }) };
     },
     rpc(name: string, params?: Record<string, unknown>) {
+      if (name === "reserve_usage_if_within_cap") {
+        const requestId = String(params?.p_request_id ?? "");
+        const existing = reservations.find((r) => r.request_id === requestId);
+        if (existing) {
+          return {
+            data: [{ reservation_id: existing.id, exceeded: false, limit_name: null, used_value: 0, cap_value: 0 }],
+            error: null,
+          };
+        }
+        const pW = (params?.p_writes_delta as number) ?? 0;
+        const pR = (params?.p_reads_delta as number) ?? 0;
+        const pE = (params?.p_embeds_delta as number) ?? 0;
+        const pEt = (params?.p_embed_tokens_delta as number) ?? 0;
+        const pEx = (params?.p_extraction_calls_delta as number) ?? 0;
+        const capW = (params?.p_writes_cap as number) ?? 0;
+        const capR = (params?.p_reads_cap as number) ?? 0;
+        const capE = (params?.p_embeds_cap as number) ?? 0;
+        const capEt = (params?.p_embed_tokens_cap as number) ?? 0;
+        const capEx = (params?.p_extraction_calls_cap as number) ?? 0;
+        if (usage.writes + pW > capW) {
+          return { data: [{ reservation_id: null, exceeded: true, limit_name: "writes", used_value: usage.writes, cap_value: capW }], error: null };
+        }
+        if (usage.reads + pR > capR) {
+          return { data: [{ reservation_id: null, exceeded: true, limit_name: "reads", used_value: usage.reads, cap_value: capR }], error: null };
+        }
+        if (usage.embeds + pE > capE) {
+          return { data: [{ reservation_id: null, exceeded: true, limit_name: "embeds", used_value: usage.embeds, cap_value: capE }], error: null };
+        }
+        if (pEt > capEt) {
+          return { data: [{ reservation_id: null, exceeded: true, limit_name: "embed_tokens", used_value: 0, cap_value: capEt }], error: null };
+        }
+        if (pEx > capEx) {
+          return { data: [{ reservation_id: null, exceeded: true, limit_name: "extraction_calls", used_value: 0, cap_value: capEx }], error: null };
+        }
+        const id = `res-${reservations.length + 1}`;
+        reservations.push({
+          id,
+          request_id: requestId,
+          writes_delta: pW,
+          reads_delta: pR,
+          embeds_delta: pE,
+          embed_tokens_delta: pEt,
+          extraction_calls_delta: pEx,
+          status: "reserved",
+        });
+        return {
+          data: [{ reservation_id: id, exceeded: false, limit_name: null, used_value: 0, cap_value: 0 }],
+          error: null,
+        };
+      }
+      if (name === "commit_usage_reservation") {
+        const reservationId = String(params?.p_reservation_id ?? "");
+        const row = reservations.find((r) => r.id === reservationId);
+        if (!row) return { data: false, error: null };
+        if (row.status === "committed") return { data: true, error: null };
+        row.status = "committed";
+        usage.writes += row.writes_delta;
+        usage.reads += row.reads_delta;
+        usage.embeds += row.embeds_delta;
+        return { data: true, error: null };
+      }
+      if (name === "mark_usage_reservation_refund_pending" || name === "process_usage_reservation_refunds" || name === "reconcile_usage_aggregates") {
+        return { data: true, error: null };
+      }
       if (name === "bump_usage_rpc" || name === "bump_usage")
         return { data: { writes: usage.writes, reads: usage.reads, embeds: usage.embeds, extraction_calls: 0, embed_tokens_used: 0 }, error: null };
       if (name === "bump_usage_if_within_cap" || name === "record_usage_event_if_within_cap") {
