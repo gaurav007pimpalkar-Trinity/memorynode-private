@@ -58,6 +58,29 @@ jobs:
       - name: Migration docs/sequence guard
         run: pnpm migrations:check
 
+      - name: Workspace tenant scope guard
+        run: pnpm check:workspace-scope
+
+      - name: Service-role allowlist guard
+        env:
+          GITHUB_EVENT_NAME: ${{ github.event_name }}
+          DIFF_BASE: ${{ github.event_name == 'pull_request' && github.event.pull_request.base.sha || github.event.before }}
+          DIFF_HEAD: ${{ github.sha }}
+          PR_BODY: ${{ github.event_name == 'pull_request' && github.event.pull_request.body || '' }}
+        run: pnpm check:service-role-allowlist
+
+      - name: Request-path least-privilege guard
+        run: pnpm check:request-path-least-privilege
+
+      - name: Observability contracts guard
+        run: pnpm check:observability-contracts
+
+      - name: Incident runbook contract guard
+        run: pnpm check:runbooks
+
+      - name: Least-privilege contract guard
+        run: pnpm check:least-privilege
+
       - name: Check docs billing (PayU)
         run: pnpm check:docs-billing
 
@@ -107,6 +130,9 @@ jobs:
         env:
           VITE_API_BASE_URL: https://api.memorynode.ai
         run: pnpm -w build
+
+      - name: Dashboard quality gates (CSP/a11y/perf)
+        run: pnpm check:dashboard-quality
 
       - name: OpenAPI spec drift check
         run: pnpm openapi:check
@@ -227,6 +253,11 @@ jobs:
           CHECK_CONFIG_MODE: ci
           SUPABASE_URL: https://memorynode-ci.supabase.co
           SUPABASE_SERVICE_ROLE_KEY: ci_supabase_service_role_key_value
+          SUPABASE_ACCESS_MODE: rls-first
+          REQUEST_SCOPED_DB_ENABLED: "1"
+          DISABLE_SERVICE_ROLE_REQUEST_PATH: "1"
+          SUPABASE_ANON_KEY: ci_supabase_anon_key_value
+          SUPABASE_JWT_SECRET: ci_supabase_jwt_secret_value
           API_KEY_SALT: ci_api_key_salt_value
           MASTER_ADMIN_TOKEN: ci_master_admin_token_value
           DATABASE_URL: postgresql://ci_user:ci_pass@ci-db.invalid:5432/memorynode?sslmode=require
@@ -241,6 +272,10 @@ jobs:
           SUPABASE_URL: https://memorynode-ci.supabase.co
           SUPABASE_SERVICE_ROLE_KEY: ci_supabase_service_role_key_value
           SUPABASE_ANON_KEY: ci_supabase_anon_key_value
+          SUPABASE_JWT_SECRET: ci_supabase_jwt_secret_value
+          SUPABASE_ACCESS_MODE: rls-first
+          REQUEST_SCOPED_DB_ENABLED: "1"
+          DISABLE_SERVICE_ROLE_REQUEST_PATH: "1"
           ALLOWED_ORIGINS: https://console.memorynode.ai,https://app.memorynode.ai
           API_KEY_SALT: ci_api_key_salt_value
           MASTER_ADMIN_TOKEN: ci_master_admin_token_value

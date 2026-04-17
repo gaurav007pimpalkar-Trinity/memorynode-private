@@ -47,6 +47,11 @@ jobs:
       MEMORYNODE_API_KEY: ${{ secrets.MEMORYNODE_API_KEY }}
       SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
       SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+      SUPABASE_ANON_KEY: ${{ secrets.SUPABASE_ANON_KEY }}
+      SUPABASE_JWT_SECRET: ${{ secrets.SUPABASE_JWT_SECRET }}
+      SUPABASE_ACCESS_MODE: ${{ secrets.SUPABASE_ACCESS_MODE }}
+      REQUEST_SCOPED_DB_ENABLED: ${{ secrets.REQUEST_SCOPED_DB_ENABLED }}
+      DISABLE_SERVICE_ROLE_REQUEST_PATH: ${{ secrets.DISABLE_SERVICE_ROLE_REQUEST_PATH }}
       API_KEY_SALT: ${{ secrets.API_KEY_SALT }}
       MASTER_ADMIN_TOKEN: ${{ secrets.MASTER_ADMIN_TOKEN }}
       EMBEDDINGS_MODE: ${{ secrets.EMBEDDINGS_MODE }}
@@ -104,10 +109,20 @@ jobs:
           if [[ "$EMBEDDINGS_MODE" == "openai" && -z "$OPENAI_API_KEY" ]]; then
             missing+=("OPENAI_API_KEY")
           fi
+          access_mode="$(echo "${SUPABASE_ACCESS_MODE:-}" | tr '[:upper:]' '[:lower:]')"
+          if [[ "$access_mode" == "rls-first" || "${REQUEST_SCOPED_DB_ENABLED:-0}" == "1" || "${DISABLE_SERVICE_ROLE_REQUEST_PATH:-0}" == "1" ]]; then
+            [[ -z "${SUPABASE_ANON_KEY:-}" ]] && missing+=("SUPABASE_ANON_KEY")
+            [[ -z "${SUPABASE_JWT_SECRET:-}" ]] && missing+=("SUPABASE_JWT_SECRET")
+          fi
           if [[ ${#missing[@]} -gt 0 ]]; then
             echo "Missing required environment secrets: ${missing[*]}"
             exit 1
           fi
+
+      - name: Release gate preflight (staging)
+        env:
+          CHECK_ENV: staging
+        run: pnpm release:gate
 
       - name: Deploy staging API
         run: pnpm deploy:staging
@@ -128,6 +143,10 @@ jobs:
       SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
       SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
       SUPABASE_ANON_KEY: ${{ secrets.SUPABASE_ANON_KEY }}
+      SUPABASE_JWT_SECRET: ${{ secrets.SUPABASE_JWT_SECRET }}
+      SUPABASE_ACCESS_MODE: ${{ secrets.SUPABASE_ACCESS_MODE }}
+      REQUEST_SCOPED_DB_ENABLED: ${{ secrets.REQUEST_SCOPED_DB_ENABLED }}
+      DISABLE_SERVICE_ROLE_REQUEST_PATH: ${{ secrets.DISABLE_SERVICE_ROLE_REQUEST_PATH }}
       ALLOWED_ORIGINS: ${{ secrets.ALLOWED_ORIGINS }}
       API_KEY_SALT: ${{ secrets.API_KEY_SALT }}
       MASTER_ADMIN_TOKEN: ${{ secrets.MASTER_ADMIN_TOKEN }}
@@ -190,10 +209,24 @@ jobs:
             echo "EMBEDDINGS_MODE=stub is not allowed for production."
             exit 1
           fi
+          access_mode="$(echo "${SUPABASE_ACCESS_MODE:-}" | tr '[:upper:]' '[:lower:]')"
+          if [[ "$access_mode" == "rls-first" || "${REQUEST_SCOPED_DB_ENABLED:-0}" == "1" || "${DISABLE_SERVICE_ROLE_REQUEST_PATH:-0}" == "1" ]]; then
+            [[ -z "${SUPABASE_ANON_KEY:-}" ]] && missing+=("SUPABASE_ANON_KEY")
+            [[ -z "${SUPABASE_JWT_SECRET:-}" ]] && missing+=("SUPABASE_JWT_SECRET")
+          fi
+          if [[ "$access_mode" == "rls-first" && "${DISABLE_SERVICE_ROLE_REQUEST_PATH:-0}" != "1" ]]; then
+            echo "rls-first requires DISABLE_SERVICE_ROLE_REQUEST_PATH=1"
+            exit 1
+          fi
           if [[ ${#missing[@]} -gt 0 ]]; then
             echo "Missing required environment secrets: ${missing[*]}"
             exit 1
           fi
+
+      - name: Release gate preflight (production)
+        env:
+          CHECK_ENV: production
+        run: pnpm release:gate
 
       - name: Deploy production API
         run: pnpm deploy:prod

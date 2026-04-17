@@ -16,12 +16,18 @@ const RELEVANT_ENV_KEYS = [
   "SUPABASE_URL",
   "SUPABASE_SERVICE_ROLE_KEY",
   "SUPABASE_ANON_KEY",
+  "SUPABASE_JWT_SECRET",
+  "REQUEST_SCOPED_DB_ENABLED",
+  "DISABLE_SERVICE_ROLE_REQUEST_PATH",
   "SUPABASE_DB_URL",
   "DATABASE_URL",
   "API_KEY_SALT",
   "MASTER_ADMIN_TOKEN",
+  "ADMIN_AUTH_MODE",
+  "ADMIN_BREAK_GLASS",
   "ALLOWED_ORIGINS",
   "SUPABASE_MODE",
+  "SUPABASE_ACCESS_MODE",
   "EMBEDDINGS_MODE",
   "OPENAI_API_KEY",
   "BILLING_WEBHOOKS_ENABLED",
@@ -64,6 +70,7 @@ const STRICT_BASE = {
   SUPABASE_URL: "https://memorynode.supabase.co",
   SUPABASE_SERVICE_ROLE_KEY: "svrole_live_dummy_123",
   SUPABASE_ANON_KEY: "anon_dummy_123",
+  SUPABASE_JWT_SECRET: "jwt_secret_dummy_123",
   DATABASE_URL: "postgres://user:pass@db.internal:5432/memorynode?sslmode=require",
   API_KEY_SALT: "api_key_salt_123",
   MASTER_ADMIN_TOKEN: "admin_token_123",
@@ -113,6 +120,15 @@ describe("check_config", () => {
     expect(result.output).toContain("Missing PAYU_MERCHANT_SALT");
   });
 
+  it("fails in production when billing is enabled but PAYU_WEBHOOK_SECRET is missing", () => {
+    const result = runCheckConfig({
+      ...STRICT_BASE,
+      PAYU_WEBHOOK_SECRET: undefined,
+    });
+    expect(result.status).toBe(1);
+    expect(result.output).toContain("Missing PAYU_WEBHOOK_SECRET");
+  });
+
   it("fails in production when ALLOWED_ORIGINS is missing", () => {
     const result = runCheckConfig({
       ...STRICT_BASE,
@@ -129,6 +145,46 @@ describe("check_config", () => {
     });
     expect(result.status).toBe(1);
     expect(result.output).toContain("Missing SUPABASE_ANON_KEY");
+  });
+
+  it("fails in production when ADMIN_AUTH_MODE=legacy", () => {
+    const result = runCheckConfig({
+      ...STRICT_BASE,
+      ADMIN_AUTH_MODE: "legacy",
+    });
+    expect(result.status).toBe(1);
+    expect(result.output).toContain("ADMIN_AUTH_MODE=legacy is forbidden");
+  });
+
+  it("fails in production when SUPABASE_ACCESS_MODE=service-role-only", () => {
+    const result = runCheckConfig({
+      ...STRICT_BASE,
+      SUPABASE_ACCESS_MODE: "service-role-only",
+    });
+    expect(result.status).toBe(1);
+    expect(result.output).toContain("SUPABASE_ACCESS_MODE=service-role-only is forbidden");
+  });
+
+  it("fails in production when rls-first is set without request-path kill switch", () => {
+    const result = runCheckConfig({
+      ...STRICT_BASE,
+      SUPABASE_ACCESS_MODE: "rls-first",
+      DISABLE_SERVICE_ROLE_REQUEST_PATH: "0",
+    });
+    expect(result.status).toBe(1);
+    expect(result.output).toContain("rls-first requires DISABLE_SERVICE_ROLE_REQUEST_PATH=1");
+  });
+
+  it("fails in production when scoped mode is enabled without SUPABASE_JWT_SECRET", () => {
+    const result = runCheckConfig({
+      ...STRICT_BASE,
+      SUPABASE_ACCESS_MODE: "rls-first",
+      REQUEST_SCOPED_DB_ENABLED: "1",
+      DISABLE_SERVICE_ROLE_REQUEST_PATH: "1",
+      SUPABASE_JWT_SECRET: undefined,
+    });
+    expect(result.status).toBe(1);
+    expect(result.output).toContain("Missing SUPABASE_JWT_SECRET");
   });
 
   it("passes in production with strict requirements satisfied", () => {

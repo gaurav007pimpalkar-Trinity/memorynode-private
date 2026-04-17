@@ -97,7 +97,12 @@ const notes = [];
 const strictStage = STRICT_STAGES.has(stage);
 const embeddingsMode = `${env.EMBEDDINGS_MODE || ""}`.trim().toLowerCase();
 const supabaseMode = `${env.SUPABASE_MODE || ""}`.trim().toLowerCase();
+const supabaseAccessMode = `${env.SUPABASE_ACCESS_MODE || ""}`.trim().toLowerCase();
+const requestScopedDbEnabled = `${env.REQUEST_SCOPED_DB_ENABLED || "0"}`.trim();
+const disableServiceRoleRequestPath = `${env.DISABLE_SERVICE_ROLE_REQUEST_PATH || "0"}`.trim();
 const rateLimitMode = `${env.RATE_LIMIT_MODE || "on"}`.trim().toLowerCase();
+const adminAuthModeRaw = `${env.ADMIN_AUTH_MODE || ""}`.trim().toLowerCase();
+const adminAuthMode = adminAuthModeRaw || (stage === "production" || stage === "staging" ? "signed-required" : "legacy");
 const billingWebhooksEnabled = isBillingWebhooksEnabled();
 const billingRequired = strictStage && (billingWebhooksEnabled || hasBillingConfigSignals());
 
@@ -110,6 +115,10 @@ if (strictStage) {
     "SUPABASE_SERVICE_ROLE_KEY",
     `${commonContext} Required for Worker runtime Supabase access.`,
   );
+  if (supabaseAccessMode === "rls-first" || requestScopedDbEnabled === "1" || disableServiceRoleRequestPath === "1") {
+    requireVar(errors, "SUPABASE_ANON_KEY", `${commonContext} Required for request-scoped Supabase clients.`);
+    requireVar(errors, "SUPABASE_JWT_SECRET", `${commonContext} Required to mint short-lived scoped JWTs.`);
+  }
   requireVar(errors, "API_KEY_SALT", `${commonContext} Required for API key hashing.`);
   requireVar(errors, "MASTER_ADMIN_TOKEN", `${commonContext} Required for admin endpoints.`);
   requireOneOf(
@@ -141,6 +150,13 @@ if (strictStage) {
     requireVar(errors, "PAYU_BASE_URL", `${billingContext} Required for hosted PayU checkout endpoint.`);
     requireVar(errors, "PAYU_VERIFY_URL", `${billingContext} Required for verify-before-grant webhook hardening.`);
     requireVar(errors, "PUBLIC_APP_URL", `${billingContext} Required to generate checkout callback URLs.`);
+    if (stage === "production") {
+      requireVar(
+        errors,
+        "PAYU_WEBHOOK_SECRET",
+        `${billingContext} Required in production for x-payu-signature verification (set in PayU dashboard and Worker secrets).`,
+      );
+    }
   } else {
     notes.push(
       `[${stage}] Billing checks skipped because BILLING_WEBHOOKS_ENABLED=0 and no PayU billing config signals were provided.`,
@@ -156,8 +172,19 @@ if (strictStage) {
     if (embeddingsMode === "stub") {
       errors.push("[production] EMBEDDINGS_MODE=stub is forbidden. Use EMBEDDINGS_MODE=openai in production.");
     }
+    if (supabaseAccessMode === "service-role-only") {
+      errors.push("[production] SUPABASE_ACCESS_MODE=service-role-only is forbidden. Use rpc-first or rls-first.");
+    }
+    if (supabaseAccessMode === "rls-first" && disableServiceRoleRequestPath !== "1") {
+      errors.push("[production] rls-first requires DISABLE_SERVICE_ROLE_REQUEST_PATH=1.");
+    }
     if (FALSE_VALUES.has(rateLimitMode)) {
       errors.push("[production] RATE_LIMIT_MODE=off is forbidden. Remove RATE_LIMIT_MODE or set it to 'on'.");
+    }
+    if (adminAuthMode === "legacy") {
+      errors.push(
+        "[production] ADMIN_AUTH_MODE=legacy is forbidden. Use signed-required admin requests (or remove ADMIN_AUTH_MODE and use default).",
+      );
     }
     requireVar(
       errors,

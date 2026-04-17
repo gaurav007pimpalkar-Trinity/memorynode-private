@@ -1,0 +1,6 @@
+{
+  "description": "Files explicitly allowed to create Supabase service-role clients.",
+  "allowed_files": [
+    "apps/api/src/dbClientFactory.ts"
+  ]
+}
