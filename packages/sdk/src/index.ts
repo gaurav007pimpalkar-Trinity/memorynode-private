@@ -22,9 +22,19 @@ import type { MemoryType, SearchMode } from "@memorynodeai/shared";
 /** Re-export for consumers who want to type API errors without importing from @memorynodeai/shared. */
 export type { ApiError };
 
+const DEFAULT_TIMEOUT_MS = 60_000;
+
 export interface MemoryNodeClientOptions {
   baseUrl?: string;
   apiKey?: string;
+  /** Per-request timeout in ms (default 60s). Set to 0 to disable (not recommended in production). */
+  timeoutMs?: number;
+  /** Optional cancellation signal (combined with timeout when both apply). */
+  signal?: AbortSignal;
+  /** Retry attempts for retryable failures (default 2). */
+  maxRetries?: number;
+  /** Base backoff in ms for retries (default 200ms). */
+  retryBaseMs?: number;
 }
 
 // SDK-facing options (camelCase). Wire format stays snake_case per shared types.
@@ -79,10 +89,49 @@ export class MemoryNodeApiError extends Error implements ApiError {
 export class MemoryNodeClient {
   private readonly baseUrl: string;
   private readonly apiKey?: string;
+  private readonly timeoutMs: number;
+  private readonly outerSignal?: AbortSignal;
+  private readonly maxRetries: number;
+  private readonly retryBaseMs: number;
 
   constructor(options: MemoryNodeClientOptions = {}) {
     this.baseUrl = options.baseUrl ?? DEFAULT_BASE_URL;
     this.apiKey = options.apiKey;
+    this.timeoutMs = options.timeoutMs ?? DEFAULT_TIMEOUT_MS;
+    this.outerSignal = options.signal;
+    this.maxRetries = Math.max(0, Math.floor(options.maxRetries ?? 2));
+    this.retryBaseMs = Math.max(50, Math.floor(options.retryBaseMs ?? 200));
+  }
+
+  /** Combines timeout, constructor signal, and per-call override (Node 20+ / modern runtimes). */
+  private composeFetchSignal(override?: AbortSignal): AbortSignal | undefined {
+    const parts: AbortSignal[] = [];
+    if (this.timeoutMs > 0 && typeof AbortSignal !== "undefined" && typeof AbortSignal.timeout === "function") {
+      parts.push(AbortSignal.timeout(this.timeoutMs));
+    }
+    if (this.outerSignal) parts.push(this.outerSignal);
+    if (override) parts.push(override);
+    if (parts.length === 0) return undefined;
+    if (parts.length === 1) return parts[0];
+    if (typeof AbortSignal.any === "function") return AbortSignal.any(parts);
+    return parts[0];
+  }
+
+  private async waitBeforeRetry(attempt: number): Promise<void> {
+    const jitter = Math.floor(Math.random() * 50);
+    const delay = this.retryBaseMs * Math.pow(2, attempt) + jitter;
+    await new Promise((resolve) => setTimeout(resolve, delay));
+  }
+
+  private isRetryableStatus(status: number): boolean {
+    return status === 408 || status === 429 || status >= 500;
+  }
+
+  private isRetryableRequest(method: string, path: string): boolean {
+    const m = method.toUpperCase();
+    if (m === "GET" || m === "DELETE") return true;
+    if (m !== "POST") return false;
+    return path === "/v1/search" || path === "/v1/context" || path.startsWith("/v1/search?");
   }
 
   // -------- Admin helpers (require adminToken per call) --------
@@ -192,27 +241,58 @@ export class MemoryNodeClient {
     return headers;
   }
 
-  private async request<T>(path: string, init: { method: string; body?: unknown; adminToken?: string }): Promise<T> {
+  private async request<T>(
+    path: string,
+    init: { method: string; body?: unknown; adminToken?: string; signal?: AbortSignal },
+  ): Promise<T> {
     const isPublicHealth = path === "/healthz" || path.startsWith("/healthz?");
     if (!init.adminToken && this.apiKey === undefined && !isPublicHealth) {
       throw new MemoryNodeApiError("MISSING_API_KEY", "API key is required for this request. Pass apiKey in constructor or use adminToken for admin endpoints.", undefined);
     }
 
-    const response = await fetch(new URL(path, this.baseUrl).toString(), {
-      method: init.method,
-      headers: this.buildHeaders(init.adminToken),
-      body: init.body ? JSON.stringify(init.body) : undefined,
-    });
+    const retryable = this.isRetryableRequest(init.method, path);
+    const maxAttempts = retryable ? this.maxRetries + 1 : 1;
+    let lastError: MemoryNodeApiError | null = null;
 
-    if (!response.ok) {
-      throw await this.toApiError(response);
+    for (let attempt = 0; attempt < maxAttempts; attempt++) {
+      let response: Response;
+      try {
+        response = await fetch(new URL(path, this.baseUrl).toString(), {
+          method: init.method,
+          headers: this.buildHeaders(init.adminToken),
+          body: init.body ? JSON.stringify(init.body) : undefined,
+          signal: this.composeFetchSignal(init.signal),
+        });
+      } catch (err) {
+        const e = err as { name?: string; message?: string };
+        if (e?.name === "AbortError") {
+          throw new MemoryNodeApiError("REQUEST_ABORTED", e.message || "Request aborted", undefined);
+        }
+        lastError = new MemoryNodeApiError("NETWORK_ERROR", e?.message || "Network request failed", undefined);
+        if (attempt < maxAttempts - 1) {
+          await this.waitBeforeRetry(attempt);
+          continue;
+        }
+        throw lastError;
+      }
+
+      if (!response.ok) {
+        const apiErr = await this.toApiError(response);
+        lastError = apiErr;
+        if (attempt < maxAttempts - 1 && this.isRetryableStatus(response.status)) {
+          await this.waitBeforeRetry(attempt);
+          continue;
+        }
+        throw apiErr;
+      }
+
+      if (response.status === 204) {
+        return undefined as T;
+      }
+
+      return (await response.json()) as T;
     }
-
-    if (response.status === 204) {
-      return undefined as T;
-    }
-
-    return (await response.json()) as T;
+    throw lastError ?? new MemoryNodeApiError("HTTP_ERROR", "Request failed", undefined);
   }
 
   private async toApiError(response: Response): Promise<MemoryNodeApiError> {

@@ -142,4 +142,64 @@ describe("MemoryNodeClient request mapping", () => {
     await client.health();
     expect(fetchMock).toHaveBeenCalled();
   });
+
+  it("passes abort signal into fetch init", async () => {
+    fetchMock.mockReturnValue(okResponse({ results: [] }));
+    const ac = new AbortController();
+    const client = new MemoryNodeClient({ apiKey: "test-key", signal: ac.signal, timeoutMs: 0 });
+    await client.search({ userId: "u1", query: "hello" });
+    const [, init] = fetchMock.mock.calls[0];
+    expect((init as RequestInit).signal).toBe(ac.signal);
+  });
+
+  it("maps fetch AbortError to REQUEST_ABORTED", async () => {
+    const abortErr = new Error("The user aborted a request.");
+    abortErr.name = "AbortError";
+    fetchMock.mockRejectedValue(abortErr);
+    const { MemoryNodeApiError } = await import("../src/index.js");
+    const client = new MemoryNodeClient({ apiKey: "test-key", timeoutMs: 0 });
+    await expect(client.search({ userId: "u1", query: "hello" })).rejects.toMatchObject({
+      code: "REQUEST_ABORTED",
+    });
+  });
+
+  it("retries retryable 5xx for search then succeeds", async () => {
+    fetchMock
+      .mockResolvedValueOnce({
+        ok: false,
+        status: 503,
+        statusText: "Service Unavailable",
+        json: async () => ({ error: { code: "SERVICE_UNAVAILABLE", message: "try later" } }),
+      } as Response)
+      .mockResolvedValueOnce(okResponse({ results: [], page: 1, page_size: 10, total: 0, has_more: false }));
+
+    const client = new MemoryNodeClient({ apiKey: "test-key", maxRetries: 1, retryBaseMs: 1 });
+    const out = await client.search({ userId: "u1", query: "retry me" });
+    expect(Array.isArray(out.results)).toBe(true);
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+  });
+
+  it("does not retry non-retryable 4xx for search", async () => {
+    fetchMock.mockResolvedValue({
+      ok: false,
+      status: 400,
+      statusText: "Bad Request",
+      json: async () => ({ error: { code: "BAD_REQUEST", message: "invalid" } }),
+    } as Response);
+
+    const client = new MemoryNodeClient({ apiKey: "test-key", maxRetries: 2, retryBaseMs: 1 });
+    await expect(client.search({ userId: "u1", query: "bad" })).rejects.toMatchObject({ code: "BAD_REQUEST" });
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+
+  it("retries transient network error then succeeds", async () => {
+    fetchMock
+      .mockRejectedValueOnce(new Error("socket reset"))
+      .mockResolvedValueOnce(okResponse({ status: "ok" }));
+
+    const client = new MemoryNodeClient({ maxRetries: 1, retryBaseMs: 1 });
+    const health = await client.health();
+    expect(health.status).toBe("ok");
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+  });
 });
