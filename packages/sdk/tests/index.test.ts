@@ -156,7 +156,6 @@ describe("MemoryNodeClient request mapping", () => {
     const abortErr = new Error("The user aborted a request.");
     abortErr.name = "AbortError";
     fetchMock.mockRejectedValue(abortErr);
-    const { MemoryNodeApiError } = await import("../src/index.js");
     const client = new MemoryNodeClient({ apiKey: "test-key", timeoutMs: 0 });
     await expect(client.search({ userId: "u1", query: "hello" })).rejects.toMatchObject({
       code: "REQUEST_ABORTED",
