@@ -64,4 +64,4 @@ curl -X POST "https://api.memorynode.ai/v1/import" \
 
 Free plans receive `402` with `UPGRADE_REQUIRED`.
 
-<!-- Migration manifest (CI-checked): MIGRATIONS_TOTAL=50; MIGRATIONS_LATEST=048_list_memories_scoped_rpc.sql -->
+<!-- Migration manifest (CI-checked): MIGRATIONS_TOTAL=51; MIGRATIONS_LATEST=049_request_path_rls_first.sql -->
