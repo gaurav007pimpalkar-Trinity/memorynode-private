@@ -8,6 +8,7 @@ import type { SupabaseClient } from "@supabase/supabase-js";
 import type { Env } from "../env.js";
 import type { AuthContext } from "../auth.js";
 import { authenticate, rateLimit } from "../auth.js";
+import { getRouteRateLimitMax } from "../limits.js";
 import type { HandlerDeps } from "../router.js";
 import { ImportPayloadSchema, parseWithSchema } from "../contracts/index.js";
 import type { ImportMode, ImportPayload } from "../contracts/index.js";
@@ -92,7 +93,7 @@ export function createImportHandlers(
       const d = (deps ?? defaultDeps) as ImportHandlerDeps;
       const { jsonResponse } = d;
       const auth = await authenticate(request, env, supabase, auditCtx);
-      const rate = await rateLimit(auth.keyHash, env, auth);
+      const rate = await rateLimit(auth.keyHash, env, auth, getRouteRateLimitMax(env, "import", auth.keyCreatedAt));
       if (!rate.allowed) {
         return jsonResponse({ error: { code: "rate_limited", message: "Rate limit exceeded" } }, 429, rate.headers);
       }

@@ -2,6 +2,7 @@ import type { SupabaseClient } from "@supabase/supabase-js";
 import type { Env } from "../env.js";
 import type { AuthContext } from "../auth.js";
 import { authenticate, rateLimit } from "../auth.js";
+import { getRouteRateLimitMax } from "../limits.js";
 import type { HandlerDeps } from "../router.js";
 import { SearchPayloadSchema, parseWithSchema, type SearchPayload } from "../contracts/index.js";
 import { requireWorkspaceId } from "../supabaseScoped.js";
@@ -132,7 +133,7 @@ export function createSearchHandlers(
           402,
         );
       }
-      const rate = await rateLimit(auth.keyHash, env, auth);
+      const rate = await rateLimit(auth.keyHash, env, auth, getRouteRateLimitMax(env, "search", auth.keyCreatedAt));
       if (!rate.allowed) {
         return jsonResponse(
           { error: { code: "rate_limited", message: "Rate limit exceeded" } },
@@ -320,7 +321,7 @@ export function createSearchHandlers(
       const { jsonResponse } = d;
       const auth = await authenticate(request, env, supabase, auditCtx);
       requireWorkspaceId(auth.workspaceId);
-      const rate = await rateLimit(auth.keyHash, env, auth);
+      const rate = await rateLimit(auth.keyHash, env, auth, getRouteRateLimitMax(env, "search", auth.keyCreatedAt));
       if (!rate.allowed) {
         return jsonResponse({ error: { code: "rate_limited", message: "Rate limit exceeded" } }, 429, rate.headers);
       }
@@ -345,7 +346,7 @@ export function createSearchHandlers(
       const { jsonResponse } = d;
       const auth = await authenticate(request, env, supabase, auditCtx);
       requireWorkspaceId(auth.workspaceId);
-      const rate = await rateLimit(auth.keyHash, env, auth);
+      const rate = await rateLimit(auth.keyHash, env, auth, getRouteRateLimitMax(env, "search", auth.keyCreatedAt));
       if (!rate.allowed) {
         return jsonResponse({ error: { code: "rate_limited", message: "Rate limit exceeded" } }, 429, rate.headers);
       }

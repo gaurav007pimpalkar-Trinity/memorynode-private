@@ -85,6 +85,11 @@ export interface MemoryHandlerDeps extends HandlerDeps {
   effectivePlan: (plan: AuthContext["plan"], status?: AuthContext["planStatus"]) => AuthContext["plan"];
   normalizeMemoryListParams: (url: URL) => MemoryListParams;
   performListMemories: (auth: AuthContext, params: MemoryListParams, supabase: SupabaseClient) => Promise<ListOutcome>;
+  getMemoryByIdScoped: (
+    supabase: SupabaseClient,
+    workspaceId: string,
+    memoryId: string,
+  ) => Promise<ListOutcome["results"][number] | null>;
   deleteMemoryCascade: (supabase: SupabaseClient, workspaceId: string, memoryId: string) => Promise<boolean>;
   checkCapsAndMaybeRespond: (
     jsonResponse: (data: unknown, status?: number, extraHeaders?: Record<string, string>) => Response,
@@ -797,21 +802,7 @@ export function createMemoryHandlers(
         );
       }
 
-      const { data, error } = await supabase
-        .from("memories")
-        .select("id, user_id, namespace, text, metadata, created_at, memory_type, source_memory_id")
-        .eq("workspace_id", auth.workspaceId)
-        .eq("id", memoryId)
-        .maybeSingle();
-
-      if (error) {
-        return jsonResponse(
-          { error: { code: "DB_ERROR", message: error.message ?? "Failed to fetch memory" } },
-          500,
-          rate.headers,
-        );
-      }
-
+      const data = await d.getMemoryByIdScoped(supabase, auth.workspaceId, memoryId);
       if (!data) {
         return jsonResponse({ error: { code: "NOT_FOUND", message: "Memory not found" } }, 404, rate.headers);
       }

@@ -7,6 +7,7 @@ import type { SupabaseClient } from "@supabase/supabase-js";
 import type { Env } from "../env.js";
 import type { AuthContext } from "../auth.js";
 import { authenticate, rateLimit } from "../auth.js";
+import { getRouteRateLimitMax } from "../limits.js";
 import type { HandlerDeps } from "../router.js";
 
 const CHECKOUT_PLAN_IDS = ["launch", "build", "deploy", "scale"] as const;
@@ -122,7 +123,7 @@ export function createBillingHandlers(
         );
       }
       const auth = await authenticate(request, env, supabase, auditCtx);
-      const rate = await rateLimit(auth.keyHash, env, auth);
+      const rate = await rateLimit(auth.keyHash, env, auth, getRouteRateLimitMax(env, "billing", auth.keyCreatedAt));
       if (!rate.allowed) {
         return jsonResponse(
           { error: { code: "rate_limited", message: "Rate limit exceeded" } },
@@ -198,7 +199,7 @@ export function createBillingHandlers(
       d.assertPayUEnvFor("/v1/billing/checkout", env);
 
       const auth = await authenticate(request, env, supabase, auditCtx);
-      const rate = await rateLimit(auth.keyHash, env, auth);
+      const rate = await rateLimit(auth.keyHash, env, auth, getRouteRateLimitMax(env, "billing", auth.keyCreatedAt));
       if (!rate.allowed) {
         return jsonResponse(
           { error: { code: "rate_limited", message: "Rate limit exceeded" } },
@@ -402,7 +403,7 @@ export function createBillingHandlers(
       const d = (deps ?? defaultDeps) as BillingHandlerDeps;
       const { jsonResponse } = d;
       const auth = await authenticate(request, env, supabase, auditCtx);
-      const rate = await rateLimit(auth.keyHash, env, auth);
+      const rate = await rateLimit(auth.keyHash, env, auth, getRouteRateLimitMax(env, "billing", auth.keyCreatedAt));
       if (!rate.allowed) {
         return jsonResponse(
           { error: { code: "rate_limited", message: "Rate limit exceeded" } },

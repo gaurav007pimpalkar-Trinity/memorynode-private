@@ -9,6 +9,7 @@ import type { HandlerDeps } from "../router.js";
 import type { PayUWebhookPayloadLike } from "./webhooks.js";
 import type { ReconcileOutcomeLike } from "./webhooks.js";
 import { createHttpError } from "../http.js";
+import { getRouteRateLimitMax } from "../limits.js";
 
 function extractClientIp(request: Request): string {
   return (
@@ -20,7 +21,12 @@ function extractClientIp(request: Request): string {
 
 export interface AdminHandlerDeps extends HandlerDeps {
   requireAdmin: (request: Request, env: Env) => Promise<{ token: string }>;
-  rateLimit: (keyHash: string, env: Env, auth?: { keyCreatedAt?: string | null }) => Promise<{ allowed: boolean; headers: Record<string, string> }>;
+  rateLimit: (
+    keyHash: string,
+    env: Env,
+    auth?: { keyCreatedAt?: string | null },
+    explicitLimit?: number,
+  ) => Promise<{ allowed: boolean; headers: Record<string, string> }>;
   emitEventLog: (event_name: string, fields: Record<string, unknown>) => void;
   redact: (value: unknown, keyHint?: string) => unknown;
   getFounderPhase1Metrics: (
@@ -88,7 +94,7 @@ export function createAdminHandlers(
 } {
   async function guardAdminIp(request: Request, env: Env, d: AdminHandlerDeps): Promise<void> {
     const ip = extractClientIp(request);
-    const ipRate = await d.rateLimit(`admin-ip:${ip}`, env);
+    const ipRate = await d.rateLimit(`admin-ip:${ip}`, env, undefined, getRouteRateLimitMax(env, "admin"));
     if (!ipRate.allowed) {
       throw createHttpError(429, "RATE_LIMITED", "Too many admin requests from this IP");
     }
@@ -100,7 +106,7 @@ export function createAdminHandlers(
       const { jsonResponse } = d;
       await guardAdminIp(request, env, d);
       const { token } = await d.requireAdmin(request, env);
-      const rate = await d.rateLimit(`admin:usage-refunds:${token}`, env);
+      const rate = await d.rateLimit(`admin:usage-refunds:${token}`, env, undefined, getRouteRateLimitMax(env, "admin"));
       if (!rate.allowed) {
         return jsonResponse(
           { error: { code: "rate_limited", message: "Rate limit exceeded" } },
@@ -162,7 +168,7 @@ export function createAdminHandlers(
       const { jsonResponse } = d;
       await guardAdminIp(request, env, d);
       const { token } = await d.requireAdmin(request, env);
-      const rate = await d.rateLimit(`admin:sessions:${token}`, env);
+      const rate = await d.rateLimit(`admin:sessions:${token}`, env, undefined, getRouteRateLimitMax(env, "admin"));
       if (!rate.allowed) {
         return jsonResponse(
           { error: { code: "rate_limited", message: "Rate limit exceeded" } },
@@ -197,7 +203,7 @@ export function createAdminHandlers(
       const { jsonResponse } = d;
       await guardAdminIp(request, env, d);
       const { token } = await d.requireAdmin(request, env);
-      const rate = await d.rateLimit(`admin:${token}`, env);
+      const rate = await d.rateLimit(`admin:${token}`, env, undefined, getRouteRateLimitMax(env, "admin"));
       if (!rate.allowed) {
         return jsonResponse(
           { error: { code: "rate_limited", message: "Rate limit exceeded" } },
@@ -325,7 +331,7 @@ export function createAdminHandlers(
       const { jsonResponse } = d;
       await guardAdminIp(request, env, d);
       const { token } = await d.requireAdmin(request, env);
-      const rate = await d.rateLimit(`admin:${token}`, env);
+      const rate = await d.rateLimit(`admin:${token}`, env, undefined, getRouteRateLimitMax(env, "admin"));
       if (!rate.allowed) {
         return jsonResponse(
           { error: { code: "rate_limited", message: "Rate limit exceeded" } },
@@ -418,7 +424,7 @@ export function createAdminHandlers(
       const { jsonResponse } = d;
       await guardAdminIp(request, env, d);
       const { token } = await d.requireAdmin(request, env);
-      const rate = await d.rateLimit(`admin:founder-phase1:${token}`, env);
+      const rate = await d.rateLimit(`admin:founder-phase1:${token}`, env, undefined, getRouteRateLimitMax(env, "admin"));
       if (!rate.allowed) {
         return jsonResponse(
           { error: { code: "rate_limited", message: "Rate limit exceeded" } },
@@ -455,7 +461,7 @@ export function createAdminHandlers(
       const { jsonResponse } = d;
       await guardAdminIp(request, env, d);
       const { token } = await d.requireAdmin(request, env);
-      const rate = await d.rateLimit(`admin:hygiene:${token}`, env);
+      const rate = await d.rateLimit(`admin:hygiene:${token}`, env, undefined, getRouteRateLimitMax(env, "admin"));
       if (!rate.allowed) {
         return jsonResponse(
           { error: { code: "rate_limited", message: "Rate limit exceeded" } },

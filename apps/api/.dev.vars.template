@@ -1,8 +1,18 @@
 # Secrets (store locally for dev; set with `wrangler secret put NAME` in prod)
 SUPABASE_SERVICE_ROLE_KEY=
+SUPABASE_ANON_KEY=
+SUPABASE_JWT_SECRET=
 OPENAI_API_KEY=
 API_KEY_SALT=
 MASTER_ADMIN_TOKEN=
+# Optional: comma-separated exact IPs allowed for x-admin-token (production); * disables check
+# ADMIN_ALLOWED_IPS=
+# Admin auth mode:
+# - dev default: legacy (x-admin-token)
+# - staging/prod default: signed-required (x-admin-timestamp/x-admin-nonce/x-admin-signature)
+# ADMIN_AUTH_MODE=legacy
+# Break-glass: when 1, allows legacy x-admin-token in signed-required mode (audit logged)
+# ADMIN_BREAK_GLASS=0
 PAYU_MERCHANT_KEY=
 PAYU_MERCHANT_SALT=
 PAYU_WEBHOOK_SECRET=
@@ -10,9 +20,24 @@ PAYU_WEBHOOK_SECRET=
 # Vars (safe to keep in wrangler.toml)
 SUPABASE_URL=
 SUPABASE_MODE=dev
+# Access posture:
+# - rpc-first (default migration mode)
+# - rls-first (request path uses scoped JWT + RLS)
+SUPABASE_ACCESS_MODE=rpc-first
+# Enable short-lived scoped DB JWT clients for request handlers.
+REQUEST_SCOPED_DB_ENABLED=0
+# When 1, request-path service-role use is blocked (control-plane only).
+DISABLE_SERVICE_ROLE_REQUEST_PATH=0
 EMBEDDINGS_MODE=stub # dev-only; set to openai in prod
 ENVIRONMENT=dev
 RATE_LIMIT_MODE=on
+# Optional per-route overrides (requests/minute)
+# RATE_LIMIT_SEARCH_MAX=30
+# RATE_LIMIT_CONTEXT_MAX=20
+# RATE_LIMIT_IMPORT_MAX=10
+# RATE_LIMIT_BILLING_MAX=20
+# RATE_LIMIT_ADMIN_MAX=30
+# RATE_LIMIT_DASHBOARD_SESSION_MAX=15
 PUBLIC_APP_URL=http://localhost:5173
 PAYU_BASE_URL=https://secure.payu.in/_payment
 PAYU_VERIFY_URL=https://info.payu.in/merchant/postservice?form=2

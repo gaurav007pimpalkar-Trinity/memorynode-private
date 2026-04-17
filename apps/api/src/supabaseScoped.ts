@@ -14,3 +14,25 @@ export function requireWorkspaceId(workspaceId: string | undefined | null): asse
     throw createHttpError(400, "BAD_REQUEST", "workspace_id required for this operation");
   }
 }
+
+/**
+ * Runtime tenant guard for row payloads fetched with service-role access.
+ * Use after SELECT queries that include workspace_id in selected columns.
+ */
+export function assertRowsWorkspaceScoped(
+  rows: Array<Record<string, unknown>>,
+  workspaceId: string,
+  context: string,
+): void {
+  requireWorkspaceId(workspaceId);
+  for (const row of rows) {
+    const rowWorkspaceId = typeof row.workspace_id === "string" ? row.workspace_id : "";
+    if (rowWorkspaceId !== workspaceId) {
+      throw createHttpError(
+        500,
+        "TENANT_SCOPE_VIOLATION",
+        `Workspace scope violation in ${context}`,
+      );
+    }
+  }
+}

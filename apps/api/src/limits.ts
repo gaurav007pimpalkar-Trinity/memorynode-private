@@ -22,6 +22,12 @@ export const MAX_TOPK = 20;
 
 export const RATE_LIMIT_WINDOW_MS = 60_000;
 export const RATE_LIMIT_MAX = RATE_LIMIT_RPM_DEFAULT;
+export const RATE_LIMIT_SEARCH_MAX = 30;
+export const RATE_LIMIT_CONTEXT_MAX = 20;
+export const RATE_LIMIT_IMPORT_MAX = 10;
+export const RATE_LIMIT_BILLING_MAX = 20;
+export const RATE_LIMIT_ADMIN_MAX = 30;
+export const RATE_LIMIT_DASHBOARD_SESSION_MAX = 15;
 
 /** New keys use 15 RPM for this long (48h). */
 export const NEW_KEY_GRACE_MS = 48 * 60 * 60 * 1000;
@@ -41,6 +47,43 @@ export function getRateLimitMax(
   }
   const parsed = Number(env.RATE_LIMIT_MAX ?? RATE_LIMIT_MAX);
   return Number.isFinite(parsed) && parsed > 0 ? Math.floor(parsed) : RATE_LIMIT_RPM_DEFAULT;
+}
+
+function parseRate(raw: string | undefined, fallback: number): number {
+  const parsed = Number(raw ?? "");
+  return Number.isFinite(parsed) && parsed > 0 ? Math.floor(parsed) : fallback;
+}
+
+export function getRouteRateLimitMax(
+  env: {
+    RATE_LIMIT_MAX?: string;
+    RATE_LIMIT_SEARCH_MAX?: string;
+    RATE_LIMIT_CONTEXT_MAX?: string;
+    RATE_LIMIT_IMPORT_MAX?: string;
+    RATE_LIMIT_BILLING_MAX?: string;
+    RATE_LIMIT_ADMIN_MAX?: string;
+    RATE_LIMIT_DASHBOARD_SESSION_MAX?: string;
+  },
+  route:
+    | "default"
+    | "search"
+    | "context"
+    | "import"
+    | "billing"
+    | "admin"
+    | "dashboard_session",
+  keyCreatedAt?: string | null,
+): number {
+  const base = getRateLimitMax(env, keyCreatedAt);
+  if (route === "search") return Math.min(base, parseRate(env.RATE_LIMIT_SEARCH_MAX, RATE_LIMIT_SEARCH_MAX));
+  if (route === "context") return Math.min(base, parseRate(env.RATE_LIMIT_CONTEXT_MAX, RATE_LIMIT_CONTEXT_MAX));
+  if (route === "import") return Math.min(base, parseRate(env.RATE_LIMIT_IMPORT_MAX, RATE_LIMIT_IMPORT_MAX));
+  if (route === "billing") return Math.min(base, parseRate(env.RATE_LIMIT_BILLING_MAX, RATE_LIMIT_BILLING_MAX));
+  if (route === "admin") return Math.min(base, parseRate(env.RATE_LIMIT_ADMIN_MAX, RATE_LIMIT_ADMIN_MAX));
+  if (route === "dashboard_session") {
+    return Math.min(base, parseRate(env.RATE_LIMIT_DASHBOARD_SESSION_MAX, RATE_LIMIT_DASHBOARD_SESSION_MAX));
+  }
+  return base;
 }
 
 /** Resolve caps by plan code (launch/build/deploy/scale/scale_plus or "free" for unentitled). */

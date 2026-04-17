@@ -6,11 +6,17 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
 import type { Env } from "../env.js";
 import type { HandlerDeps } from "../router.js";
+import { getRouteRateLimitMax } from "../limits.js";
 
 export interface WorkspacesHandlerDeps extends HandlerDeps {
   safeParseJson: <T>(request: Request) => Promise<{ ok: true; data: T } | { ok: false; error: string }>;
   requireAdmin: (request: Request, env: Env) => Promise<{ token: string }>;
-  rateLimit: (keyHash: string, env: Env) => Promise<{ allowed: boolean; headers: Record<string, string> }>;
+  rateLimit: (
+    keyHash: string,
+    env: Env,
+    auth?: { keyCreatedAt?: string | null },
+    explicitLimit?: number,
+  ) => Promise<{ allowed: boolean; headers: Record<string, string> }>;
   emitProductEvent: (
     supabase: SupabaseClient,
     eventName: string,
@@ -35,7 +41,7 @@ export function createWorkspacesHandlers(
       const d = (deps ?? defaultDeps) as WorkspacesHandlerDeps;
       const { jsonResponse } = d;
       const { token } = await d.requireAdmin(request, env);
-      const rate = await d.rateLimit(`admin:${token}`, env);
+      const rate = await d.rateLimit(`admin:${token}`, env, undefined, getRouteRateLimitMax(env, "admin"));
       if (!rate.allowed) {
         return jsonResponse(
           { error: { code: "rate_limited", message: "Rate limit exceeded" } },

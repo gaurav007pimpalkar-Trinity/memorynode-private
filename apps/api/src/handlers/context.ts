@@ -12,6 +12,7 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
 import type { Env } from "../env.js";
 import { authenticate, rateLimit } from "../auth.js";
+import { getRouteRateLimitMax } from "../limits.js";
 import type { HandlerDeps } from "../router.js";
 import type { SearchHandlerDeps } from "./search.js";
 import { SearchPayloadSchema, parseWithSchema } from "../contracts/index.js";
@@ -189,7 +190,7 @@ export function createContextHandlers(
           402,
         );
       }
-      const rate = await rateLimit(auth.keyHash, env, auth);
+      const rate = await rateLimit(auth.keyHash, env, auth, getRouteRateLimitMax(env, "context", auth.keyCreatedAt));
       if (!rate.allowed) {
         return jsonResponse(
           { error: { code: "rate_limited", message: "Rate limit exceeded" } },

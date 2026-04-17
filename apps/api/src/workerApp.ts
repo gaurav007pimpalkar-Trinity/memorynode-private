@@ -1,16 +1,24 @@
-import { createClient, type SupabaseClient } from "@supabase/supabase-js";
+import type { SupabaseClient } from "@supabase/supabase-js";
 import JSZip from "jszip";
 import {
   DEFAULT_TOPK,
   capsByPlanCode,
   exceedsCaps,
+  getRouteRateLimitMax,
   MAX_QUERY_CHARS,
   MAX_TOPK,
   type UsageSnapshot,
 } from "./limits.js";
 import { getPlan, getLimitsForPlanCode, type PlanLimits } from "@memorynodeai/shared";
 import type { Env } from "./env.js";
-import { getEnvironmentStage, validateStubModes, validateRateLimitConfig, validateSecrets } from "./env.js";
+import {
+  getEnvironmentStage,
+  isRlsFirstAccessMode,
+  isServiceRoleRequestPathDisabled,
+  validateStubModes,
+  validateRateLimitConfig,
+  validateSecrets,
+} from "./env.js";
 import { logger, redact } from "./logger.js";
 import { route, type HandlerDeps } from "./router.js";
 import { createHttpError, isApiError } from "./http.js";
@@ -72,6 +80,12 @@ import {
   PAYU_VERIFY_TIMEOUT_MS,
 } from "./resilienceConstants.js";
 import { withCircuitBreaker } from "./circuitBreaker.js";
+import { assertRowsWorkspaceScoped } from "./supabaseScoped.js";
+import {
+  createAnonSupabaseClient,
+  createRequestScopedSupabaseClient,
+  createServiceRoleSupabaseClient,
+} from "./dbClientFactory.js";
 
 type MetadataFilter = Record<string, string | number | boolean>;
 
@@ -1346,7 +1360,6 @@ async function handleRequestImpl(request: Request, env: Env): Promise<Response> 
       const stage = getEnvironmentStage(env);
       if (stage !== "dev") {
         const missing: string[] = [];
-        if (!env.SUPABASE_SERVICE_ROLE_KEY) missing.push("SUPABASE_SERVICE_ROLE_KEY");
         if (!env.API_KEY_SALT) missing.push("API_KEY_SALT");
         if (missing.length > 0) {
           logHealthReadyCompleted(500);
@@ -1426,7 +1439,7 @@ async function handleRequestImpl(request: Request, env: Env): Promise<Response> 
         await withCircuitBreaker("supabase", async () => {
           const r = await withSupabaseQueryRetry(
             async () => {
-              const result = await supabaseForReady.from("app_settings").select("id").limit(1).maybeSingle();
+              const result = await supabaseForReady.rpc("get_api_key_salt");
               return { data: result.data, error: result.error };
             },
             { delaysMs: SUPABASE_RETRY_DELAYS_MS },
@@ -1462,7 +1475,6 @@ async function handleRequestImpl(request: Request, env: Env): Promise<Response> 
       const stage = getEnvironmentStage(env);
       if (stage !== "dev") {
         const missing: string[] = [];
-        if (!env.SUPABASE_SERVICE_ROLE_KEY) missing.push("SUPABASE_SERVICE_ROLE_KEY");
         if (!env.API_KEY_SALT) missing.push("API_KEY_SALT");
         if (missing.length > 0) {
           logHealthReadyCompleted(500);
@@ -1553,9 +1565,29 @@ async function handleRequestImpl(request: Request, env: Env): Promise<Response> 
       }
 
       supabase = createSupabaseClient(env);
+      logger.info({
+        event: "db_access_path_selected",
+        request_id: requestId,
+        route: url.pathname,
+        path_mode: isRlsFirstAccessMode(env) || isServiceRoleRequestPathDisabled(env) ? "scoped_rls" : "service_direct",
+      });
 
       // Dashboard session (Phase 0.2): create session from Supabase token, or logout
       if (request.method === "POST" && url.pathname === "/v1/dashboard/session") {
+        const dashRate = await rateLimit(
+          `dashboard-session:${ip}`,
+          env,
+          undefined,
+          getRouteRateLimitMax(env, "dashboard_session"),
+        );
+        if (!dashRate.allowed) {
+          response = jsonResponse(
+            { error: { code: "rate_limited", message: "Rate limit exceeded" } },
+            429,
+            dashRate.headers,
+          );
+          return response;
+        }
         let body: { access_token?: string; workspace_id?: string };
         try {
           body = (await request.json()) as { access_token?: string; workspace_id?: string };
@@ -1577,7 +1609,16 @@ async function handleRequestImpl(request: Request, env: Env): Promise<Response> 
           response = jsonResponse({ error: { code: "UNAUTHORIZED", message: "Invalid or expired Supabase token" } }, 401);
           return response;
         }
-        const { data: member } = await supabase
+        const dashboardScoped = isRlsFirstAccessMode(env) || isServiceRoleRequestPathDisabled(env)
+          ? await createRequestScopedSupabaseClient(env, {
+            workspaceId,
+            keyHash: `dashboard:${verified.userId}`,
+            apiKeyId: verified.userId,
+            plan: "free",
+            planStatus: "free",
+          })
+          : supabase;
+        const { data: member } = await dashboardScoped
           .from("workspace_members")
           .select("workspace_id")
           .eq("workspace_id", workspaceId)
@@ -1590,7 +1631,7 @@ async function handleRequestImpl(request: Request, env: Env): Promise<Response> 
           );
           return response;
         }
-        const { sessionId, csrfToken } = await createDashboardSession(supabase, verified.userId, workspaceId, SESSION_TTL_SEC);
+        const { sessionId, csrfToken } = await createDashboardSession(dashboardScoped, verified.userId, workspaceId, SESSION_TTL_SEC);
         const isSecure = url.protocol === "https:";
         const cookieHeader = sessionCookieHeader(sessionId, SESSION_TTL_SEC, isSecure);
         response = new Response(JSON.stringify({ ok: true, csrf_token: csrfToken }), {
@@ -1605,6 +1646,20 @@ async function handleRequestImpl(request: Request, env: Env): Promise<Response> 
       }
 
       if (request.method === "POST" && url.pathname === "/v1/dashboard/logout") {
+        const dashRate = await rateLimit(
+          `dashboard-session:${ip}`,
+          env,
+          undefined,
+          getRouteRateLimitMax(env, "dashboard_session"),
+        );
+        if (!dashRate.allowed) {
+          response = jsonResponse(
+            { error: { code: "rate_limited", message: "Rate limit exceeded" } },
+            429,
+            dashRate.headers,
+          );
+          return response;
+        }
         const dashSession = await getDashboardSession(request, supabase);
         if (dashSession) {
           try {
@@ -1630,6 +1685,24 @@ async function handleRequestImpl(request: Request, env: Env): Promise<Response> 
         return response;
       }
 
+      if (
+        isServiceRoleRequestPathDisabled(env) &&
+        (url.pathname.startsWith("/admin/") ||
+          url.pathname === "/v1/billing/webhook" ||
+          url.pathname.startsWith("/v1/admin/"))
+      ) {
+        response = jsonResponse(
+          {
+            error: {
+              code: "CONTROL_PLANE_ONLY",
+              message: "This endpoint is disabled on request path in rls-first mode",
+            },
+          },
+          503,
+        );
+        return response;
+      }
+
       const handlerDeps: HandlerDeps & MemoryHandlerDeps & SearchHandlerDeps & UsageHandlerDeps & BillingHandlerDeps & WebhookHandlerDeps & AdminHandlerDeps & ImportHandlerDeps & WorkspacesHandlerDeps & ApiKeysHandlerDeps = {
         jsonResponse,
         safeParseJson,
@@ -1642,6 +1715,7 @@ async function handleRequestImpl(request: Request, env: Env): Promise<Response> 
         effectivePlan,
         normalizeMemoryListParams,
         performListMemories,
+        getMemoryByIdScoped,
         deleteMemoryCascade,
         checkCapsAndMaybeRespond,
         performSearch,
@@ -2052,17 +2126,10 @@ function createSupabaseClient(env: Env): SupabaseClient {
     }
     return createStubSupabase(env) as unknown as SupabaseClient;
   }
-
-  if (!env.SUPABASE_URL || !env.SUPABASE_SERVICE_ROLE_KEY) {
-    throw createHttpError(500, "CONFIG_ERROR", "Supabase env vars not set");
+  if (isRlsFirstAccessMode(env) || isServiceRoleRequestPathDisabled(env)) {
+    return createAnonSupabaseClient(env);
   }
-
-  return createClient(env.SUPABASE_URL, env.SUPABASE_SERVICE_ROLE_KEY, {
-    auth: {
-      autoRefreshToken: false,
-      persistSession: false,
-    },
-  });
+  return createServiceRoleSupabaseClient(env);
 }
 
 type StubRow = Record<string, unknown>;
@@ -2667,6 +2734,88 @@ function createStubSupabase(env: Env) {
             },
             error: null,
           });
+        }
+        case "list_memories_scoped": {
+          const workspaceId = params.p_workspace_id as string;
+          const page = Math.max(1, Number(params.p_page ?? 1));
+          const pageSize = Math.max(1, Number(params.p_page_size ?? 20));
+          const namespace = (params.p_namespace as string | null | undefined) ?? null;
+          const userId = (params.p_user_id as string | null | undefined) ?? null;
+          const memoryType = (params.p_memory_type as string | null | undefined) ?? null;
+          const metadataFilter = (params.p_metadata as Record<string, unknown> | null | undefined) ?? null;
+          const startTime = (params.p_start_time as string | null | undefined) ?? null;
+          const endTime = (params.p_end_time as string | null | undefined) ?? null;
+
+          let rows = db.memories.filter((m) =>
+            m.workspace_id === workspaceId &&
+            m.duplicate_of == null &&
+            (namespace == null || m.namespace === namespace) &&
+            (userId == null || m.user_id === userId) &&
+            (memoryType == null || m.memory_type === memoryType),
+          );
+          if (metadataFilter && Object.keys(metadataFilter).length > 0) {
+            rows = rows.filter((m) => {
+              const meta = (m.metadata ?? {}) as Record<string, unknown>;
+              return Object.entries(metadataFilter).every(([k, v]) => meta[k] === v);
+            });
+          }
+          if (startTime) rows = rows.filter((m) => String(m.created_at) >= startTime);
+          if (endTime) rows = rows.filter((m) => String(m.created_at) <= endTime);
+
+          rows = rows
+            .slice()
+            .sort((a, b) => {
+              const ca = String(a.created_at ?? "");
+              const cb = String(b.created_at ?? "");
+              if (ca === cb) return String(b.id ?? "").localeCompare(String(a.id ?? ""));
+              return cb.localeCompare(ca);
+            });
+
+          const totalCount = rows.length;
+          const offset = (page - 1) * pageSize;
+          const paged = rows.slice(offset, offset + pageSize + 1).map((m) => ({
+            id: m.id as string,
+            workspace_id: m.workspace_id as string,
+            user_id: m.user_id as string,
+            namespace: m.namespace as string,
+            text: m.text as string,
+            metadata: (m.metadata ?? {}) as Record<string, unknown>,
+            created_at: m.created_at as string,
+            memory_type: (m.memory_type as string | null | undefined) ?? null,
+            source_memory_id: (m.source_memory_id as string | null | undefined) ?? null,
+            total_count: totalCount,
+          }));
+
+          return Promise.resolve({ data: paged, error: null });
+        }
+        case "get_memory_scoped": {
+          const workspaceId = params.p_workspace_id as string;
+          const memoryId = params.p_memory_id as string;
+          const row = db.memories.find((m) => m.workspace_id === workspaceId && m.id === memoryId);
+          if (!row) return Promise.resolve({ data: [], error: null });
+          return Promise.resolve({
+            data: [{
+              id: row.id as string,
+              workspace_id: row.workspace_id as string,
+              user_id: row.user_id as string,
+              namespace: row.namespace as string,
+              text: row.text as string,
+              metadata: (row.metadata ?? {}) as Record<string, unknown>,
+              created_at: row.created_at as string,
+              memory_type: (row.memory_type as string | null | undefined) ?? null,
+              source_memory_id: (row.source_memory_id as string | null | undefined) ?? null,
+            }],
+            error: null,
+          });
+        }
+        case "delete_memory_scoped": {
+          const workspaceId = params.p_workspace_id as string;
+          const memoryId = params.p_memory_id as string;
+          const beforeMemCount = db.memories.length;
+          db.memory_chunks = db.memory_chunks.filter((c) => !(c.workspace_id === workspaceId && c.memory_id === memoryId));
+          db.memories = db.memories.filter((m) => !(m.workspace_id === workspaceId && m.id === memoryId));
+          const deleted = db.memories.length < beforeMemCount;
+          return Promise.resolve({ data: [{ deleted }], error: null });
         }
         default:
           return Promise.resolve({ data: null, error: null });
@@ -3640,54 +3789,77 @@ export async function performListMemories(
   const { page, page_size, namespace, user_id, memory_type, filters } = params;
   const offset = (page - 1) * page_size;
 
-  let query = supabase
-    .from("memories")
-    .select("id, user_id, namespace, text, metadata, created_at, memory_type, source_memory_id")
-    .eq("workspace_id", auth.workspaceId)
-    .is("duplicate_of", null);
-
-  if (namespace) query = query.eq("namespace", namespace);
-  if (user_id) query = query.eq("user_id", user_id);
-  if (memory_type) query = query.eq("memory_type", memory_type);
-  if (filters.metadata) query = query.contains("metadata", filters.metadata);
-  if (filters.start_time) query = query.gte("created_at", filters.start_time);
-  if (filters.end_time) query = query.lte("created_at", filters.end_time);
-
-  query = query.order("created_at", { ascending: false }).order("id", { ascending: false });
-  query = query.range(offset, offset + page_size);
-
-  const { data, error } = await query;
-  if (error) {
-    throw createHttpError(500, "DB_ERROR", error.message ?? "Failed to list memories");
+  const rpc = await supabase.rpc("list_memories_scoped", {
+    p_workspace_id: auth.workspaceId,
+    p_page: page,
+    p_page_size: page_size,
+    p_namespace: namespace ?? null,
+    p_user_id: user_id ?? null,
+    p_memory_type: memory_type ?? null,
+    p_metadata: filters.metadata ?? null,
+    p_start_time: filters.start_time ?? null,
+    p_end_time: filters.end_time ?? null,
+  });
+  if (rpc.error) {
+    throw createHttpError(500, "DB_ERROR", rpc.error.message ?? "Failed to list memories");
   }
-
-  const rows = (data ?? []) as ListOutcome["results"];
-  const has_more = rows.length > page_size;
-  const results = has_more ? rows.slice(0, page_size) : rows;
-  let total = offset + results.length + (has_more ? 1 : 0);
-  let countQuery = supabase
-    .from("memories")
-    .select("id", { count: "planned", head: true })
-    .eq("workspace_id", auth.workspaceId)
-    .is("duplicate_of", null);
-  if (namespace) countQuery = countQuery.eq("namespace", namespace);
-  if (user_id) countQuery = countQuery.eq("user_id", user_id);
-  if (memory_type) countQuery = countQuery.eq("memory_type", memory_type);
-  if (filters.metadata) countQuery = countQuery.contains("metadata", filters.metadata);
-  if (filters.start_time) countQuery = countQuery.gte("created_at", filters.start_time);
-  if (filters.end_time) countQuery = countQuery.lte("created_at", filters.end_time);
-  const { count } = await countQuery;
-  if (typeof count === "number" && count >= 0) {
-    total = count;
+  if (Array.isArray(rpc.data)) {
+    const rawRows = rpc.data as Array<{
+      id: string;
+      workspace_id: string;
+      user_id: string;
+      namespace: string;
+      text: string;
+      metadata: Record<string, unknown>;
+      created_at: string;
+      memory_type?: string | null;
+      source_memory_id?: string | null;
+      total_count?: number | null;
+    }>;
+    assertRowsWorkspaceScoped(rawRows as unknown as Array<Record<string, unknown>>, auth.workspaceId, "performListMemories.rpc");
+    const has_more = rawRows.length > page_size;
+    const pageRows = (has_more ? rawRows.slice(0, page_size) : rawRows).map(({ workspace_id: _workspaceId, total_count: _totalCount, ...rest }) => rest);
+    const firstTotal = rawRows.find((r) => typeof r.total_count === "number")?.total_count;
+    const total = typeof firstTotal === "number"
+      ? firstTotal
+      : offset + pageRows.length + (has_more ? 1 : 0);
+    return {
+      results: pageRows,
+      total,
+      page,
+      page_size,
+      has_more,
+    };
   }
+  throw createHttpError(500, "DB_ERROR", "Scoped list RPC returned invalid payload");
+}
 
-  return {
-    results,
-    total,
-    page,
-    page_size,
-    has_more,
-  };
+async function getMemoryByIdScoped(
+  supabase: SupabaseClient,
+  workspaceId: string,
+  memoryId: string,
+): Promise<ListOutcome["results"][number] | null> {
+  const rpc = await supabase.rpc("get_memory_scoped", {
+    p_workspace_id: workspaceId,
+    p_memory_id: memoryId,
+  });
+  if (rpc.error) {
+    throw createHttpError(500, "DB_ERROR", rpc.error.message ?? "Failed to fetch memory");
+  }
+  if (rpc.data) {
+    const rows = Array.isArray(rpc.data) ? rpc.data : [rpc.data];
+    const first = rows[0] as (ListOutcome["results"][number] & { workspace_id?: string }) | undefined;
+    if (!first) return null;
+    if (typeof first.workspace_id === "string" && first.workspace_id !== workspaceId) {
+      throw createHttpError(500, "TENANT_SCOPE_VIOLATION", "Workspace scope violation in getMemoryByIdScoped");
+    }
+    if (typeof first.workspace_id === "string") {
+      const { workspace_id: _workspaceId, ...rest } = first;
+      return rest;
+    }
+    return first;
+  }
+  return null;
 }
 
 export { parseApiKeyMeta, redact };
@@ -4060,27 +4232,22 @@ export async function deleteMemoryCascade(
   workspaceId: string,
   memoryId: string,
 ): Promise<boolean> {
-  const { error: chunksError } = await supabase
-    .from("memory_chunks")
-    .delete()
-    .eq("workspace_id", workspaceId)
-    .eq("memory_id", memoryId);
-
-  if (chunksError) {
-    throw createHttpError(500, "DB_ERROR", chunksError.message ?? "Failed to delete memory chunks");
+  const rpc = await supabase.rpc("delete_memory_scoped", {
+    p_workspace_id: workspaceId,
+    p_memory_id: memoryId,
+  });
+  if (rpc.error) {
+    throw createHttpError(500, "DB_ERROR", rpc.error.message ?? "Failed to delete memory");
   }
-
-  const { error: memError, count } = await supabase
-    .from("memories")
-    .delete({ count: "exact" })
-    .eq("workspace_id", workspaceId)
-    .eq("id", memoryId);
-
-  if (memError) {
-    throw createHttpError(500, "DB_ERROR", memError.message ?? "Failed to delete memory");
+  if (Array.isArray(rpc.data) && rpc.data.length > 0) {
+    const first = rpc.data[0] as { deleted?: boolean };
+    return Boolean(first.deleted);
   }
-
-  return (count ?? 0) > 0;
+  if (rpc.data && typeof rpc.data === "object") {
+    const row = rpc.data as { deleted?: boolean };
+    if (typeof row.deleted === "boolean") return row.deleted;
+  }
+  return false;
 }
 
 /** Full deps for memory handlers when called directly (e.g. from tests). Defined after all helpers. */
@@ -4096,6 +4263,7 @@ const defaultMemoryHandlerDeps: MemoryHandlerDeps = {
   effectivePlan,
   normalizeMemoryListParams,
   performListMemories,
+  getMemoryByIdScoped,
   deleteMemoryCascade,
   checkCapsAndMaybeRespond,
   resolveQuotaForWorkspace,

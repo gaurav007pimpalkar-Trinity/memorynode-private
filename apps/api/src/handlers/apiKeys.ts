@@ -6,11 +6,17 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
 import type { Env } from "../env.js";
 import type { HandlerDeps } from "../router.js";
+import { getRouteRateLimitMax } from "../limits.js";
 
 export interface ApiKeysHandlerDeps extends HandlerDeps {
   safeParseJson: <T>(request: Request) => Promise<{ ok: true; data: T } | { ok: false; error: string }>;
   requireAdmin: (request: Request, env: Env) => Promise<{ token: string }>;
-  rateLimit: (keyHash: string, env: Env) => Promise<{ allowed: boolean; headers: Record<string, string> }>;
+  rateLimit: (
+    keyHash: string,
+    env: Env,
+    auth?: { keyCreatedAt?: string | null },
+    explicitLimit?: number,
+  ) => Promise<{ allowed: boolean; headers: Record<string, string> }>;
   generateApiKey: () => string;
   getApiKeySalt: (env: Env, supabase: SupabaseClient) => Promise<{ salt: string }>;
   hashApiKey: (rawKey: string, salt: string) => Promise<string>;
@@ -56,7 +62,7 @@ export function createApiKeysHandlers(
       const d = (deps ?? defaultDeps) as ApiKeysHandlerDeps;
       const { jsonResponse } = d;
       const { token } = await d.requireAdmin(request, env);
-      const rate = await d.rateLimit(`admin:${token}`, env);
+      const rate = await d.rateLimit(`admin:${token}`, env, undefined, getRouteRateLimitMax(env, "admin"));
       if (!rate.allowed) {
         return jsonResponse(
           { error: { code: "rate_limited", message: "Rate limit exceeded" } },
@@ -137,7 +143,7 @@ export function createApiKeysHandlers(
       const d = (deps ?? defaultDeps) as ApiKeysHandlerDeps;
       const { jsonResponse } = d;
       const { token } = await d.requireAdmin(request, env);
-      const rate = await d.rateLimit(`admin:${token}`, env);
+      const rate = await d.rateLimit(`admin:${token}`, env, undefined, getRouteRateLimitMax(env, "admin"));
       if (!rate.allowed) {
         return jsonResponse(
           { error: { code: "rate_limited", message: "Rate limit exceeded" } },
@@ -189,7 +195,7 @@ export function createApiKeysHandlers(
       const d = (deps ?? defaultDeps) as ApiKeysHandlerDeps;
       const { jsonResponse } = d;
       const { token } = await d.requireAdmin(request, env);
-      const rate = await d.rateLimit(`admin:${token}`, env);
+      const rate = await d.rateLimit(`admin:${token}`, env, undefined, getRouteRateLimitMax(env, "admin"));
       if (!rate.allowed) {
         return jsonResponse(
           { error: { code: "rate_limited", message: "Rate limit exceeded" } },
