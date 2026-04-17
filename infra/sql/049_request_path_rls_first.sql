@@ -71,20 +71,28 @@ do $$
 begin
   drop policy if exists memories_all on memories;
   drop policy if exists memories_select on memories;
+  drop policy if exists memories_modify on memories;
   drop policy if exists memory_chunks_all on memory_chunks;
   drop policy if exists memory_chunks_select on memory_chunks;
+  drop policy if exists memory_chunks_modify on memory_chunks;
   drop policy if exists workspaces_all on workspaces;
   drop policy if exists workspaces_select on workspaces;
+  drop policy if exists workspaces_modify on workspaces;
   drop policy if exists api_keys_all on api_keys;
   drop policy if exists api_keys_select on api_keys;
+  drop policy if exists api_keys_modify on api_keys;
   drop policy if exists payu_transactions_all on payu_transactions;
   drop policy if exists payu_transactions_select on payu_transactions;
+  drop policy if exists payu_transactions_modify on payu_transactions;
   drop policy if exists workspace_entitlements_all on workspace_entitlements;
   drop policy if exists workspace_entitlements_select on workspace_entitlements;
+  drop policy if exists workspace_entitlements_modify on workspace_entitlements;
   drop policy if exists usage_daily_all on usage_daily;
   drop policy if exists usage_daily_select on usage_daily;
+  drop policy if exists usage_daily_modify on usage_daily;
   drop policy if exists usage_daily_v2_select on usage_daily_v2;
   drop policy if exists usage_daily_v2_upsert on usage_daily_v2;
+  drop policy if exists usage_daily_v2_modify on usage_daily_v2;
   drop policy if exists search_query_history_select on search_query_history;
   drop policy if exists search_query_history_insert on search_query_history;
   drop policy if exists search_query_history_delete on search_query_history;
