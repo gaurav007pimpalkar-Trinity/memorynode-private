@@ -65,7 +65,7 @@ Follow this path depending on what you need:
 
 ## Plans & Limits
 
-**Launch is the paid 7-day trial replacement (no free tier).**
+**Launch is the paid 7-day trial entry plan.**
 
 | Plan    | Price (INR) | Period   | Limits (per day) |
 |---------|-------------|----------|-------------------|
@@ -85,7 +85,7 @@ Follow this path depending on what you need:
 
 Exact limits per plan: `packages/shared/src/plans.ts`. API and dashboard read from this single source. PayU amounts can be overridden via env: `PAYU_LAUNCH_AMOUNT`, `PAYU_BUILD_AMOUNT`, `PAYU_DEPLOY_AMOUNT`, `PAYU_SCALE_AMOUNT` (see `apps/api/.dev.vars.template` and `docs/PROD_SETUP_CHECKLIST.md`).
 
-Internal DB fields may still store legacy values (`free`/`pro`) for backward compatibility. Externally we use `effective_plan` = plan_code (`launch`/`build`/`deploy`/`scale`/`scale_plus` or `free`).
+Internal DB fields may still store legacy values (`pro`/`team`) for backward compatibility. Externally we use `effective_plan` = plan_code (`launch`/`build`/`deploy`/`scale`/`scale_plus`).
 
 ## Canonical Ops Docs (Source of Truth)
 
@@ -281,7 +281,7 @@ It checks `/healthz`, validates authenticated usage/search/context paths, and ve
    - `MASTER_ADMIN_TOKEN`
    - `EMBEDDINGS_MODE` (`openai` or `stub`; use `stub` for local dev to avoid OpenAI calls)
 
-Migration manifest (CI-checked): `MIGRATIONS_TOTAL=51; MIGRATIONS_LATEST=049_request_path_rls_first.sql`
+Migration manifest (CI-checked): `MIGRATIONS_TOTAL=53; MIGRATIONS_LATEST=051_record_usage_event_inflight_budget_guard.sql`
 
 ## Admin & Bootstrap
 - Admin endpoints require header `x-admin-token: $MASTER_ADMIN_TOKEN`.

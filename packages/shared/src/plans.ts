@@ -228,18 +228,18 @@ export function getPlan(id: PlanId | string | null | undefined): Plan | null {
   return PLANS_BY_ID[normalized as PlanId] ?? null;
 }
 
-/** Caps for unentitled workspace (no active plan). Same as Launch tier. */
-export function getFreeCaps(): PlanLimits {
+/** Default caps for unknown/unrecognized plan codes. Same as Launch tier. */
+export function getDefaultCaps(): PlanLimits {
   return PLANS_BY_ID.launch.limits;
 }
 
 /**
  * Returns limits for a plan code (launch/build/deploy/scale/scale_plus).
- * For "free" or unknown, returns Launch-like caps.
+ * For unknown values, returns Launch-like caps.
  */
 export function getLimitsForPlanCode(planCode: string | null | undefined): PlanLimits {
   const plan = getPlan(planCode);
-  return plan?.limits ?? getFreeCaps();
+  return plan?.limits ?? getDefaultCaps();
 }
 
 /**
@@ -256,7 +256,7 @@ export interface UsageCaps {
   embeds: number;
 }
 
-/** Returns UsageCaps for a plan code. "free" or unknown => Launch-like caps. */
+/** Returns UsageCaps for a plan code. Unknown => Launch-like caps. */
 export function getUsageCapsForPlanCode(planCode: string | null | undefined): UsageCaps {
   const limits = getLimitsForPlanCode(planCode);
   return {

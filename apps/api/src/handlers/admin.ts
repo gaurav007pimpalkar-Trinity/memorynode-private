@@ -400,6 +400,64 @@ export function createAdminHandlers(
         })),
       };
 
+      const reservationRows = await supabase
+        .from("usage_reservations")
+        .select("id,workspace_id,status,estimated_cost_inr,created_at,expires_at,error_message,request_id")
+        .order("created_at", { ascending: false })
+        .limit(50);
+      const reservationRequestIds = (((reservationRows.data as Array<Record<string, unknown>> | null) ?? [])
+        .map((row) => (typeof row.request_id === "string" ? row.request_id.trim() : ""))
+        .filter((id) => id.length > 0));
+      const uniqueReservationRequestIds = [...new Set(reservationRequestIds)];
+      const usageEventRequestIdsResult = uniqueReservationRequestIds.length > 0
+        ? await supabase
+            .from("usage_events")
+            .select("request_id")
+            .in("request_id", uniqueReservationRequestIds)
+            .limit(uniqueReservationRequestIds.length)
+        : { data: [], error: null };
+      const matchedUsageRequestIds = new Set(
+        (((usageEventRequestIdsResult.data as Array<Record<string, unknown>> | null) ?? [])
+          .map((row) => (typeof row.request_id === "string" ? row.request_id.trim() : ""))
+          .filter((id) => id.length > 0)),
+      );
+      const matchedReservationRequestCount = uniqueReservationRequestIds.filter((id) => matchedUsageRequestIds.has(id)).length;
+      const reservationUsageMatchRatePct = uniqueReservationRequestIds.length > 0
+        ? Number(((matchedReservationRequestCount / uniqueReservationRequestIds.length) * 100).toFixed(2))
+        : null;
+      const reservationItems = ((reservationRows.data as Array<Record<string, unknown>> | null) ?? []).map((row) => ({
+        reservation_id_redacted: d.redact(row.id, "reservation_id"),
+        workspace_id_redacted: d.redact(row.workspace_id, "workspace_id"),
+        status: typeof row.status === "string" ? row.status : null,
+        estimated_cost_inr: typeof row.estimated_cost_inr === "number"
+          ? row.estimated_cost_inr
+          : Number(row.estimated_cost_inr ?? 0) || 0,
+        created_at: typeof row.created_at === "string" ? row.created_at : null,
+        expires_at: typeof row.expires_at === "string" ? row.expires_at : null,
+        error_message: typeof row.error_message === "string" ? d.redact(row.error_message, "message") : null,
+      }));
+      const inflightReserved = reservationItems.filter((r) => r.status === "reserved");
+      const refundPending = reservationItems.filter((r) => r.status === "refund_pending");
+      const failedReservations = reservationItems.filter((r) => r.status === "failed");
+      const usageReservationPressure = {
+        ok: !reservationRows.error,
+        error_code: reservationRows.error?.code ?? null,
+        error_message: reservationRows.error ? d.redact(reservationRows.error.message ?? "Usage reservation query failed", "message") : null,
+        inflight_reserved_count: inflightReserved.length,
+        inflight_reserved_estimated_cost_inr: Number(
+          inflightReserved.reduce((sum, r) => sum + (r.estimated_cost_inr ?? 0), 0).toFixed(6),
+        ),
+        refund_pending_count: refundPending.length,
+        failed_count: failedReservations.length,
+        request_id_match_total: uniqueReservationRequestIds.length,
+        request_id_match_count: matchedReservationRequestCount,
+        request_id_match_rate_pct: reservationUsageMatchRatePct,
+        request_id_match_error: usageEventRequestIdsResult.error
+          ? d.redact(usageEventRequestIdsResult.error.message ?? "Usage event request-id query failed", "message")
+          : null,
+        items: reservationItems,
+      };
+
       return jsonResponse(
         {
           now: nowIso,
@@ -413,6 +471,7 @@ export function createAdminHandlers(
           db_connectivity: dbConnectivity,
           payu_webhook_events: webhookSummary,
           payu_transactions: transactionSummary,
+          usage_reservation_pressure: usageReservationPressure,
         },
         200,
         rate.headers,

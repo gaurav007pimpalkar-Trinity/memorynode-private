@@ -67,6 +67,15 @@ export interface Env {
   AI_COST_BUDGET_INR?: string;
   /** Optional: USD to INR rate for cost guard (default 83). */
   USD_TO_INR?: string;
+  /** Optional safety multiplier applied to estimated per-request cost (default 1.35). */
+  COST_DRIFT_MULTIPLIER?: string;
+  /**
+   * Optional fail-open override for AI cost guard ("1" enables fail-open on guard telemetry errors).
+   * Production/staging should keep this unset so expensive AI routes fail closed when budget signal is unavailable.
+   */
+  AI_COST_GUARD_FAIL_OPEN?: string;
+  /** Optional cap on active API keys per workspace (default 10). */
+  MAX_ACTIVE_API_KEYS?: string;
   /** Admin auth mode: legacy (x-admin-token only) or signed-required (HMAC signed headers). */
   ADMIN_AUTH_MODE?: string;
   /** Break-glass toggle: when "1", allows legacy x-admin-token auth even in signed-required mode. */

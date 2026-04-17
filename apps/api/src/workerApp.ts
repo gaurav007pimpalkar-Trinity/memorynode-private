@@ -201,8 +201,8 @@ const ENTITLEMENT_DURATION_DAYS: Record<string, number | null> = {
   pro: 30,
 };
 
-/** Effective plan surfaced in API responses (plan_code or "free"). Not internal DB plan (free/pro/team). */
-export type EffectivePlanCode = "launch" | "build" | "deploy" | "scale" | "scale_plus" | "free";
+/** Effective plan surfaced in API responses (plan_code). Not internal DB plan (pro/team). */
+export type EffectivePlanCode = "launch" | "build" | "deploy" | "scale" | "scale_plus";
 
 type ProductEventContext = {
   workspaceId?: string | null;
@@ -266,7 +266,7 @@ async function emitProductEvent(
 
 function effectivePlan(plan: AuthContext["plan"], status?: AuthContext["planStatus"]): AuthContext["plan"] {
   if (status === "active" || status === "trialing") return plan;
-  return "free";
+  return "pro";
 }
 
 function assertPayUEnvFor(path: string, env: Env): void {
@@ -564,7 +564,7 @@ type QuotaResolution = {
   effectivePlan: EffectivePlanCode;
   planStatus: AuthContext["planStatus"];
   blocked: true;
-  errorCode: "ENTITLEMENT_EXPIRED";
+  errorCode: "ENTITLEMENT_EXPIRED" | "ENTITLEMENT_REQUIRED";
   message: string;
   expiredAt: string | null;
 };
@@ -625,14 +625,14 @@ function formatAmountStrict(raw: unknown): string {
   return value.toFixed(2);
 }
 
-/** Returns effective plan code for API responses (launch|build|deploy|scale|scale_plus|free). */
+/** Returns effective plan code for API responses (launch|build|deploy|scale|scale_plus). */
 function authPlanFromEntitlement(planCode: string): EffectivePlanCode {
   const normalized = resolveEntitlementPlanCode(planCode);
   if (normalized === "launch" || normalized === "build" || normalized === "deploy" || normalized === "scale" || normalized === "scale_plus") {
     return normalized;
   }
   if (normalized === "pro") return "build"; // legacy
-  return "free";
+  return "launch";
 }
 
 function normalizeUsageCaps(raw: unknown): UsageSnapshot | null {
@@ -656,10 +656,10 @@ async function resolveQuotaForWorkspace(
   auth: AuthContext,
   supabase: SupabaseClient,
 ): Promise<QuotaResolution> {
-  const fallbackCaps = capsByPlanCode("free");
-  const fallbackPlanLimits = getLimitsForPlanCode("free");
-  const fallbackPlan: EffectivePlanCode = "free";
-  const fallbackStatus = auth.planStatus ?? "free";
+  const fallbackCaps = capsByPlanCode("launch");
+  const fallbackPlanLimits = getLimitsForPlanCode("launch");
+  const fallbackPlan: EffectivePlanCode = "launch";
+  const fallbackStatus = auth.planStatus ?? "past_due";
   const now = Date.now();
   try {
     const query = await supabase
@@ -690,9 +690,11 @@ async function resolveQuotaForWorkspace(
         caps: fallbackCaps,
         planLimits: fallbackPlanLimits,
         effectivePlan: fallbackPlan,
-        planStatus: fallbackStatus,
-        blocked: false,
-        degradedEntitlements: false,
+        planStatus: "past_due",
+        blocked: true,
+        errorCode: "ENTITLEMENT_REQUIRED",
+        message: "No active paid entitlement found. Start a plan to use API endpoints.",
+        expiredAt: null,
       };
     }
 
@@ -725,7 +727,7 @@ async function resolveQuotaForWorkspace(
       return {
         caps: fallbackCaps,
         planLimits: fallbackPlanLimits,
-        effectivePlan: "free",
+        effectivePlan: "launch",
         planStatus: "canceled",
         blocked: true,
         errorCode: "ENTITLEMENT_EXPIRED",
@@ -740,9 +742,11 @@ async function resolveQuotaForWorkspace(
     caps: fallbackCaps,
     planLimits: fallbackPlanLimits,
     effectivePlan: fallbackPlan,
-    planStatus: fallbackStatus,
-    blocked: false,
-    degradedEntitlements: true,
+    planStatus: "past_due",
+    blocked: true,
+    errorCode: "ENTITLEMENT_REQUIRED",
+    message: "Unable to verify active entitlement. Please complete billing before using API endpoints.",
+    expiredAt: null,
   };
 }
 
@@ -1054,8 +1058,8 @@ function capExceededResponse(
   rateHeaders: Record<string, string> | undefined,
   env: Env,
   jsonResponse: (data: unknown, status?: number, extraHeaders?: Record<string, string>) => Response,
-  effectivePlanOverride: EffectivePlanCode = "free",
-  planStatusOverride: AuthContext["planStatus"] = auth.planStatus ?? "free",
+  effectivePlanOverride: EffectivePlanCode = "launch",
+  planStatusOverride: AuthContext["planStatus"] = auth.planStatus ?? "past_due",
   logCtx?: { requestId?: string; route?: string; method?: string },
 ): Response {
   emitEventLog("cap_exceeded", {
@@ -1126,7 +1130,7 @@ async function checkCapsAndMaybeRespond(
           code: quota.errorCode,
           message: quota.message,
           upgrade_required: true,
-          effective_plan: "free",
+          effective_plan: "launch",
           upgrade_url: buildUpgradeUrl(env),
           expired_at: quota.expiredAt,
         },
@@ -1614,8 +1618,8 @@ async function handleRequestImpl(request: Request, env: Env): Promise<Response> 
             workspaceId,
             keyHash: `dashboard:${verified.userId}`,
             apiKeyId: verified.userId,
-            plan: "free",
-            planStatus: "free",
+            plan: "pro",
+            planStatus: "past_due",
           })
           : supabase;
         const { data: member } = await dashboardScoped
@@ -4011,6 +4015,41 @@ function estimateEmbedTokens(textLength: number): number {
   return Math.ceil(Math.max(0, textLength) / 4);
 }
 
+const DEFAULT_USD_TO_INR = 83;
+const EMBED_COST_USD_PER_1K_TOKENS = 0.00002;
+const EXTRACTION_COST_USD_PER_CALL = 0.00015;
+const READ_DB_COST_INR = 0.0005;
+const WRITE_DB_COST_INR = 0.002;
+const DEFAULT_COST_DRIFT_MULTIPLIER = 1.35;
+
+function resolveCostDriftMultiplier(env: Env): number {
+  const parsed = Number(env.COST_DRIFT_MULTIPLIER ?? DEFAULT_COST_DRIFT_MULTIPLIER);
+  if (!Number.isFinite(parsed) || parsed <= 1) return DEFAULT_COST_DRIFT_MULTIPLIER;
+  return Math.min(3, parsed);
+}
+
+function estimateRequestCostInr(
+  deltas: {
+    writesDelta: number;
+    readsDelta: number;
+    embedTokensDelta: number;
+    extractionCallsDelta: number;
+  },
+  env: Env,
+): number {
+  const usdToInr = Number(env.USD_TO_INR) || DEFAULT_USD_TO_INR;
+  const embedCostInr =
+    ((Math.max(0, deltas.embedTokensDelta) / 1000) * EMBED_COST_USD_PER_1K_TOKENS) * usdToInr;
+  const extractionCostInr =
+    Math.max(0, deltas.extractionCallsDelta) * EXTRACTION_COST_USD_PER_CALL * usdToInr;
+  const dbCostInr =
+    Math.max(0, deltas.readsDelta) * READ_DB_COST_INR +
+    Math.max(0, deltas.writesDelta) * WRITE_DB_COST_INR;
+  const raw = embedCostInr + extractionCostInr + dbCostInr;
+  const guarded = raw * resolveCostDriftMultiplier(env);
+  return Number(guarded.toFixed(6));
+}
+
 /** Result of atomic cap check + bump. On success usage was incremented; on exceeded nothing was changed. */
 type BumpWithinCapResult =
   | { ok: true; usage: UsageRow }
@@ -4028,6 +4067,7 @@ async function recordUsageEventIfWithinCap(
     extractionCallsDelta: number;
   },
   planLimits: PlanLimits,
+  env: Env,
   meta?: { route?: string; requestId?: string },
 ): Promise<BumpWithinCapResult> {
   const caps = {
@@ -4039,6 +4079,15 @@ async function recordUsageEventIfWithinCap(
     gen_tokens: Math.max(0, planLimits.included_gen_tokens ?? 0),
     storage_bytes: Math.floor(Math.max(0, planLimits.included_storage_gb ?? 0) * 1_000_000_000),
   };
+  const estimatedCostInr = estimateRequestCostInr(
+    {
+      writesDelta: deltas.writesDelta,
+      readsDelta: deltas.readsDelta,
+      embedTokensDelta: deltas.embedTokensDelta,
+      extractionCallsDelta: deltas.extractionCallsDelta,
+    },
+    env,
+  );
   const idempotencyKey = `${meta?.route ?? "route"}:${meta?.requestId ?? crypto.randomUUID()}:${workspaceId}:${day}:${deltas.writesDelta}:${deltas.readsDelta}:${deltas.embedsDelta}:${deltas.embedTokensDelta}:${deltas.extractionCallsDelta}`;
   const { data, error } = await supabase.rpc("record_usage_event_if_within_cap", {
     p_workspace_id: workspaceId,
@@ -4056,7 +4105,7 @@ async function recordUsageEventIfWithinCap(
     p_gen_input_tokens: 0,
     p_gen_output_tokens: 0,
     p_storage_bytes: 0,
-    p_estimated_cost_inr: 0,
+    p_estimated_cost_inr: estimatedCostInr,
     p_billable: true,
     p_metadata: {},
     p_writes_cap: caps.writes,
@@ -4164,6 +4213,7 @@ async function reserveQuotaAndMaybeRespond(
     day,
     deltas,
     quota.planLimits,
+    env,
     meta,
   );
   if (!result.ok) {
@@ -4299,13 +4349,16 @@ const contextHandlersDefault = createContextHandlers(defaultSearchHandlerDeps, d
 const defaultUsageHandlerDeps: UsageHandlerDeps = {
   jsonResponse: simpleJsonResponse,
   todayUtc,
+  rateLimitWorkspace,
   getUsage,
   resolveQuotaForWorkspace,
 };
 const usageHandlersDefault = createUsageHandlers(defaultUsageHandlerDeps, defaultUsageHandlerDeps);
 
-const defaultDashboardOverviewDeps: HandlerDeps = {
+const defaultDashboardOverviewDeps = {
   jsonResponse: simpleJsonResponse,
+  resolveQuotaForWorkspace,
+  rateLimitWorkspace,
 };
 const dashboardOverviewHandlersDefault = createDashboardOverviewHandlers(
   defaultDashboardOverviewDeps,
@@ -4809,10 +4862,10 @@ async function reconcilePayUWebhook(
           outcome = "ignored_stale";
         } else {
           const planCode = resolveEntitlementPlanCode(txn.plan_code);
-          const effectivePlanCode = payuStatus === "success" ? authPlanFromEntitlement(planCode) : "free";
+          const effectivePlanCode = payuStatus === "success" ? authPlanFromEntitlement(planCode) : "launch";
           const planStatus = payuStatus === "success" ? "active" : planStatusFromPayUStatus(payuStatus);
           const oldStatus = normalizePlanStatus(current?.plan_status);
-          const workspacePlanForDb: AuthContext["plan"] = payuStatus === "success" ? "pro" : "free";
+          const workspacePlanForDb: AuthContext["plan"] = "pro";
           const updatePayload = {
             billing_provider: "payu",
             payu_txn_id: txnId,

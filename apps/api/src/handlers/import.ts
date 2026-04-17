@@ -85,11 +85,12 @@ export function createImportHandlers(
     env: Env,
     supabase: SupabaseClient,
     auditCtx: { workspaceId?: string; apiKeyId?: string },
+    requestId: string,
     deps?: HandlerDeps,
   ) => Promise<Response>;
 } {
   return {
-    async handleImport(request, env, supabase, auditCtx, deps?) {
+    async handleImport(request, env, supabase, auditCtx, requestId = "", deps?) {
       const d = (deps ?? defaultDeps) as ImportHandlerDeps;
       const { jsonResponse } = d;
       const auth = await authenticate(request, env, supabase, auditCtx);
@@ -118,10 +119,10 @@ export function createImportHandlers(
         return jsonResponse(
           {
             error: {
-              code: "ENTITLEMENT_EXPIRED",
-              message: "Active entitlement expired. Renew to continue quota-consuming API calls.",
+              code: quota.errorCode ?? "ENTITLEMENT_REQUIRED",
+              message: quota.message ?? "No active paid entitlement found. Start a plan to continue quota-consuming API calls.",
               upgrade_required: true,
-              effective_plan: "free",
+              effective_plan: "launch",
             },
             upgrade_url: (env as { PUBLIC_APP_URL?: string }).PUBLIC_APP_URL
               ? `${(env as { PUBLIC_APP_URL: string }).PUBLIC_APP_URL}/billing`
@@ -140,7 +141,6 @@ export function createImportHandlers(
         );
       }
       const rateHeaders = { ...rate.headers, ...wsRate.headers };
-      const effectivePlan = (quota.effectivePlan ?? "free").toString().toLowerCase();
       const stage = (env.ENVIRONMENT ?? env.NODE_ENV ?? "dev").toLowerCase();
       const enforceDegradedBlocks = stage === "production" || stage === "prod" || stage === "staging";
       if (enforceDegradedBlocks && quota.degradedEntitlements) {
@@ -155,24 +155,6 @@ export function createImportHandlers(
           rateHeaders,
         );
       }
-      if (effectivePlan === "free") {
-        return jsonResponse(
-          {
-            error: {
-              code: "UPGRADE_REQUIRED",
-              message: "Import is available on paid plans only.",
-              upgrade_required: true,
-              effective_plan: "free",
-            },
-            upgrade_url: (env as { PUBLIC_APP_URL?: string }).PUBLIC_APP_URL
-              ? `${(env as { PUBLIC_APP_URL: string }).PUBLIC_APP_URL}/billing`
-              : undefined,
-          },
-          402,
-          rateHeaders,
-        );
-      }
-
       let reservationIdFromGuard: string | null = null;
       const preInsertGuard = async (deltas: {
         writesDelta: number;
@@ -190,7 +172,7 @@ export function createImportHandlers(
           rateHeaders,
           env,
           jsonResponse,
-          { route: "/v1/import" },
+          { route: "/v1/import", requestId },
         );
         reservationIdFromGuard = reserveResult.reservationId;
         return reserveResult;

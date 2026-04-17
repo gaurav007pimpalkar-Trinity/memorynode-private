@@ -229,7 +229,7 @@ components:
       properties:
         plan:
           type: string
-          example: free
+          example: launch
         writes:
           type: integer
         reads:
@@ -315,8 +315,8 @@ components:
       properties:
         plan:
           type: string
-          description: Legacy internal DB plan label (free/pro) for compatibility. Use effective_plan for display and quotas.
-          example: free
+          description: Legacy internal DB plan label (pro/team) for compatibility. Use effective_plan for display and quotas.
+          example: pro
         plan_status:
           type: string
           example: active
@@ -329,7 +329,7 @@ components:
           example: false
         effective_plan:
           type: string
-          description: "Plan code for display: launch|build|deploy|scale|scale_plus|free."
+          description: "Plan code for display: launch|build|deploy|scale|scale_plus."
           example: build
       required:
         - plan

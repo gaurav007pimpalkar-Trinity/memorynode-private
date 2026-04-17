@@ -18,13 +18,13 @@ export interface AuthContext {
   workspaceId: string;
   keyHash: string;
   apiKeyId?: string;
-  plan: "free" | "pro" | "team";
-  planStatus?: "free" | "trialing" | "active" | "past_due" | "canceled";
+  plan: "pro" | "team";
+  planStatus?: "trialing" | "active" | "past_due" | "canceled";
   /** Set when authenticated via API key; used for new-key rate limit (15 RPM for first 48h). */
   keyCreatedAt?: string | null;
 }
 
-const ALLOWED_PLAN_STATUS = new Set(["free", "trialing", "active", "past_due", "canceled"]);
+const ALLOWED_PLAN_STATUS = new Set(["trialing", "active", "past_due", "canceled"]);
 const ADMIN_SIGNED_TTL_MS = 5 * 60 * 1000;
 const ADMIN_REPLAY_TTL_MS = 10 * 60 * 1000;
 const usedAdminNonces = new Map<string, number>();
@@ -70,7 +70,7 @@ export function normalizePlanStatus(status: unknown): AuthContext["planStatus"] 
       plan_status: redact(status, "plan_status"),
     });
   }
-  return "free";
+  return "past_due";
 }
 
 export function extractApiKey(request: Request): string | null {
@@ -184,8 +184,8 @@ export async function authenticate(
           workspaceId: dashSession.workspaceId,
           keyHash: `dashboard:${dashSession.sessionId}`,
           apiKeyId: undefined,
-          plan: "free",
-          planStatus: "free",
+          plan: "pro",
+          planStatus: "past_due",
         });
         return scoped
           .from("workspaces")
@@ -201,12 +201,12 @@ export async function authenticate(
     });
     const planRaw = (ws as { plan?: string } | null)?.plan;
     const planStatusRaw = normalizePlanStatus((ws as { plan_status?: AuthContext["planStatus"] } | null)?.plan_status);
-    const plan: AuthContext["plan"] = planRaw === "pro" || planRaw === "team" ? planRaw : "free";
+    const plan: AuthContext["plan"] = planRaw === "team" ? "team" : "pro";
     const ctx: AuthContext = {
       workspaceId: dashSession.workspaceId,
       keyHash: `dashboard:${dashSession.sessionId}`,
       plan,
-      planStatus: planStatusRaw ?? "free",
+      planStatus: planStatusRaw ?? "past_due",
     };
     if (shouldBindScopedClient(env)) {
       bindScopedClient(supabase, await createRequestScopedSupabaseClient(env, ctx));
@@ -228,9 +228,9 @@ export async function authenticate(
     const workspaceId = stubKeys.get(rawKey)!.workspaceId;
     const db = (supabase as unknown as { __db?: Record<string, StubRow[]> }).__db;
     const wsRow = db?.workspaces?.find?.((w: StubRow) => w.id === workspaceId);
-    const planRaw = (wsRow?.plan as string) ?? "free";
+    const planRaw = (wsRow?.plan as string) ?? "pro";
     const planStatus = normalizePlanStatus(wsRow?.plan_status ?? "active") ?? "active";
-    return { workspaceId, keyHash: rawKey, plan: planRaw === "team" ? "team" : planRaw === "pro" ? "pro" : "free", planStatus };
+    return { workspaceId, keyHash: rawKey, plan: planRaw === "team" ? "team" : "pro", planStatus };
   }
 
   const saltOutcome = await getApiKeySalt(env, supabase);
@@ -318,7 +318,7 @@ export async function authenticate(
   const workspace = apiKeyRow as { plan?: string; plan_status?: AuthContext["planStatus"] } | null;
   const planRaw = workspace?.plan ?? nestedWorkspace?.plan;
   const planStatusRaw = normalizePlanStatus(workspace?.plan_status ?? nestedWorkspace?.plan_status);
-  const plan: AuthContext["plan"] = planRaw === "pro" || planRaw === "team" ? planRaw : "free";
+  const plan: AuthContext["plan"] = planRaw === "team" ? "team" : "pro";
 
   const createdAt = (apiKeyRow as { key_created_at?: string; created_at?: string } | null)?.key_created_at
     ?? (apiKeyRow as { created_at?: string } | null)?.created_at
@@ -328,7 +328,7 @@ export async function authenticate(
     keyHash: hashed,
     apiKeyId: keyId,
     plan,
-    planStatus: planStatusRaw ?? "free",
+    planStatus: planStatusRaw ?? "past_due",
     keyCreatedAt: createdAt,
   };
   if (shouldBindScopedClient(env)) {

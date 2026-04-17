@@ -142,7 +142,7 @@ export interface QuotaResolutionLike {
   planLimits: PlanLimits;
   blocked: boolean;
   degradedEntitlements?: boolean;
-  /** launch|build|deploy|scale|scale_plus|free — from workspace entitlements when present */
+  /** launch|build|deploy|scale|scale_plus — from workspace entitlements when present */
   effectivePlan?: string;
   errorCode?: string;
   message?: string;
@@ -178,6 +178,19 @@ export const MAX_EXTRACT_ITEMS = 10;
 const MAX_CHUNKS_PER_EXTRACTED_ITEM = 2;
 /** ~200 tokens per embed (align with shared TOKENS_PER_EMBED_ASSUMED). Used for extraction child embed token reserve. */
 const TOKENS_PER_EMBED = 200;
+const EMBED_COST_USD_PER_1K_TOKENS = 0.00002;
+const DEFAULT_USD_TO_INR = 83;
+const DEFAULT_COST_DRIFT_MULTIPLIER = 1.35;
+
+function estimateEmbedTokenCostInr(embedTokens: number, env: Env): number {
+  const usdToInr = Number(env.USD_TO_INR) || DEFAULT_USD_TO_INR;
+  const multiplierRaw = Number(env.COST_DRIFT_MULTIPLIER ?? DEFAULT_COST_DRIFT_MULTIPLIER);
+  const multiplier = Number.isFinite(multiplierRaw) && multiplierRaw > 1
+    ? Math.min(3, multiplierRaw)
+    : DEFAULT_COST_DRIFT_MULTIPLIER;
+  const inr = ((Math.max(0, embedTokens) / 1000) * EMBED_COST_USD_PER_1K_TOKENS) * usdToInr * multiplier;
+  return Number(inr.toFixed(6));
+}
 
 async function extractItems(text: string, env: Env): Promise<ExtractedItem[]> {
   if (!env.OPENAI_API_KEY) {
@@ -355,6 +368,7 @@ export function createMemoryHandlers(
     supabase: SupabaseClient,
     url: URL,
     auditCtx: { workspaceId?: string; apiKeyId?: string },
+    requestId: string,
     deps?: HandlerDeps,
   ) => Promise<Response>;
   handleGetMemory: (
@@ -363,6 +377,7 @@ export function createMemoryHandlers(
     supabase: SupabaseClient,
     memoryId: string,
     auditCtx: { workspaceId?: string; apiKeyId?: string },
+    requestId: string,
     deps?: HandlerDeps,
   ) => Promise<Response>;
   handleDeleteMemory: (
@@ -386,10 +401,10 @@ export function createMemoryHandlers(
         return jsonResponse(
           {
             error: {
-              code: "ENTITLEMENT_EXPIRED",
-              message: "Active entitlement expired. Renew to continue quota-consuming API calls.",
+              code: quota.errorCode ?? "ENTITLEMENT_REQUIRED",
+              message: quota.message ?? "No active paid entitlement found. Start a plan to continue quota-consuming API calls.",
               upgrade_required: true,
-              effective_plan: "free",
+              effective_plan: "launch",
             },
             upgrade_url: (env as { PUBLIC_APP_URL?: string }).PUBLIC_APP_URL
               ? `${(env as { PUBLIC_APP_URL: string }).PUBLIC_APP_URL}/billing`
@@ -561,7 +576,7 @@ export function createMemoryHandlers(
             p_gen_input_tokens: 0,
             p_gen_output_tokens: 0,
             p_storage_bytes: 0,
-            p_estimated_cost_inr: 0,
+            p_estimated_cost_inr: estimateEmbedTokenCostInr(tokenDelta, env),
             p_billable: true,
             p_metadata: {},
             p_writes_cap: quota.planLimits.writes_per_day,
@@ -733,7 +748,7 @@ export function createMemoryHandlers(
       return jsonResponse(response, 200, rateHeaders);
     },
 
-    async handleListMemories(request, env, supabase, url, auditCtx, deps?) {
+    async handleListMemories(request, env, supabase, url, auditCtx, requestId = "", deps?) {
       const d = (deps ?? defaultDeps) as MemoryHandlerDeps;
       const { jsonResponse } = d;
       const auth = await authenticate(request, env, supabase, auditCtx);
@@ -750,10 +765,10 @@ export function createMemoryHandlers(
         return jsonResponse(
           {
             error: {
-              code: "ENTITLEMENT_EXPIRED",
-              message: "Active entitlement expired. Renew to continue quota-consuming API calls.",
+              code: quota.errorCode ?? "ENTITLEMENT_REQUIRED",
+              message: quota.message ?? "No active paid entitlement found. Start a plan to continue quota-consuming API calls.",
               upgrade_required: true,
-              effective_plan: "free",
+              effective_plan: "launch",
             },
             upgrade_url: (env as { PUBLIC_APP_URL?: string }).PUBLIC_APP_URL
               ? `${(env as { PUBLIC_APP_URL: string }).PUBLIC_APP_URL}/billing`
@@ -772,9 +787,43 @@ export function createMemoryHandlers(
         );
       }
       const rateHeaders = { ...rate.headers, ...wsRate.headers };
+      const reserveList = await d.reserveQuotaAndMaybeRespond(
+        quota,
+        supabase,
+        auth.workspaceId,
+        d.todayUtc(),
+        {
+          writesDelta: 0,
+          readsDelta: 1,
+          embedsDelta: 0,
+          embedTokensDelta: 0,
+          extractionCallsDelta: 0,
+        },
+        rateHeaders,
+        env,
+        jsonResponse,
+        { route: "/v1/memories", requestId },
+      );
+      if (reserveList.response) return reserveList.response;
+      const listReservationId = reserveList.reservationId;
 
       const params = d.normalizeMemoryListParams(url);
-      const result = await d.performListMemories(auth, params, supabase);
+      let result: ListOutcome;
+      try {
+        result = await d.performListMemories(auth, params, supabase);
+      } catch (err) {
+        if (listReservationId) {
+          await d.markUsageReservationRefundPending(
+            supabase,
+            listReservationId,
+            err instanceof Error ? err.message : String(err),
+          );
+        }
+        throw err;
+      }
+      if (listReservationId) {
+        await d.markUsageReservationCommitted(supabase, listReservationId);
+      }
 
       return jsonResponse(
         {
@@ -789,10 +838,27 @@ export function createMemoryHandlers(
       );
     },
 
-    async handleGetMemory(request, env, supabase, memoryId, auditCtx, deps?) {
+    async handleGetMemory(request, env, supabase, memoryId, auditCtx, requestId = "", deps?) {
       const d = (deps ?? defaultDeps) as MemoryHandlerDeps;
       const { jsonResponse } = d;
       const auth = await authenticate(request, env, supabase, auditCtx);
+      const quota = await d.resolveQuotaForWorkspace(auth, supabase);
+      if (quota.blocked) {
+        return jsonResponse(
+          {
+            error: {
+              code: quota.errorCode ?? "ENTITLEMENT_REQUIRED",
+              message: quota.message ?? "No active paid entitlement found. Start a plan to continue.",
+              upgrade_required: true,
+              effective_plan: "launch",
+            },
+            upgrade_url: (env as { PUBLIC_APP_URL?: string }).PUBLIC_APP_URL
+              ? `${(env as { PUBLIC_APP_URL: string }).PUBLIC_APP_URL}/billing`
+              : undefined,
+          },
+          402,
+        );
+      }
       const rate = await rateLimit(auth.keyHash, env, auth);
       if (!rate.allowed) {
         return jsonResponse(
@@ -801,19 +867,80 @@ export function createMemoryHandlers(
           rate.headers,
         );
       }
+      const wsRpm = quota.planLimits.workspace_rpm ?? 120;
+      const wsRate = await rateLimitWorkspace(auth.workspaceId, wsRpm, env);
+      if (!wsRate.allowed) {
+        return jsonResponse(
+          { error: { code: "rate_limited", message: "Workspace rate limit exceeded" } },
+          429,
+          { ...rate.headers, ...wsRate.headers },
+        );
+      }
+      const rateHeaders = { ...rate.headers, ...wsRate.headers };
+      const reserveGet = await d.reserveQuotaAndMaybeRespond(
+        quota,
+        supabase,
+        auth.workspaceId,
+        d.todayUtc(),
+        {
+          writesDelta: 0,
+          readsDelta: 1,
+          embedsDelta: 0,
+          embedTokensDelta: 0,
+          extractionCallsDelta: 0,
+        },
+        rateHeaders,
+        env,
+        jsonResponse,
+        { route: "/v1/memories/:id", requestId },
+      );
+      if (reserveGet.response) return reserveGet.response;
+      const getReservationId = reserveGet.reservationId;
 
-      const data = await d.getMemoryByIdScoped(supabase, auth.workspaceId, memoryId);
+      let data: ListOutcome["results"][number] | null;
+      try {
+        data = await d.getMemoryByIdScoped(supabase, auth.workspaceId, memoryId);
+      } catch (err) {
+        if (getReservationId) {
+          await d.markUsageReservationRefundPending(
+            supabase,
+            getReservationId,
+            err instanceof Error ? err.message : String(err),
+          );
+        }
+        throw err;
+      }
+      if (getReservationId) {
+        await d.markUsageReservationCommitted(supabase, getReservationId);
+      }
       if (!data) {
-        return jsonResponse({ error: { code: "NOT_FOUND", message: "Memory not found" } }, 404, rate.headers);
+        return jsonResponse({ error: { code: "NOT_FOUND", message: "Memory not found" } }, 404, rateHeaders);
       }
 
-      return jsonResponse(data, 200, rate.headers);
+      return jsonResponse(data, 200, rateHeaders);
     },
 
     async handleDeleteMemory(request, env, supabase, memoryId, auditCtx, deps?) {
       const d = (deps ?? defaultDeps) as MemoryHandlerDeps;
       const { jsonResponse } = d;
       const auth = await authenticate(request, env, supabase, auditCtx);
+      const quota = await d.resolveQuotaForWorkspace(auth, supabase);
+      if (quota.blocked) {
+        return jsonResponse(
+          {
+            error: {
+              code: quota.errorCode ?? "ENTITLEMENT_REQUIRED",
+              message: quota.message ?? "No active paid entitlement found. Start a plan to continue.",
+              upgrade_required: true,
+              effective_plan: "launch",
+            },
+            upgrade_url: (env as { PUBLIC_APP_URL?: string }).PUBLIC_APP_URL
+              ? `${(env as { PUBLIC_APP_URL: string }).PUBLIC_APP_URL}/billing`
+              : undefined,
+          },
+          402,
+        );
+      }
       const rate = await rateLimit(auth.keyHash, env, auth);
       if (!rate.allowed) {
         return jsonResponse(

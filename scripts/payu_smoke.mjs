@@ -136,7 +136,7 @@ async function verifyBillingStatus(baseUrl, apiKey) {
   const effectivePlan = typeof json?.effective_plan === "string" ? json.effective_plan : null;
   const hasShape = Boolean(plan && planStatus && effectivePlan);
   const active = planStatus === "active" || planStatus === "trialing";
-  const invariantHolds = active ? effectivePlan === plan : effectivePlan === "free";
+  const invariantHolds = active ? effectivePlan === plan : effectivePlan === "launch";
   const ok = hasShape && invariantHolds;
 
   printStep(

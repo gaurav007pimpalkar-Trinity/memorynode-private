@@ -20,7 +20,7 @@ In **production** (and when `ENVIRONMENT=production` or `staging`), the followin
   - `RATE_LIMIT_MODE=off`
 - **Config check:** `pnpm check:config` (and release gate) validates the same for the target stage.
 - **Secrets:** `SUPABASE_SERVICE_ROLE_KEY`, `OPENAI_API_KEY`, `API_KEY_SALT`, `MASTER_ADMIN_TOKEN`, and PayU secrets must be set via Wrangler secrets (never in `[vars]` or repo).
-- **Entitlement failure policy:** production/staging enforces free-plan fallback and blocks paid-only expensive routes during entitlement lookup outages.
+- **Entitlement failure policy:** production/staging enforces Launch-plan fallback and blocks paid-only expensive routes during entitlement lookup outages.
 - **Quota reconciliation:** reservation refunds are asynchronous; use `/admin/usage/reconcile` for manual reconciliation during incident response.
 
 ## Allowed only in development

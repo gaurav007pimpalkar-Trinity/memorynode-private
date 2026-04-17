@@ -123,7 +123,7 @@ export function createSearchHandlers(
               code: quota.errorCode ?? "ENTITLEMENT_EXPIRED",
               message: quota.message ?? "Active entitlement expired. Renew to continue quota-consuming API calls.",
               upgrade_required: true,
-              effective_plan: "free",
+              effective_plan: "launch",
               ...(quota.expiredAt != null && { expired_at: quota.expiredAt }),
             },
             upgrade_url: (env as { PUBLIC_APP_URL?: string }).PUBLIC_APP_URL
@@ -321,6 +321,23 @@ export function createSearchHandlers(
       const { jsonResponse } = d;
       const auth = await authenticate(request, env, supabase, auditCtx);
       requireWorkspaceId(auth.workspaceId);
+      const quota = await d.resolveQuotaForWorkspace(auth, supabase);
+      if (quota.blocked) {
+        return jsonResponse(
+          {
+            error: {
+              code: quota.errorCode ?? "ENTITLEMENT_REQUIRED",
+              message: quota.message ?? "No active paid entitlement found. Start a plan to continue.",
+              upgrade_required: true,
+              effective_plan: "launch",
+            },
+            upgrade_url: (env as { PUBLIC_APP_URL?: string }).PUBLIC_APP_URL
+              ? `${(env as { PUBLIC_APP_URL: string }).PUBLIC_APP_URL}/billing`
+              : undefined,
+          },
+          402,
+        );
+      }
       const rate = await rateLimit(auth.keyHash, env, auth, getRouteRateLimitMax(env, "search", auth.keyCreatedAt));
       if (!rate.allowed) {
         return jsonResponse({ error: { code: "rate_limited", message: "Rate limit exceeded" } }, 429, rate.headers);
@@ -396,7 +413,7 @@ export function createSearchHandlers(
               code: "ENTITLEMENT_EXPIRED",
               message: "Active entitlement expired. Renew to continue quota-consuming API calls.",
               upgrade_required: true,
-              effective_plan: "free",
+              effective_plan: "launch",
             },
             upgrade_url: (env as { PUBLIC_APP_URL?: string }).PUBLIC_APP_URL
               ? `${(env as { PUBLIC_APP_URL: string }).PUBLIC_APP_URL}/billing`

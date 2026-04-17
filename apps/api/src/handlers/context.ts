@@ -180,7 +180,7 @@ export function createContextHandlers(
               code: quota.errorCode ?? "ENTITLEMENT_EXPIRED",
               message: quota.message ?? "Active entitlement expired. Renew to continue quota-consuming API calls.",
               upgrade_required: true,
-              effective_plan: "free",
+              effective_plan: "launch",
               ...(quota.expiredAt != null && { expired_at: quota.expiredAt }),
             },
             upgrade_url: (env as { PUBLIC_APP_URL?: string }).PUBLIC_APP_URL

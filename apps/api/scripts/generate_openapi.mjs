@@ -182,7 +182,7 @@ const ImportResponse = z
 // ── Usage schemas ───────────────────────────────────────────────────────────
 const UsageResponse = z
   .object({
-    plan: z.string().openapi({ example: "free" }),
+    plan: z.string().openapi({ example: "launch" }),
     writes: z.number().int(),
     reads: z.number().int(),
     embeds: z.number().int(),
@@ -207,11 +207,11 @@ const DashboardOverviewResponse = z
 // ── Billing schemas ─────────────────────────────────────────────────────────
 const BillingStatusResponse = z
   .object({
-    plan: z.string().openapi({ example: "free", description: "Legacy internal DB plan label (free/pro) for compatibility. Use effective_plan for display and quotas." }),
+    plan: z.string().openapi({ example: "pro", description: "Legacy internal DB plan label (pro/team) for compatibility. Use effective_plan for display and quotas." }),
     plan_status: z.string().openapi({ example: "active" }),
     current_period_end: z.string().nullable().openapi({ example: null }),
     cancel_at_period_end: z.boolean().openapi({ example: false }),
-    effective_plan: z.string().openapi({ example: "build", description: "Plan code for display: launch|build|deploy|scale|scale_plus|free." }),
+    effective_plan: z.string().openapi({ example: "build", description: "Plan code for display: launch|build|deploy|scale|scale_plus." }),
   })
   .openapi("BillingStatusResponse");
 

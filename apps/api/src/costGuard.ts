@@ -32,6 +32,16 @@ export interface CostGuardEnv {
   AI_COST_BUDGET_INR?: string;
   /** Optional: USD to INR rate for cost estimation (default 83). */
   USD_TO_INR?: string;
+  ENVIRONMENT?: string;
+  NODE_ENV?: string;
+  /** Optional emergency override ("1" => fail-open when guard signal is unavailable). */
+  AI_COST_GUARD_FAIL_OPEN?: string;
+}
+
+function shouldFailClosed(env: CostGuardEnv): boolean {
+  if ((env.AI_COST_GUARD_FAIL_OPEN ?? "").trim() === "1") return false;
+  const stage = (env.ENVIRONMENT ?? env.NODE_ENV ?? "dev").toLowerCase();
+  return stage === "prod" || stage === "production" || stage === "staging";
 }
 
 /**
@@ -125,6 +135,9 @@ export async function checkGlobalCostGuard(
           throw new AIBudgetExceededError("AI_COST_LIMIT_EXCEEDED");
         }
         return;
+      }
+      if (shouldFailClosed(env)) {
+        throw new AIBudgetExceededError("AI_COST_GUARD_UNAVAILABLE");
       }
       return;
     }

@@ -86,14 +86,14 @@ export function getRouteRateLimitMax(
   return base;
 }
 
-/** Resolve caps by plan code (launch/build/deploy/scale/scale_plus or "free" for unentitled). */
+/** Resolve caps by plan code (launch/build/deploy/scale/scale_plus). */
 export function capsByPlanCode(planCode: string | null | undefined): UsageCaps {
   return getUsageCapsForPlanCode(planCode);
 }
 
-/** Deprecated: legacy free/pro/team mapping retained only for internal fixtures/tests; do not use for new code. Not in OpenAPI or public types. */
-export const capsByPlan: Record<"free" | "pro" | "team", UsageCaps> = {
-  free: getUsageCapsForPlanCode("free"),   // Launch: 300, 1000, 250
+/** Deprecated: legacy launch/pro/team mapping retained only for internal fixtures/tests; do not use for new code. Not in OpenAPI or public types. */
+export const capsByPlan: Record<"launch" | "pro" | "team", UsageCaps> = {
+  launch: getUsageCapsForPlanCode("launch"), // Launch: 250, 1000, 500
   pro: getUsageCapsForPlanCode("build"),   // Build: 1000, 3000, 1000
   team: getUsageCapsForPlanCode("deploy"), // Deploy: 5000, 10000, 10000
 };

@@ -121,7 +121,7 @@ curl -X POST "https://api.memorynode.ai/admin/usage/reconcile?limit=200" \
   -H "x-admin-token: $MASTER_ADMIN_TOKEN"
 ```
 
-- Entitlement DB outages use free-plan fallback and block paid-only expensive paths until entitlement reads recover.
+- Entitlement DB outages use Launch-plan fallback and block paid-only expensive paths until entitlement reads recover.
 
 This hits `/healthz`, creates a workspace, creates an API key, and optionally checks usage. If you use a custom production API URL, set `BASE_URL` to it.
 

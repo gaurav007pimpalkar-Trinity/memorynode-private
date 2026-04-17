@@ -157,8 +157,8 @@ export function createBillingHandlers(
       const quota = await d.resolveQuotaForWorkspace(auth, supabase);
       return jsonResponse(
         {
-          plan: row.plan ?? "free",
-          plan_status: d.normalizePlanStatus(row.plan_status) ?? "free",
+          plan: row.plan ?? "pro",
+          plan_status: d.normalizePlanStatus(row.plan_status) ?? "past_due",
           current_period_end: row.current_period_end ?? null,
           cancel_at_period_end: row.cancel_at_period_end ?? false,
           effective_plan: quota.effectivePlan,

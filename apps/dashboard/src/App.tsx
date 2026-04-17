@@ -48,8 +48,8 @@ const SIDEBAR_COMMANDS: Array<{ tab: Tab; label: string; section: string }> = SI
 );
 
 function seatCapForPlan(planCode: string | null | undefined): number {
-  const normalized = (planCode ?? "free").toLowerCase();
-  if (normalized === "launch" || normalized === "build" || normalized === "free" || normalized === "pro" || normalized === "solo") {
+  const normalized = (planCode ?? "launch").toLowerCase();
+  if (normalized === "launch" || normalized === "build" || normalized === "pro" || normalized === "solo") {
     return 1;
   }
   if (normalized === "deploy" || normalized === "scale" || normalized === "team") {
@@ -172,7 +172,7 @@ export function App(): JSX.Element {
   const [celebrationMessage, setCelebrationMessage] = useState<string | null>(null);
   const [navDrawerOpen, setNavDrawerOpen] = useState(false);
   const [onboardingCollapsed, setOnboardingCollapsed] = useState(false);
-  const [planBadge, setPlanBadge] = useState("FREE");
+  const [planBadge, setPlanBadge] = useState("LAUNCH");
   const consoleSearchRef = useRef<HTMLInputElement>(null);
   const [paletteQuery, setPaletteQuery] = useState("");
   const [paletteOpen, setPaletteOpen] = useState(false);
@@ -284,7 +284,7 @@ export function App(): JSX.Element {
     void apiGet<{ effective_plan?: string; plan?: string }>("/v1/billing/status")
       .then((res) => {
         if (cancelled) return;
-        const p = (res.effective_plan ?? res.plan ?? "free").toString();
+        const p = (res.effective_plan ?? res.plan ?? "launch").toString();
         setPlanBadge(p ? p.toUpperCase() : "FREE");
       })
       .catch(() => {
@@ -1938,7 +1938,7 @@ ${Object.entries(res.fields)
       <div className="row-space">
         <div>
           <div className="muted small">Plan</div>
-          <div className="badge">{status?.effective_plan ?? status?.plan ?? "free"}</div>
+          <div className="badge">{status?.effective_plan ?? status?.plan ?? "launch"}</div>
         </div>
         <div>
           <div className="muted small">Status</div>
@@ -2027,7 +2027,7 @@ function MembersView({ workspaceId, currentUserId }: { workspaceId: string; curr
     if (!workspaceId) return;
     try {
       const billing = await apiGet<{ effective_plan?: string; plan?: string }>("/v1/billing/status");
-      const plan = billing.effective_plan ?? billing.plan ?? "free";
+      const plan = billing.effective_plan ?? billing.plan ?? "launch";
       setEffectivePlan(plan);
       setSeatCap(seatCapForPlan(plan));
     } catch {

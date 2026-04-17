@@ -186,7 +186,7 @@ export {
   RATE_LIMIT_RPM_NEW_KEY,
   TOKENS_PER_EMBED_ASSUMED,
   getPlan,
-  getFreeCaps,
+  getDefaultCaps,
   getLimitsForPlanCode,
   embedsCapFromEmbedTokens,
   getUsageCapsForPlanCode,

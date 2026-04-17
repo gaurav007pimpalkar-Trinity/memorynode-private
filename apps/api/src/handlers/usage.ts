@@ -32,6 +32,7 @@ export interface QuotaResolutionLike {
 
 export interface UsageHandlerDeps extends HandlerDeps {
   todayUtc: () => string;
+  rateLimitWorkspace: (workspaceId: string, workspaceRpm: number, env: Env) => Promise<{ allowed: boolean; headers: Record<string, string> }>;
   getUsage: (
     supabase: SupabaseClient,
     workspaceId: string,
@@ -70,10 +71,36 @@ export function createUsageHandlers(
       }
 
       const day = d.todayUtc();
-      const usage = await d.getUsage(supabase, auth.workspaceId, day);
       const quota = await d.resolveQuotaForWorkspace(auth, supabase);
+      if (quota.blocked) {
+        return jsonResponse(
+          {
+            error: {
+              code: "ENTITLEMENT_REQUIRED",
+              message: "No active paid entitlement found. Start a plan to use usage APIs.",
+              upgrade_required: true,
+              effective_plan: "launch",
+            },
+            upgrade_url: (env as { PUBLIC_APP_URL?: string }).PUBLIC_APP_URL
+              ? `${(env as { PUBLIC_APP_URL: string }).PUBLIC_APP_URL}/billing`
+              : undefined,
+          },
+          402,
+          rate.headers,
+        );
+      }
+      const wsRpm = quota.planLimits.workspace_rpm ?? 120;
+      const wsRate = await d.rateLimitWorkspace(auth.workspaceId, wsRpm, env);
+      if (!wsRate.allowed) {
+        return jsonResponse(
+          { error: { code: "rate_limited", message: "Workspace rate limit exceeded" } },
+          429,
+          { ...rate.headers, ...wsRate.headers },
+        );
+      }
+      const rateHeaders = { ...rate.headers, ...wsRate.headers };
+      const usage = await d.getUsage(supabase, auth.workspaceId, day);
       const caps = quota.caps;
-      const effectivePlanValue = quota.blocked ? "free" : quota.effectivePlan;
       return jsonResponse(
         {
           day,
@@ -84,7 +111,7 @@ export function createUsageHandlers(
           embed_tokens: usage.embed_tokens_used ?? 0,
           gen_tokens: (usage.gen_input_tokens_used ?? 0) + (usage.gen_output_tokens_used ?? 0),
           storage_bytes: usage.storage_bytes_used ?? 0,
-          plan: effectivePlanValue,
+          plan: quota.effectivePlan,
           limits: caps,
           limits_v3: {
             included_writes: quota.planLimits.included_writes ?? quota.planLimits.writes_per_day,
@@ -95,7 +122,7 @@ export function createUsageHandlers(
           },
         },
         200,
-        rate.headers,
+        rateHeaders,
       );
     },
   };

@@ -35,6 +35,7 @@ export interface RouterHandlers {
     supabase: SupabaseClient,
     url: URL,
     auditCtx: AuditCtx,
+    requestId: string,
     deps: HandlerDeps,
   ) => Promise<Response>;
   handleGetMemory: (
@@ -43,6 +44,7 @@ export interface RouterHandlers {
     supabase: SupabaseClient,
     memoryId: string,
     auditCtx: AuditCtx,
+    requestId: string,
     deps: HandlerDeps,
   ) => Promise<Response>;
   handleDeleteMemory: (
@@ -184,6 +186,7 @@ export interface RouterHandlers {
     env: Env,
     supabase: SupabaseClient,
     auditCtx: AuditCtx,
+    requestId: string,
     deps: HandlerDeps,
   ) => Promise<Response>;
 }
@@ -218,7 +221,7 @@ export async function route(
   }
 
   if (request.method === "GET" && url.pathname === "/v1/memories") {
-    return handlers.handleListMemories(request, env, supabase, url, auditCtx, handlerDeps);
+    return handlers.handleListMemories(request, env, supabase, url, auditCtx, requestId, handlerDeps);
   }
 
   const memoryIdMatch = url.pathname.match(/^\/v1\/memories\/([^/]+)$/);
@@ -232,7 +235,7 @@ export async function route(
       );
     }
     if (request.method === "GET") {
-      return handlers.handleGetMemory(request, env, supabase, memoryId, auditCtx, handlerDeps);
+      return handlers.handleGetMemory(request, env, supabase, memoryId, auditCtx, requestId, handlerDeps);
     }
     if (request.method === "DELETE") {
       return handlers.handleDeleteMemory(request, env, supabase, memoryId, auditCtx, handlerDeps);
@@ -312,7 +315,7 @@ export async function route(
   }
 
   if (request.method === "POST" && url.pathname === "/v1/import") {
-    return handlers.handleImport(request, env, supabase, auditCtx, handlerDeps);
+    return handlers.handleImport(request, env, supabase, auditCtx, requestId, handlerDeps);
   }
 
   return null;

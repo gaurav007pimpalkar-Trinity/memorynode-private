@@ -79,6 +79,38 @@ export function createApiKeysHandlers(
           rate.headers,
         );
       }
+      const maxActiveKeysRaw = Number(env.MAX_ACTIVE_API_KEYS ?? "10");
+      const maxActiveKeys = Number.isFinite(maxActiveKeysRaw) && maxActiveKeysRaw > 0
+        ? Math.floor(maxActiveKeysRaw)
+        : 10;
+      const activeCountResult = await supabase
+        .from("api_keys")
+        .select("id", { count: "exact", head: true })
+        .eq("workspace_id", body.data.workspace_id)
+        .is("revoked_at", null);
+      if (activeCountResult.error) {
+        return jsonResponse(
+          { error: { code: "DB_ERROR", message: activeCountResult.error.message ?? "Failed to validate api key cap" } },
+          500,
+          rate.headers,
+        );
+      }
+      const activeCount = activeCountResult.count ?? 0;
+      if (activeCount >= maxActiveKeys) {
+        return jsonResponse(
+          {
+            error: {
+              code: "PLAN_LIMIT_EXCEEDED",
+              message: `Active API key limit reached (${maxActiveKeys}) for this workspace`,
+              limit: "active_api_keys",
+              used: activeCount,
+              cap: maxActiveKeys,
+            },
+          },
+          402,
+          rate.headers,
+        );
+      }
 
       const rawKey = d.generateApiKey();
       const saltOutcome = await d.getApiKeySalt(env, supabase);
