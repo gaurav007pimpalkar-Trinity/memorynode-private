@@ -7,6 +7,7 @@ import type { SupabaseClient } from "@supabase/supabase-js";
 import type { Env } from "../env.js";
 import type { HandlerDeps } from "../router.js";
 import { getRouteRateLimitMax } from "../limits.js";
+import { CreateWorkspaceSchema, parseWithSchema } from "../contracts/index.js";
 
 export interface WorkspacesHandlerDeps extends HandlerDeps {
   safeParseJson: <T>(request: Request) => Promise<{ ok: true; data: T } | { ok: false; error: string }>;
@@ -50,9 +51,19 @@ export function createWorkspacesHandlers(
         );
       }
 
-      const body = await d.safeParseJson<{ name: string }>(request);
-      if (!body.ok || !body.data.name) {
-        return jsonResponse({ error: { code: "BAD_REQUEST", message: "name is required" } }, 400, rate.headers);
+      const body = await parseWithSchema(CreateWorkspaceSchema, request);
+      if (!body.ok) {
+        return jsonResponse(
+          {
+            error: {
+              code: "BAD_REQUEST",
+              message: body.error,
+              ...(body.details ? { details: body.details } : {}),
+            },
+          },
+          400,
+          rate.headers,
+        );
       }
 
       const { data, error } = await supabase

@@ -143,6 +143,20 @@ components:
           example:
             project: alpha
             priority: 1
+        memory_type:
+          type: string
+          enum: &a1
+            - fact
+            - preference
+            - event
+            - note
+            - task
+          description: "Optional memory type tag: fact, preference, event, note, or task."
+        importance:
+          type: number
+          minimum: 0.01
+          maximum: 100
+          description: Optional ranking multiplier. Higher values increase retrieval likelihood.
         chunk_profile:
           type: string
           enum:
@@ -171,15 +185,25 @@ components:
           type: string
         score:
           type: number
-        metadata:
+        _explain:
           type: object
-          additionalProperties:
-            anyOf:
-              - type: string
-              - type: number
-              - type: boolean
-              - nullable: true
-              - nullable: true
+          properties:
+            rrf_score:
+              type: number
+            match_sources:
+              type: array
+              items:
+                type: string
+                enum:
+                  - vector
+                  - text
+            vector_score:
+              type: number
+            text_score:
+              type: number
+          required:
+            - rrf_score
+            - match_sources
       required:
         - chunk_id
         - memory_id
@@ -195,10 +219,16 @@ components:
             $ref: "#/components/schemas/SearchResultItem"
         page:
           type: integer
+        page_size:
+          type: integer
         total:
           type: integer
         has_more:
           type: boolean
+        retrieval_trace:
+          type: object
+          additionalProperties:
+            nullable: true
       required:
         - results
         - page
@@ -251,6 +281,40 @@ components:
             end_time:
               type: string
               example: 2025-12-31T23:59:59Z
+            memory_type:
+              anyOf:
+                - type: string
+                  enum: *a1
+                - type: array
+                  items:
+                    type: string
+                    enum: *a1
+                  minItems: 1
+              description: Single memory type or array (OR semantics).
+            filter_mode:
+              type: string
+              enum:
+                - and
+                - or
+              description: Metadata match mode (default and).
+        explain:
+          type: boolean
+        search_mode:
+          type: string
+          enum:
+            - hybrid
+            - vector
+            - keyword
+        min_score:
+          type: number
+          minimum: 0
+          maximum: 1
+        retrieval_profile:
+          type: string
+          enum:
+            - balanced
+            - recall
+            - precision
       required:
         - user_id
         - query
@@ -279,15 +343,133 @@ components:
               - chunk_index
         page:
           type: integer
+        page_size:
+          type: integer
         total:
           type: integer
         has_more:
           type: boolean
+        context_blocks:
+          type: integer
       required:
         - context_text
         - citations
         - page
         - total
+        - has_more
+    ContextExplainResponse:
+      type: object
+      properties:
+        query:
+          type: object
+          properties:
+            user_id:
+              type: string
+            namespace:
+              type: string
+              nullable: true
+            query:
+              type: string
+            top_k:
+              type: number
+              nullable: true
+            search_mode:
+              type: string
+              enum:
+                - hybrid
+                - vector
+                - keyword
+            min_score:
+              type: number
+              nullable: true
+            retrieval_profile:
+              type: string
+              nullable: true
+              enum:
+                - balanced
+                - recall
+                - precision
+          required:
+            - user_id
+            - namespace
+            - query
+            - top_k
+            - search_mode
+            - min_score
+            - retrieval_profile
+        memories_retrieved:
+          type: array
+          items:
+            type: object
+            properties:
+              memory_id:
+                type: string
+              text:
+                type: string
+            required:
+              - memory_id
+              - text
+        chunk_ids_used:
+          type: array
+          items:
+            type: string
+        results:
+          type: array
+          items:
+            type: object
+            properties:
+              rank:
+                type: integer
+              memory_id:
+                type: string
+              chunk_id:
+                type: string
+              chunk_index:
+                type: integer
+              text:
+                type: string
+              scores:
+                type: object
+                properties:
+                  relevance_score:
+                    type: number
+                  recency_score:
+                    type: number
+                  importance_score:
+                    type: number
+                  final_score:
+                    type: number
+                required:
+                  - relevance_score
+                  - recency_score
+                  - importance_score
+                  - final_score
+              ordering_explanation:
+                type: string
+            required:
+              - rank
+              - memory_id
+              - chunk_id
+              - chunk_index
+              - text
+              - scores
+              - ordering_explanation
+        total:
+          type: integer
+        page:
+          type: integer
+        page_size:
+          type: integer
+        has_more:
+          type: boolean
+      required:
+        - query
+        - memories_retrieved
+        - chunk_ids_used
+        - results
+        - total
+        - page
+        - page_size
         - has_more
     UsageCapAlert:
       type: object
@@ -546,20 +728,22 @@ components:
           type: string
           minLength: 1
           example: ws_abc123
-        label:
+        name:
           type: string
+          minLength: 1
           example: production
       required:
         - workspace_id
+        - name
     RevokeApiKeyPayload:
       type: object
       properties:
-        key_id:
+        api_key_id:
           type: string
           minLength: 1
           example: key_abc123
       required:
-        - key_id
+        - api_key_id
   parameters: {}
 paths:
   /healthz:
@@ -871,6 +1055,96 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/ContextResponse"
+        "400":
+          description: Validation error
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "401":
+          description: Unauthorized
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+  /v1/context/explain:
+    get:
+      summary: Explain retrieval and ranking for a context query
+      tags:
+        - Retrieval
+      security:
+        - BearerAuth: []
+      parameters:
+        - schema:
+            type: string
+            minLength: 1
+          required: true
+          name: user_id
+          in: query
+        - schema:
+            type: string
+            minLength: 1
+          required: true
+          name: query
+          in: query
+        - schema:
+            type: string
+          required: false
+          name: namespace
+          in: query
+        - schema:
+            type: integer
+            minimum: 1
+            maximum: 20
+          required: false
+          name: top_k
+          in: query
+        - schema:
+            type: integer
+            minimum: 1
+          required: false
+          name: page
+          in: query
+        - schema:
+            type: integer
+            minimum: 1
+            maximum: 50
+          required: false
+          name: page_size
+          in: query
+        - schema:
+            type: string
+            enum:
+              - hybrid
+              - vector
+              - keyword
+          required: false
+          name: search_mode
+          in: query
+        - schema:
+            type: number
+            nullable: true
+            minimum: 0
+            maximum: 1
+          required: false
+          name: min_score
+          in: query
+        - schema:
+            type: string
+            enum:
+              - balanced
+              - recall
+              - precision
+          required: false
+          name: retrieval_profile
+          in: query
+      responses:
+        "200":
+          description: Retrieval/ranking explanation payload
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ContextExplainResponse"
         "400":
           description: Validation error
           content:

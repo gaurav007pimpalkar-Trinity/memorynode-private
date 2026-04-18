@@ -1,6 +1,6 @@
 # MemoryNode.ai
 
-**Drop-in memory brain for your AI** — give your product reliable long-term memory: save what each user said, find it later, drop it straight into a prompt.
+**MemoryNode lets you store, retrieve, and explain why AI remembered something.**
 
 ---
 
@@ -50,6 +50,14 @@ curl -X POST "https://api.memorynode.ai/v1/memories" \
 curl -X POST "https://api.memorynode.ai/v1/search" \
   -H "Authorization: Bearer $API_KEY" -H "Content-Type: application/json" \
   -d '{"user_id":"user-1","query":"theme preference","top_k":5}'
+curl -X POST "https://api.memorynode.ai/v1/context" \
+  -H "Authorization: Bearer $API_KEY" -H "Content-Type: application/json" \
+  -d '{"user_id":"user-1","query":"What do we know about theme preferences?"}'
+curl -G "https://api.memorynode.ai/v1/context/explain" \
+  -H "Authorization: Bearer $API_KEY" \
+  --data-urlencode "user_id=user-1" \
+  --data-urlencode "query=What do we know about theme preferences?" \
+  --data-urlencode "top_k=5"
 ```
 
 **Step-by-step (about 10 minutes):** [docs/start-here/README.md](docs/start-here/README.md)

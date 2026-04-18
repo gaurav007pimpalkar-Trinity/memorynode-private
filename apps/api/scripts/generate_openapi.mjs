@@ -65,6 +65,7 @@ const ErrorResponse = z
 
 // ── Memory schemas ──────────────────────────────────────────────────────────
 const metadataValue = z.union([z.string(), z.number(), z.boolean(), z.null()]);
+const memoryTypeEnum = z.enum(["fact", "preference", "event", "note", "task"]);
 
 const MemoryInsertSchema = z
   .object({
@@ -79,6 +80,19 @@ const MemoryInsertSchema = z
       .record(z.string(), metadataValue)
       .optional()
       .openapi({ example: { project: "alpha", priority: 1 } }),
+    memory_type: memoryTypeEnum
+      .optional()
+      .openapi({
+        description: "Optional memory type tag: fact, preference, event, note, or task.",
+      }),
+    importance: z
+      .number()
+      .min(0.01)
+      .max(100)
+      .optional()
+      .openapi({
+        description: "Optional ranking multiplier. Higher values increase retrieval likelihood.",
+      }),
     chunk_profile: z
       .enum(["balanced", "dense", "document"])
       .optional()
@@ -155,6 +169,14 @@ const filtersSchema = z
     metadata: z.record(z.string(), metadataValue).optional(),
     start_time: z.string().optional().openapi({ example: "2025-01-01T00:00:00Z" }),
     end_time: z.string().optional().openapi({ example: "2025-12-31T23:59:59Z" }),
+    memory_type: z
+      .union([memoryTypeEnum, z.array(memoryTypeEnum).min(1)])
+      .optional()
+      .openapi({ description: "Single memory type or array (OR semantics)." }),
+    filter_mode: z
+      .enum(["and", "or"])
+      .optional()
+      .openapi({ description: "Metadata match mode (default and)." }),
   })
   .optional();
 
@@ -171,6 +193,10 @@ const SearchPayloadSchema = z
     page: z.number().int().min(1).optional().openapi({ example: 1 }),
     page_size: z.number().int().min(1).max(50).optional().openapi({ example: 10 }),
     filters: filtersSchema,
+    explain: z.boolean().optional(),
+    search_mode: z.enum(["hybrid", "vector", "keyword"]).optional(),
+    min_score: z.number().min(0).max(1).optional(),
+    retrieval_profile: z.enum(["balanced", "recall", "precision"]).optional(),
   })
   .openapi("SearchPayload");
 
@@ -181,7 +207,14 @@ const SearchResultItem = z
     chunk_index: z.number().int(),
     text: z.string(),
     score: z.number(),
-    metadata: z.record(z.string(), metadataValue).optional(),
+    _explain: z
+      .object({
+        rrf_score: z.number(),
+        match_sources: z.array(z.enum(["vector", "text"])),
+        vector_score: z.number().optional(),
+        text_score: z.number().optional(),
+      })
+      .optional(),
   })
   .openapi("SearchResultItem");
 
@@ -189,8 +222,10 @@ const SearchResponse = z
   .object({
     results: z.array(SearchResultItem),
     page: z.number().int(),
+    page_size: z.number().int().optional(),
     total: z.number().int(),
     has_more: z.boolean(),
+    retrieval_trace: z.record(z.string(), z.unknown()).optional(),
   })
   .openapi("SearchResponse");
 
@@ -206,10 +241,53 @@ const ContextResponse = z
       }),
     ),
     page: z.number().int(),
+    page_size: z.number().int().optional(),
     total: z.number().int(),
     has_more: z.boolean(),
+    context_blocks: z.number().int().optional(),
   })
   .openapi("ContextResponse");
+
+const ContextExplainResponse = z
+  .object({
+    query: z.object({
+      user_id: z.string(),
+      namespace: z.string().nullable(),
+      query: z.string(),
+      top_k: z.number().nullable(),
+      search_mode: z.enum(["hybrid", "vector", "keyword"]),
+      min_score: z.number().nullable(),
+      retrieval_profile: z.enum(["balanced", "recall", "precision"]).nullable(),
+    }),
+    memories_retrieved: z.array(
+      z.object({
+        memory_id: z.string(),
+        text: z.string(),
+      }),
+    ),
+    chunk_ids_used: z.array(z.string()),
+    results: z.array(
+      z.object({
+        rank: z.number().int(),
+        memory_id: z.string(),
+        chunk_id: z.string(),
+        chunk_index: z.number().int(),
+        text: z.string(),
+        scores: z.object({
+          relevance_score: z.number(),
+          recency_score: z.number(),
+          importance_score: z.number(),
+          final_score: z.number(),
+        }),
+        ordering_explanation: z.string(),
+      }),
+    ),
+    total: z.number().int(),
+    page: z.number().int(),
+    page_size: z.number().int(),
+    has_more: z.boolean(),
+  })
+  .openapi("ContextExplainResponse");
 
 // ── Import schemas ──────────────────────────────────────────────────────────
 const ImportModeSchema = z
@@ -353,13 +431,13 @@ const CreateWorkspacePayload = z
 const CreateApiKeyPayload = z
   .object({
     workspace_id: z.string().min(1).openapi({ example: "ws_abc123" }),
-    label: z.string().optional().openapi({ example: "production" }),
+    name: z.string().min(1).openapi({ example: "production" }),
   })
   .openapi("CreateApiKeyPayload");
 
 const RevokeApiKeyPayload = z
   .object({
-    key_id: z.string().min(1).openapi({ example: "key_abc123" }),
+    api_key_id: z.string().min(1).openapi({ example: "key_abc123" }),
   })
   .openapi("RevokeApiKeyPayload");
 
@@ -591,6 +669,35 @@ registry.registerPath({
     200: {
       description: "Context text and citations",
       content: { "application/json": { schema: ContextResponse } },
+    },
+    400: errorRef("Validation error"),
+    401: errorRef("Unauthorized"),
+  },
+});
+
+registry.registerPath({
+  method: "get",
+  path: "/v1/context/explain",
+  summary: "Explain retrieval and ranking for a context query",
+  tags: ["Retrieval"],
+  security: [{ [bearerAuth.name]: [] }],
+  request: {
+    query: z.object({
+      user_id: z.string().min(1),
+      query: z.string().min(1),
+      namespace: z.string().optional(),
+      top_k: z.coerce.number().int().min(1).max(MAX_TOPK).optional(),
+      page: z.coerce.number().int().min(1).optional(),
+      page_size: z.coerce.number().int().min(1).max(50).optional(),
+      search_mode: z.enum(["hybrid", "vector", "keyword"]).optional(),
+      min_score: z.coerce.number().min(0).max(1).optional(),
+      retrieval_profile: z.enum(["balanced", "recall", "precision"]).optional(),
+    }),
+  },
+  responses: {
+    200: {
+      description: "Retrieval/ranking explanation payload",
+      content: { "application/json": { schema: ContextExplainResponse } },
     },
     400: errorRef("Validation error"),
     401: errorRef("Unauthorized"),

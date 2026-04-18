@@ -4,7 +4,7 @@ This file is the **canonical product narrative** for MemoryNode. Other READMEs a
 
 ## One-line promise
 
-**The self-improving memory layer for customer-facing AI** — MemoryNode decides what to surface (scoring, types, decay), shows why retrieval picked each path, and learns from usage so answers get better without you running a RAG lab. Ship without operating your own vector stack.
+**MemoryNode lets you store, retrieve, and explain why AI remembered something.** MemoryNode decides what to surface (scoring, types, decay), shows why retrieval picked each path, and retrieval improves using recency and usage signals without you running a RAG lab. Ship without operating your own vector stack.
 
 ## Who it is for (ICP)
 
@@ -23,8 +23,8 @@ Secondary:
 
 - A **hosted API** plus **console** for workspaces, API keys, usage, and billing.
 - **Long-lived memories** you define (text and optional metadata), chunked and embedded server-side, retrieved with **hybrid search** and **prompt-ready context** (`POST /v1/context`).
-- **Memory intelligence (directional):** types (e.g. fact, preference), dedupe hooks, recency-aware ranking, and room to grow on importance, pruning, and feedback-driven tuning — not “dumb storage with a vector bolt-on.”
-- **Visibility (directional):** search explainability, query history, and replay so teams can see **which chunks scored how** and stop guessing when context is wrong.
+- **Deterministic ranking system:** types (e.g. fact, preference), dedupe hooks, recency-aware ranking, and importance/retrieval signals — not “dumb storage with a vector bolt-on.”
+- **Core debugging visibility:** explainability (`GET /v1/context/explain`), query history, and replay so teams can see **which chunks scored how** and stop guessing when context is wrong.
 - **Tenant boundary:** everything hangs off a **workspace** (your API key). Inside it, you partition by **`user_id`** and optional **`namespace`** strings **you** choose.
 
 ## Explicit non-goals

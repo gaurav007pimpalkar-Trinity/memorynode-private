@@ -2,6 +2,7 @@ import type {
   AddMemoryRequest,
   AddMemoryResponse,
   ApiError,
+  ContextExplainResponse,
   ContextResponse,
   ContextFeedbackRequest,
   ContextFeedbackResponse,
@@ -71,6 +72,8 @@ export interface SearchOptions {
   searchMode?: SearchMode;
   /** Minimum relevance score (0–1). Results below are dropped. */
   minScore?: number;
+  /** Include ranking explain payload in each search result. */
+  explain?: boolean;
   retrievalProfile?: RetrievalProfile;
 }
 
@@ -110,6 +113,18 @@ export interface RunEvalSetOptions {
 }
 
 export interface ContextFeedbackOptions extends ContextFeedbackRequest {}
+
+export interface ContextExplainOptions {
+  userId: string;
+  query: string;
+  namespace?: string;
+  topK?: number;
+  page?: number;
+  pageSize?: number;
+  searchMode?: SearchMode;
+  minScore?: number;
+  retrievalProfile?: RetrievalProfile;
+}
 
 const DEFAULT_BASE_URL = "http://127.0.0.1:8787";
 
@@ -328,6 +343,21 @@ export class MemoryNodeClient {
     });
   }
 
+  async contextExplain(input: ContextExplainOptions): Promise<ContextExplainResponse> {
+    const q = new URLSearchParams({
+      user_id: input.userId,
+      query: input.query,
+    });
+    if (input.namespace) q.set("namespace", input.namespace);
+    if (input.topK !== undefined) q.set("top_k", String(input.topK));
+    if (input.page !== undefined) q.set("page", String(input.page));
+    if (input.pageSize !== undefined) q.set("page_size", String(input.pageSize));
+    if (input.searchMode) q.set("search_mode", input.searchMode);
+    if (input.minScore !== undefined) q.set("min_score", String(input.minScore));
+    if (input.retrievalProfile) q.set("retrieval_profile", input.retrievalProfile);
+    return this.request<ContextExplainResponse>(`/v1/context/explain?${q.toString()}`, { method: "GET" });
+  }
+
   async listMemories(options: ListMemoriesOptions = {}): Promise<ListMemoriesResponse> {
     const url = new URL("/v1/memories", this.baseUrl);
     const page = options.page ?? 1;
@@ -455,6 +485,7 @@ export class MemoryNodeClient {
       top_k: input.topK,
       page: input.page,
       page_size: input.pageSize,
+      explain: input.explain,
       search_mode: input.searchMode,
       min_score: input.minScore,
       retrieval_profile: input.retrievalProfile,

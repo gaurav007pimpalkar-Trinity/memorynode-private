@@ -1,6 +1,6 @@
 # Start here (about 10 minutes)
 
-**MemoryNode gives your AI long-term memory in three API calls:** `POST /v1/memories` → `POST /v1/search` → `POST /v1/context`.
+**MemoryNode lets you store, retrieve, and explain why AI remembered something.**
 
 MemoryNode is a **hosted API** that remembers your users: you **save** what they told you, **search** it later, and ask for **ready-to-paste context** for your AI. You need a browser (to copy your API key) and any way to send HTTPS requests — nothing to install on your computer for this path.
 
@@ -70,9 +70,9 @@ Your AI answers:
 
 That answer did not come from thin air — it came from **memory you stored earlier** when they told you how they like to work. That is the “aha”: your product stops sounding forgetful and starts sounding like it **knows** people.
 
-## Smart memory (automatic)
+## How ranking works (simple and explicit)
 
-MemoryNode quietly learns from the sentences you save, so later questions can pull the right details back — **you do not turn knobs or tune models for that**.
+MemoryNode retrieval improves using recency and usage signals, plus relevance from search matching. It is deterministic signal-based ranking, not hidden ML/autonomous learning.
 
 **Example:** you save one note:
 
@@ -84,11 +84,37 @@ POST /v1/memories
 }
 ```
 
-Later, when you ask about this user (search or context), answers can reflect **their preferences and where they are** — automatically — without you hand-building a database of fields.
+Later, when you ask about this user (search or context), answers can reflect **their preferences and where they are** without you hand-building a database of fields.
 
 You can turn that off for a single write with `"extract": false` if you ever want only the exact text you sent.
 
 If operational limits are ever hit, MemoryNode **still stores your note** and may skip optional smart processing until things catch up — your data is not silently dropped.
+
+## Step 4 (Aha): See exactly why this was chosen
+
+`GET /v1/context/explain` — use this in normal development, not only advanced debugging.
+
+```bash
+curl -sS -G "https://api.memorynode.ai/v1/context/explain" \
+  -H "Authorization: Bearer YOUR_API_KEY" \
+  --data-urlencode "user_id=user-123" \
+  --data-urlencode "namespace=myapp" \
+  --data-urlencode "query=What do we know about theme preferences?" \
+  --data-urlencode "top_k=5"
+```
+
+This returns:
+
+- `chunk_ids_used`
+- per-result ranking scores (`relevance_score`, `recency_score`, `importance_score`, `final_score`)
+- `ordering_explanation`
+
+Example interpretation:
+
+- higher `relevance_score` -> semantically matched query
+- higher `recency_score` -> recently accessed memory
+- higher `importance_score` -> manually or implicitly boosted memory
+- `final_score` determines ranking order
 
 ## Example: memory that remembers
 
@@ -103,6 +129,10 @@ If operational limits are ever hit, MemoryNode **still stores your note** and ma
 **Step 3 — Give your model the recap**
 
 `POST /v1/context` with the same `user_id` / `namespace` and a natural-language question. Put the returned `context_text` in your prompt so the model answers with **what you stored earlier** in mind.
+
+**Step 4 — Inspect ranking behavior**
+
+`GET /v1/context/explain` with the same query so you can verify exactly why each memory was ranked.
 
 ## Defaults you can ignore at first
 

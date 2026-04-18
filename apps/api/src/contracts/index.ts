@@ -36,3 +36,11 @@ export {
   type EvalRunPayload,
 } from "./evals.js";
 export { ExplainAnswerSchema, type ExplainAnswerPayload } from "./explain.js";
+export {
+  CreateWorkspaceSchema,
+  CreateApiKeySchema,
+  RevokeApiKeySchema,
+  type CreateWorkspacePayload,
+  type CreateApiKeyPayload,
+  type RevokeApiKeyPayload,
+} from "./admin.js";

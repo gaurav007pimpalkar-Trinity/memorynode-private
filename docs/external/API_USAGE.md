@@ -25,7 +25,7 @@ Body:
 | text | Yes | The memory content. |
 | namespace | No | Scope (e.g. app or environment). Use the same when you search. |
 | metadata | No | Optional key-value pairs. |
-| memory_type | No | Optional tag: `fact`, `preference`, `event`, or `note`. |
+| memory_type | No | Optional tag: `fact`, `preference`, `event`, `note`, or `task`. |
 | extract | No | Defaults to **`true`**. When allowed by plan/budget, runs lightweight LLM extraction to child memories. Set **`false`** to store only the parent memory. |
 
 Example: `{"user_id":"user-123","namespace":"myapp","text":"User loves coffee"}`
@@ -38,7 +38,7 @@ Response: always includes **`"stored": true`** on HTTP 200 (your row was saved).
 
 ## List and delete memories
 
-- **GET /v1/memories** — List memories. Query params: `page`, `page_size`, `user_id`, `namespace`, `memory_type` (fact | preference | event | note), and optional filters (`metadata`, `start_time`, `end_time`).
+- **GET /v1/memories** — List memories. Query params: `page`, `page_size`, `user_id`, `namespace`, `memory_type` (fact | preference | event | note | task), and optional filters (`metadata`, `start_time`, `end_time`).
 - **GET /v1/memories/:id** — Fetch one memory.
 - **DELETE /v1/memories/:id** — Delete a memory.
 
@@ -56,7 +56,7 @@ Optional fields:
 |-------|-------------|
 | search_mode | `hybrid` (default), `vector`, or `keyword`. `keyword` avoids embedding usage. |
 | min_score | Minimum relevance score 0–1; results below are dropped. |
-| filters.memory_type | Single value or array: `fact`, `preference`, `event`, `note` (OR semantics). |
+| filters.memory_type | Single value or array: `fact`, `preference`, `event`, `note`, `task` (OR semantics). |
 | filters.filter_mode | For metadata: `and` (default) or `or`. |
 
 Response: List of matching memories (and optional scores). You can send `"explain": true` to get a short explanation of why each result matched.
@@ -68,6 +68,23 @@ Response: List of matching memories (and optional scores). You can send `"explai
 **POST /v1/context**
 
 Same body as search (including optional `search_mode`, `min_score`, and `filters.memory_type` / `filters.filter_mode`). Response includes `context_text` (formatted text of relevant memories), `citations`, and optionally `context_blocks` (count after merging adjacent chunks). Use this to build your AI prompt.
+
+---
+
+## Context explain (debug retrieval)
+
+**GET /v1/context/explain**
+
+Query params: `user_id`, `query`, and optional `namespace`, `top_k`, `page`, `page_size`, `search_mode`, `min_score`, `retrieval_profile`.
+
+Response includes:
+
+- `memories_retrieved`
+- `chunk_ids_used`
+- per-result `scores` with `relevance_score`, `recency_score`, `importance_score`, `final_score`
+- `ordering_explanation`
+
+Use this endpoint to understand why memory was ranked and returned.
 
 ---
 
@@ -108,4 +125,8 @@ Responses use: `{"error": {"code": "...", "message": "..."}, "request_id": "..."
 
 ## SDK
 
-The TypeScript SDK exposes the same operations: `addMemory`, `search`, `context`, `listMemories`, `getMemory`, `deleteMemory`, `importMemories`, `getUsageToday`. Use your API key when you create the client. It supports `memory_type` and `extract` on add; `search_mode`, `min_score`, and filter `memory_type` / `filter_mode` on search and context; `memoryType` query param on list. See [docs/build/sdk-usage.md](../build/sdk-usage.md).
+The TypeScript SDK exposes the same operations: `addMemory`, `search`, `context`, `contextExplain`, `listMemories`, `getMemory`, `deleteMemory`, `importMemories`, `getUsageToday`. Use your API key when you create the client. It supports `memory_type` and `extract` on add; `search_mode`, `min_score`, and filter `memory_type` / `filter_mode` on search and context; `memoryType` query param on list.
+
+Recommended default flow in app code: `search` -> `context` -> `contextExplain` so developers can verify retrieval reasoning early.
+
+See [docs/build/sdk-usage.md](../build/sdk-usage.md).

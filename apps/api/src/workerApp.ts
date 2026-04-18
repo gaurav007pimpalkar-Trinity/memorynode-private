@@ -53,6 +53,7 @@ import {
   type SearchHandlerDeps,
 } from "./handlers/search.js";
 import { createContextHandlers } from "./handlers/context.js";
+import { createContextExplainHandlers } from "./handlers/contextExplain.js";
 import { createUsageHandlers, type UsageHandlerDeps } from "./handlers/usage.js";
 import { createAuditLogHandlers, type AuditLogHandlerDeps } from "./handlers/auditLog.js";
 import { createDashboardOverviewHandlers } from "./handlers/dashboardOverview.js";
@@ -462,6 +463,7 @@ const KNOWN_PATH_ALLOWED_METHODS: Array<{ test: (path: string) => boolean; allow
   { test: (p) => /^\/v1\/evals\/items\/[^/]+$/.test(p), allow: "DELETE" },
   { test: (p) => p === "/v1/evals/run", allow: "POST" },
   { test: (p) => p === "/v1/context", allow: "POST" },
+  { test: (p) => p === "/v1/context/explain", allow: "GET" },
   { test: (p) => p === "/v1/context/feedback", allow: "POST" },
   { test: (p) => p === "/v1/pruning/metrics", allow: "GET" },
   { test: (p) => p === "/v1/explain/answer", allow: "POST" },
@@ -962,6 +964,7 @@ async function handleRequestImpl(request: Request, env: Env): Promise<Response> 
       const memoryHandlers = createMemoryHandlers(handlerDeps, defaultMemoryHandlerDeps);
       const searchHandlers = createSearchHandlers(handlerDeps, defaultSearchHandlerDeps);
       const contextHandlers = createContextHandlers(handlerDeps, defaultSearchHandlerDeps);
+      const contextExplainHandlers = createContextExplainHandlers(handlerDeps, defaultSearchHandlerDeps);
       const usageHandlers = createUsageHandlers(handlerDeps, defaultUsageHandlerDeps);
       const auditLogHandlers = createAuditLogHandlers(handlerDeps, defaultAuditLogHandlerDeps);
       const dashboardOverviewHandlers = createDashboardOverviewHandlers(handlerDeps, defaultDashboardOverviewDeps);
@@ -990,6 +993,7 @@ async function handleRequestImpl(request: Request, env: Env): Promise<Response> 
           ...memoryHandlers,
           ...searchHandlers,
           ...contextHandlers,
+          ...contextExplainHandlers,
           ...usageHandlers,
           ...auditLogHandlers,
           ...dashboardOverviewHandlers,
@@ -1086,7 +1090,8 @@ function classifyRouteGroup(pathname: string): string {
   if (pathname === "/v1/search" || pathname === "/v1/search/history" || pathname === "/v1/search/replay")
     return "search";
   if (pathname.startsWith("/v1/evals/")) return "evals";
-  if (pathname === "/v1/context" || pathname === "/v1/context/feedback") return "context";
+  if (pathname === "/v1/context" || pathname === "/v1/context/explain" || pathname === "/v1/context/feedback")
+    return "context";
   if (pathname === "/v1/pruning/metrics") return "pruning";
   if (pathname === "/v1/explain/answer") return "explain";
   if (pathname === "/v1/usage/today" || pathname === "/v1/audit/log") return "usage";
@@ -3675,6 +3680,7 @@ const defaultSearchHandlerDeps: SearchHandlerDeps = {
 
 const searchHandlersDefault = createSearchHandlers(defaultSearchHandlerDeps, defaultSearchHandlerDeps);
 const contextHandlersDefault = createContextHandlers(defaultSearchHandlerDeps, defaultSearchHandlerDeps);
+const contextExplainHandlersDefault = createContextExplainHandlers(defaultSearchHandlerDeps, defaultSearchHandlerDeps);
 const defaultEvalHandlerDeps: EvalHandlerDeps = {
   jsonResponse: simpleJsonResponse,
   resolveQuotaForWorkspace,
@@ -3842,6 +3848,7 @@ export const handleListEvalItems = evalHandlersDefault.handleListEvalItems;
 export const handleDeleteEvalItem = evalHandlersDefault.handleDeleteEvalItem;
 export const handleRunEvalSet = evalHandlersDefault.handleRunEvalSet;
 export const handleContext = contextHandlersDefault.handleContext;
+export const handleContextExplain = contextExplainHandlersDefault.handleContextExplain;
 export const handleUsageToday = usageHandlersDefault.handleUsageToday;
 export const handleListAuditLog = auditLogHandlersDefault.handleListAuditLog;
 export const handleDashboardOverviewStats = dashboardOverviewHandlersDefault.handleDashboardOverviewStats;

@@ -1,6 +1,6 @@
 # @memorynodeai/sdk
 
-Official JavaScript/TypeScript client for **MemoryNode** — **reliable per-user memory for customer-facing AI**. Store and retrieve memories (facts, preferences, events) with hybrid search and prompt-ready context from your **backend** (never ship the API key to browsers in production).
+Official JavaScript/TypeScript client for **MemoryNode** — **MemoryNode lets you store, retrieve, and explain why AI remembered something.** Use it from your **backend** (never ship the API key to browsers in production).
 
 Product story and ICP: [POSITIONING.md](https://github.com/gaurav007pimpalkar-Trinity/memorynode/blob/main/docs/external/POSITIONING.md) (monorepo).
 
@@ -35,6 +35,26 @@ const results = await client.search({
   query: "user preferences",
   topK: 5,
 });
+
+// Build prompt-ready context
+const context = await client.context({
+  userId: "user-1",
+  namespace: "default",
+  query: "What do we know about this user's preferences?",
+  topK: 5,
+});
+
+// Explain ranking decisions (core debugging tool)
+const explain = await client.contextExplain({
+  userId: "user-1",
+  namespace: "default",
+  query: "What do we know about this user's preferences?",
+  topK: 5,
+});
+
+console.log(results.results[0]);
+console.log(context.context_text);
+console.log(explain.results[0]?.scores, explain.results[0]?.ordering_explanation);
 
 // Optional: import an artifact (paid plans only)
 await client.importMemories("<artifact_base64>", "upsert");

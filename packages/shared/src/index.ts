@@ -12,6 +12,11 @@ export interface ApiError {
 
 export interface HealthResponse {
   status: "ok";
+  version?: string;
+  build_version?: string;
+  stage?: string;
+  git_sha?: string;
+  embedding_model?: string;
 }
 
 /** Recognized memory type tags for categorization (includes task for actionable items). */
@@ -43,7 +48,21 @@ export interface AddMemoryRequest {
 
 export interface AddMemoryResponse {
   memory_id: MemoryId;
-  chunks: number;
+  stored: true;
+  chunks?: number;
+  embedding?: "skipped_due_to_budget";
+  extraction: {
+    status: "run" | "degraded" | "skipped";
+    reason?:
+      | "user_disabled"
+      | "low_importance"
+      | "plan_limit"
+      | "entitlement_degraded"
+      | "budget_limit"
+      | "extraction_error"
+      | "none";
+    error?: string;
+  };
   /** Present when `x-safety-pii-scan: 1` was sent on the request and hints were found. */
   safety?: { pii_hints: PiiHintKind[] };
 }
@@ -64,6 +83,7 @@ export interface SearchRequest {
     /** Metadata match mode: "and" (default) requires all pairs, "or" requires any. */
     filter_mode?: "and" | "or";
   };
+  explain?: boolean;
   /** Search strategy: "hybrid" (default), "vector", or "keyword". */
   search_mode?: SearchMode;
   /** Minimum relevance score (0–1). Results below this threshold are dropped. This is a ranking-derived score, not a raw cosine similarity. */
@@ -77,6 +97,12 @@ export interface SearchResult {
   chunk_index: number;
   text: string;
   score: number;
+  _explain?: {
+    rrf_score: number;
+    match_sources: Array<"vector" | "text">;
+    vector_score?: number;
+    text_score?: number;
+  };
 }
 
 export interface SearchResponse {
@@ -204,6 +230,41 @@ export interface ContextResponse {
   page_size?: number;
   total?: number;
   has_more?: boolean;
+  context_blocks?: number;
+}
+
+export interface ContextExplainResult {
+  rank: number;
+  memory_id: MemoryId;
+  chunk_id: string;
+  chunk_index: number;
+  text: string;
+  scores: {
+    relevance_score: number;
+    recency_score: number;
+    importance_score: number;
+    final_score: number;
+  };
+  ordering_explanation: string;
+}
+
+export interface ContextExplainResponse {
+  query: {
+    user_id: string;
+    namespace: string | null;
+    query: string;
+    top_k: number | null;
+    search_mode: SearchMode;
+    min_score: number | null;
+    retrieval_profile: RetrievalProfile | null;
+  };
+  memories_retrieved: Array<{ memory_id: MemoryId; text: string }>;
+  chunk_ids_used: string[];
+  results: ContextExplainResult[];
+  total: number;
+  page: number;
+  page_size: number;
+  has_more: boolean;
 }
 
 // Memory listing / CRUD

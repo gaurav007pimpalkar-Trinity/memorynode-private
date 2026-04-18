@@ -5,7 +5,7 @@ You are **not** expected to clone GitHub or run anything on your computer.
 ## Checklist
 
 1. **Sign up** and create a workspace + API key in the product console.
-2. **Call three endpoints** from the main guide: [README.md](./README.md) — `POST /v1/memories`, `POST /v1/search`, `POST /v1/context`.
+2. **Call four endpoints** from the main guide: [README.md](./README.md) — `POST /v1/memories`, `POST /v1/search`, `POST /v1/context`, `GET /v1/context/explain`.
 3. **Hand the key to your engineer** with that page only. Everything else is optional.
 
 ## Using AI tools (Cursor, etc.)

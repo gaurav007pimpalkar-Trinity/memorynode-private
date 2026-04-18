@@ -7,6 +7,11 @@ import type { SupabaseClient } from "@supabase/supabase-js";
 import type { Env } from "../env.js";
 import type { HandlerDeps } from "../router.js";
 import { getRouteRateLimitMax } from "../limits.js";
+import {
+  CreateApiKeySchema,
+  RevokeApiKeySchema,
+  parseWithSchema,
+} from "../contracts/index.js";
 
 export interface ApiKeysHandlerDeps extends HandlerDeps {
   safeParseJson: <T>(request: Request) => Promise<{ ok: true; data: T } | { ok: false; error: string }>;
@@ -71,10 +76,16 @@ export function createApiKeysHandlers(
         );
       }
 
-      const body = await d.safeParseJson<{ workspace_id: string; name: string }>(request);
-      if (!body.ok || !body.data.workspace_id || !body.data.name) {
+      const body = await parseWithSchema(CreateApiKeySchema, request);
+      if (!body.ok) {
         return jsonResponse(
-          { error: { code: "BAD_REQUEST", message: "workspace_id and name are required" } },
+          {
+            error: {
+              code: "BAD_REQUEST",
+              message: body.error,
+              ...(body.details ? { details: body.details } : {}),
+            },
+          },
           400,
           rate.headers,
         );
@@ -236,10 +247,16 @@ export function createApiKeysHandlers(
         );
       }
 
-      const body = await d.safeParseJson<{ api_key_id: string }>(request);
-      if (!body.ok || !body.data.api_key_id) {
+      const body = await parseWithSchema(RevokeApiKeySchema, request);
+      if (!body.ok) {
         return jsonResponse(
-          { error: { code: "BAD_REQUEST", message: "api_key_id is required" } },
+          {
+            error: {
+              code: "BAD_REQUEST",
+              message: body.error,
+              ...(body.details ? { details: body.details } : {}),
+            },
+          },
           400,
           rate.headers,
         );

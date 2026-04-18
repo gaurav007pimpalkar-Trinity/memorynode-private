@@ -1,6 +1,6 @@
 # Quickstart (redirect)
 
-**Mode 1 — Just use it:** [docs/start-here/README.md](../start-here/README.md) — API key + three `curl`s (`/v1/memories`, `/v1/search`, `/v1/context`), about 10 minutes.
+**Mode 1 — Just use it:** [docs/start-here/README.md](../start-here/README.md) — API key + four `curl`s (`/v1/memories`, `/v1/search`, `/v1/context`, `/v1/context/explain`), about 10 minutes.
 
 - **Mode 2 — Build:** [docs/build/README.md](../build/README.md) · [API_USAGE.md](./API_USAGE.md)
 - **Mode 3 — Self-host:** [docs/self-host/LOCAL_DEV.md](../self-host/LOCAL_DEV.md)
