@@ -5,7 +5,7 @@ Minimal **ingest → search → context** flow using the MemoryNode HTTP API (sa
 ## Prereqs
 
 - Python **3.10+**
-- `pip install -r requirements.txt` (uses **httpx**)
+- `pip install -r requirements.pip` (installs **httpx**)
 
 ## Run
 
