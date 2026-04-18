@@ -76,6 +76,14 @@ const scopeViolations = scanWorkspaceScopeViolations({
     { fileIncludes: "workerApp.ts", table: "workspace_entitlements", op: "insert" },
     { fileIncludes: "workerApp.ts", table: "workspaces", op: "select" },
     { fileIncludes: "workerApp.ts", table: "workspaces", op: "update" },
+    // PayU reconcile (same txn-id / webhook flows as former workerApp inline code).
+    { fileIncludes: "payuReconcile.ts", table: "payu_transactions", op: "select" },
+    { fileIncludes: "payuReconcile.ts", table: "payu_transactions", op: "update" },
+    { fileIncludes: "payuReconcile.ts", table: "workspace_entitlements", op: "select" },
+    { fileIncludes: "payuReconcile.ts", table: "workspace_entitlements", op: "update" },
+    { fileIncludes: "payuReconcile.ts", table: "workspace_entitlements", op: "insert" },
+    { fileIncludes: "payuReconcile.ts", table: "workspaces", op: "select" },
+    { fileIncludes: "payuReconcile.ts", table: "workspaces", op: "update" },
     { fileIncludes: "handlers/auditLog.ts", table: "api_audit_log", op: "select" },
   ],
 });
