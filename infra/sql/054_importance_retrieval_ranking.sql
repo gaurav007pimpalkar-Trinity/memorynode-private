@@ -214,6 +214,21 @@ end$$;
 -- Scoped reads: expose new columns
 --------------------------------------------------------------------------------
 
+-- Postgres rejects CREATE OR REPLACE when RETURNS TABLE column set changes for
+-- the same argument types (047/048 vs this migration).
+drop function if exists public.get_memory_scoped(uuid, uuid);
+drop function if exists public.list_memories_scoped(
+  uuid,
+  integer,
+  integer,
+  text,
+  text,
+  text,
+  jsonb,
+  timestamptz,
+  timestamptz
+);
+
 create or replace function public.get_memory_scoped(
   p_workspace_id uuid,
   p_memory_id uuid
