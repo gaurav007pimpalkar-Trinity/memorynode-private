@@ -1,18 +1,14 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
 import JSZip from "jszip";
 import {
-  DEFAULT_TOPK,
   capsByPlanCode,
   exceedsCaps,
   getRouteRateLimitMax,
-  MAX_QUERY_CHARS,
-  MAX_TOPK,
   type UsageSnapshot,
 } from "./limits.js";
 import {
   COST_MODEL_VERSION,
   computeInternalCredits,
-  estimateCostInr,
   type PlanLimits,
 } from "@memorynodeai/shared";
 import type { Env } from "./env.js";
@@ -147,7 +143,6 @@ function parseApiKeyMeta(raw: string): { prefix: string; last4: string } {
   return { prefix: "", last4: raw.slice(-4) };
 }
 
-const DEFAULT_NAMESPACE = "default";
 const SEARCH_MATCH_COUNT = 200;
 const MAX_FUSE_RESULTS = 200;
 const DEFAULT_MAX_BODY_BYTES = 1_000_000; // 1 MB

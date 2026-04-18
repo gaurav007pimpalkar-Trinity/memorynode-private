@@ -2,7 +2,6 @@
  * Entitlement plan_code normalization and API-facing effective plan codes.
  * Shared by quota resolution (`workerApp`) and PayU reconciliation.
  */
-import type { AuthContext } from "../auth.js";
 
 export type EffectivePlanCode = "launch" | "build" | "deploy" | "scale" | "scale_plus";
 
