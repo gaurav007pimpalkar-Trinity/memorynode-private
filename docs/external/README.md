@@ -1,6 +1,16 @@
 # External docs hub
 
-User-facing documentation for MemoryNode. **New here?** Start with **[Start here →](../start-here/README.md)** (hosted API, ~10 minutes).
+User-facing documentation for MemoryNode.
+
+## Choose your mode
+
+| Mode | Audience | Start |
+|------|------------|--------|
+| **1 — Just use it** | Everyone shipping on the hosted API | [../start-here/README.md](../start-here/README.md) |
+| **2 — Build** | Engineers who need filters, SDK, OpenAPI | [../build/README.md](../build/README.md) |
+| **3 — Self-host** | Contributors and private deployments | [../self-host/README.md](../self-host/README.md) |
+
+**New here?** Open **[Start here →](../start-here/README.md)** (~10 minutes, hosted only).
 
 ## Map
 

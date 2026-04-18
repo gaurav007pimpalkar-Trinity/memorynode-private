@@ -32,7 +32,7 @@ Example: `{"user_id":"user-123","namespace":"myapp","text":"User loves coffee"}`
 
 With typing and extraction: `{"user_id":"user-123","text":"I'm vegetarian and visited Paris last week","memory_type":"note","extract":true}`
 
-Response: `{"memory_id":"...", "chunks": ...}` and always includes **`extraction`**: `{ "status": "run" | "degraded" | "skipped", "reason"?, "triggered", "children_created", "skipped", "error"? }` (extraction never fails the write; skipped reasons include `plan_limit`, `budget_limit`, `low_importance`, etc.). Response headers may include `x-extraction-status` and `x-extraction-reason`.
+Response: always includes **`"stored": true`** on HTTP 200 (your row was saved). **`chunks`** is the count of search-indexed segments when embedding ran; it may be omitted when embedding was skipped (e.g. text-only ingest under global AI budget — then **`"embedding": "skipped_due_to_budget"`** appears instead). **`extraction`**: `{ "status": "run" | "degraded" | "skipped" }`; when `status` is `skipped`, a **`reason`** (and optional **`error`**) is included. Headers: **`x-extraction-status`** always; **`x-extraction-reason`** only when skipped (and not `none`).
 
 ---
 

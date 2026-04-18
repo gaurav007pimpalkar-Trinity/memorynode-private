@@ -106,6 +106,7 @@ def main() -> None:
         )
 
     print("\n[python-quickstart] PASS")
+    print("PASS")
 
 
 if __name__ == "__main__":

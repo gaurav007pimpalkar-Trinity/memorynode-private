@@ -7,7 +7,7 @@ Used to keep `docs/external/` safe for end users. Do not expose internal behavio
 | **openapi.yaml** | Keep (as-is) | Machine-readable API spec; no prose exposing internals. |
 | **API_REFERENCE.md** | Rewrite | Referenced internal docs (README, RELEASE_RUNBOOK), regeneration/CI, internal plan/limit jargon, PayU verification details. Rewritten to endpoints/auth/shapes and user-facing plans only; errors as “what to try”. |
 | **QUICKSTART.md** | Hub / redirect | Points to `docs/start-here/` for hosted path; no migration manifest (manifest lives in `docs/self-host/LOCAL_DEV.md`). |
-| **start-here/** | Keep | Default public path: hosted API only. |
+| **start-here/** | Keep | Default public path: hosted API only. Includes `MCP.md` (short Mode-1 MCP pointer). |
 | **build/** | Keep | Advanced API usage; links to external API_USAGE and openapi.yaml. |
 | **self-host/** | Keep | Local dev / contributors; includes CI migration manifest line. |
 | **BETA_ONBOARDING.md** | Rewrite | Operator-only content (admin bootstrap, BILLING_RUNBOOK); internal commands (db:migrate, release:staging:validate, e2e:verify); success metrics. Rewritten to access, concepts, gotchas, support template; no operator actions. |

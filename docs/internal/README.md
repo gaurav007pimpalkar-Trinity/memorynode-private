@@ -22,12 +22,12 @@ Follow this path depending on what you need:
 
 ### New developer? Start here:
 
-1. **`docs/start-here/README.md`** — hosted API: key + three calls in minutes
+1. **`docs/start-here/README.md`** — Mode 1: hosted API, key + three calls in minutes
 1. **`docs/external/POSITIONING.md`** — who it is for and what we explicitly are not
-1. **`docs/build/README.md`** — advanced usage (filters, SDK, OpenAPI)
+1. **`docs/build/README.md`** — Mode 2: advanced usage (filters, SDK, OpenAPI)
 1. **`docs/external/RECIPE_*.md`** — support, SaaS copilot, SMB chatbot copy-paste paths
 1. **`docs/external/API_USAGE.md`** — API field reference (inputs, outputs, errors)
-1. **`docs/self-host/LOCAL_DEV.md`** — run the Worker locally (contributors)
+1. **`docs/self-host/LOCAL_DEV.md`** — Mode 3: run the Worker locally (contributors)
 
 ### Solo founder / non-technical CTO?
 

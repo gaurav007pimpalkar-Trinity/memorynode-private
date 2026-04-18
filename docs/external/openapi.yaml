@@ -28,9 +28,22 @@ components:
         memory_id:
           type: string
           example: mem_abc123
+        stored:
+          type: boolean
+          enum:
+            - true
+          description: Always true on HTTP 200 — your memory row was persisted.
         chunks:
           type: integer
+          description: Number of search-indexed chunks created for this write. Omitted when embedding was skipped (e.g. budget
+            text-only ingest); use `stored` + `embedding` instead.
           example: 3
+        embedding:
+          type: string
+          enum:
+            - skipped_due_to_budget
+          description: Present when the memory row was saved but vector embedding was skipped (e.g. workspace AI budget). Search
+            may not return this text until re-embedded.
         extraction:
           type: object
           properties:
@@ -50,20 +63,12 @@ components:
                 - budget_limit
                 - extraction_error
                 - none
-            triggered:
-              type: boolean
-            children_created:
-              type: integer
-            skipped:
-              type: boolean
+              description: Only present when status is skipped (or extraction_error details).
             error:
               type: string
           required:
             - status
-            - triggered
-            - children_created
-            - skipped
-          description: Extraction outcome for this write (always present).
+          description: What happened with automatic fact extraction for this write.
         safety:
           type: object
           properties:
@@ -79,7 +84,7 @@ components:
           description: 'Present when request included header x-safety-pii-scan: "1" and hints were found.'
       required:
         - memory_id
-        - chunks
+        - stored
         - extraction
     ErrorResponse:
       type: object

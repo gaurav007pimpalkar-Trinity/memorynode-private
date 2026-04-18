@@ -63,6 +63,7 @@ describe("POST /v1/memories", () => {
     expect(res.status).toBe(200);
     const json = await res.json();
     expect(typeof json.memory_id).toBe("string");
+    expect(json.stored).toBe(true);
     expect(Number.isInteger(json.chunks)).toBe(true);
   });
 });

@@ -97,7 +97,27 @@ const MemoryInsertSchema = z
 const MemoryInsertResponse = z
   .object({
     memory_id: z.string().openapi({ example: "mem_abc123" }),
-    chunks: z.number().int().openapi({ example: 3 }),
+    stored: z
+      .literal(true)
+      .openapi({
+        description: "Always true on HTTP 200 — your memory row was persisted.",
+      }),
+    chunks: z
+      .number()
+      .int()
+      .optional()
+      .openapi({
+        description:
+          "Number of search-indexed chunks created for this write. Omitted when embedding was skipped (e.g. budget text-only ingest); use `stored` + `embedding` instead.",
+        example: 3,
+      }),
+    embedding: z
+      .literal("skipped_due_to_budget")
+      .optional()
+      .openapi({
+        description:
+          "Present when the memory row was saved but vector embedding was skipped (e.g. workspace AI budget). Search may not return this text until re-embedded.",
+      }),
     extraction: z
       .object({
         status: z.enum(["run", "degraded", "skipped"]),
@@ -111,13 +131,13 @@ const MemoryInsertResponse = z
             "extraction_error",
             "none",
           ])
-          .optional(),
-        triggered: z.boolean(),
-        children_created: z.number().int(),
-        skipped: z.boolean(),
+          .optional()
+          .openapi({
+            description: "Only present when status is skipped (or extraction_error details).",
+          }),
         error: z.string().optional(),
       })
-      .openapi({ description: "Extraction outcome for this write (always present)." }),
+      .openapi({ description: "What happened with automatic fact extraction for this write." }),
     safety: z
       .object({
         pii_hints: z.array(z.enum(["email", "phone"])),

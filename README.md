@@ -1,16 +1,46 @@
 # MemoryNode.ai
 
-**Drop-in memory for your app** — your AI remembers each customer across sessions. Store text with one API; get **hybrid search** and **prompt-ready context** without running pgvector yourself.
+**Drop-in memory brain for your AI** — give your product reliable long-term memory: save what each user said, find it later, drop it straight into a prompt.
 
-**Start in ~10 minutes (hosted only):** [docs/start-here/README.md](docs/start-here/README.md) · **Positioning:** [docs/external/POSITIONING.md](docs/external/POSITIONING.md)
+---
 
-## Who it is for
+## Choose your path
 
-- **Support and success** — ticket continuity, fewer repeated questions.
-- **High-volume chat** — cap-aware, simple integration.
-- **B2B SaaS copilots** — scoped `user_id` + `namespace` per tenant.
+### 🚀 Just use it (recommended)
 
-## Hosted API (default path)
+- No setup on your laptop  
+- Works in minutes  
+- Best for founders and solo developers  
+- **Designed for production** customer-facing AI systems that need **reliable long-term memory**.  
+- **Built for real traffic:** everyday usage patterns, including **high-volume chat** and **many users at once**, without you running a vector stack.
+
+→ **[docs/start-here/README.md](docs/start-here/README.md)**
+
+---
+
+### 🧩 Build with control
+
+- Namespaces, filters, TypeScript SDK, OpenAPI  
+- For product engineers shipping real apps  
+
+→ **[docs/build/README.md](docs/build/README.md)**
+
+---
+
+### ⚙️ Self-host (advanced)
+
+- Full control of infrastructure  
+- For contributors and teams running a private stack  
+
+→ **[docs/self-host/README.md](docs/self-host/README.md)**
+
+---
+
+**Who it is for:** support bots, busy in-app assistants, and B2B SaaS copilots. **What we are not:** [docs/external/POSITIONING.md](docs/external/POSITIONING.md)
+
+---
+
+## Try the hosted API
 
 ```bash
 export API_KEY=mn_live_xxx
@@ -22,42 +52,51 @@ curl -X POST "https://api.memorynode.ai/v1/search" \
   -d '{"user_id":"user-1","query":"theme preference","top_k":5}'
 ```
 
-- **More examples:** [docs/start-here/README.md](docs/start-here/README.md)
-- **Advanced (filters, SDK, OpenAPI):** [docs/build/README.md](docs/build/README.md)
-- **Python example:** [examples/python-quickstart/README.md](examples/python-quickstart/README.md)
-- **Node example:** [examples/node-quickstart/README.md](examples/node-quickstart/README.md)
+**Step-by-step (about 10 minutes):** [docs/start-here/README.md](docs/start-here/README.md)
 
-## MCP (AI tools / editors)
+---
+
+## MCP (Cursor, Claude Code, and similar)
 
 ```bash
 pnpm add @memorynodeai/mcp-server
 ```
 
-See [packages/mcp-server/README.md](packages/mcp-server/README.md) and [docs/MCP_SERVER.md](docs/MCP_SERVER.md).
+**Short setup:** [docs/start-here/MCP.md](docs/start-here/MCP.md) · **Package readme:** [packages/mcp-server/README.md](packages/mcp-server/README.md)
+
+---
+
+## Examples
+
+- **Node:** [examples/node-quickstart/README.md](examples/node-quickstart/README.md)  
+- **Python:** [examples/python-quickstart/README.md](examples/python-quickstart/README.md)
+
+---
 
 ## Trust
 
 - [Trust (customer-facing)](docs/external/TRUST.md) · [Data retention](docs/DATA_RETENTION.md) · [Security](docs/SECURITY.md)
 
-## Architecture (one line)
+---
 
-Hosted **Cloudflare Worker** API + **Supabase** (Postgres + pgvector) + optional **dashboard** + **TypeScript SDK** + **MCP**.
+## Optional: running locally (advanced)
 
-## Monorepo layout
+Only if you chose **Self-host** above or you contribute to this repo:
+
+1. **[docs/self-host/LOCAL_DEV.md](docs/self-host/LOCAL_DEV.md)** — environment, stub mode, first run  
+2. From repo root: `pnpm preflight:dev` then `pnpm dev:stub`
+
+**Repository layout (contributors):**
 
 | Path | Description |
 |------|-------------|
-| `apps/api` | Cloudflare Worker API |
-| `apps/dashboard` | Web dashboard |
+| `apps/api` | HTTP API (Worker) |
+| `apps/dashboard` | Web console |
 | `packages/sdk` | TypeScript SDK |
 | `packages/mcp-server` | MCP server |
-| `packages/shared` | Shared types and plans |
-| `docs/start-here` | Default developer path (hosted) |
-| `docs/build` | Advanced API usage |
-| `docs/self-host` | Run the repo / local dev |
+| `packages/shared` | Shared types |
+| `docs/start-here` | Mode 1 — quickstart |
+| `docs/build` | Mode 2 — advanced usage |
+| `docs/self-host` | Mode 3 — local / private deploy |
 
-## Run the API locally (advanced)
-
-Not required for product integration. See **[docs/self-host/LOCAL_DEV.md](docs/self-host/LOCAL_DEV.md)** and `pnpm dev:stub` after copying `apps/api/.dev.vars.template` → `apps/api/.dev.vars`.
-
-Internal CI / runbooks: [docs/internal/README.md](docs/internal/README.md).
+Internal runbooks: [docs/internal/README.md](docs/internal/README.md).

@@ -1,6 +1,6 @@
 /**
  * Global AI cost kill switch. When monthly estimated cost exceeds the configured budget,
- * all embedding and LLM operations are blocked (503) to prevent overspend.
+ * all embedding and LLM operations can be blocked (503) to prevent overspend.
  *
  * Uses a 60-second in-memory cache to avoid DB overhead on every request.
  */
@@ -46,7 +46,6 @@ function shouldFailClosed(env: CostGuardEnv): boolean {
 
 /**
  * Fetch current month's usage from usage_daily and estimate AI cost in INR.
- * Uses 60-second cache to keep the guard fast.
  */
 async function getCurrentMonthCostInr(
   supabase: SupabaseClient,
@@ -89,17 +88,77 @@ async function getCurrentMonthCostInr(
   );
 }
 
+export interface AiCostBudgetSnapshot {
+  configured: boolean;
+  costInr: number;
+  budgetInr: number;
+  ratio: number;
+  exceeded: boolean;
+}
+
+/**
+ * Non-throwing snapshot for extraction policy (near-budget degraded mode).
+ * Updates the same month-to-date cache as {@link checkGlobalCostGuard} when stale (no mutex; rare double-fetch is OK).
+ */
+export async function getAiCostBudgetSnapshot(
+  supabase: SupabaseClient,
+  env: CostGuardEnv,
+): Promise<AiCostBudgetSnapshot> {
+  const budgetInr = env.AI_COST_BUDGET_INR != null ? Number(env.AI_COST_BUDGET_INR) : NaN;
+  if (!Number.isFinite(budgetInr) || budgetInr <= 0) {
+    return { configured: false, costInr: 0, budgetInr: 0, ratio: 0, exceeded: false };
+  }
+
+  const usdToInr = Number(env.USD_TO_INR) || DEFAULT_USD_TO_INR;
+  const driftMultiplier = Number(env.COST_DRIFT_MULTIPLIER ?? DEFAULT_COST_DRIFT_MULTIPLIER);
+  const now = Date.now();
+
+  if (cachedCostInr != null && now - cachedAt < CACHE_TTL_MS) {
+    const ratio = budgetInr > 0 ? cachedCostInr / budgetInr : 0;
+    return {
+      configured: true,
+      costInr: cachedCostInr,
+      budgetInr,
+      ratio,
+      exceeded: cachedCostInr >= budgetInr,
+    };
+  }
+
+  try {
+    const costInr = await getCurrentMonthCostInr(supabase, usdToInr, driftMultiplier);
+    cachedCostInr = costInr;
+    cachedAt = now;
+    const ratio = budgetInr > 0 ? costInr / budgetInr : 0;
+    return {
+      configured: true,
+      costInr,
+      budgetInr,
+      ratio,
+      exceeded: costInr >= budgetInr,
+    };
+  } catch {
+    if (cachedCostInr != null) {
+      const ratio = budgetInr > 0 ? cachedCostInr / budgetInr : 0;
+      return {
+        configured: true,
+        costInr: cachedCostInr,
+        budgetInr,
+        ratio,
+        exceeded: cachedCostInr >= budgetInr,
+      };
+    }
+    return { configured: true, costInr: 0, budgetInr, ratio: 0, exceeded: false };
+  }
+}
+
 /**
  * If monthly estimated AI cost exceeds the budget, throws AIBudgetExceededError.
- * Callers must catch and return HTTP 503 with body:
- * { "error": "ai_budget_exceeded", "message": "AI usage temporarily paused due to budget protection." }
+ * Callers that must never fail on cost (e.g. POST /v1/memories) should catch this and degrade
+ * (e.g. text-only ingest). Other routes may still map this to HTTP 503.
  *
  * Caches result for 60 seconds to avoid DB overhead.
  */
-export async function checkGlobalCostGuard(
-  supabase: SupabaseClient,
-  env: CostGuardEnv,
-): Promise<void> {
+export async function checkGlobalCostGuard(supabase: SupabaseClient, env: CostGuardEnv): Promise<void> {
   const budgetInr = env.AI_COST_BUDGET_INR != null ? Number(env.AI_COST_BUDGET_INR) : NaN;
   if (!Number.isFinite(budgetInr) || budgetInr <= 0) {
     return;
@@ -132,8 +191,6 @@ export async function checkGlobalCostGuard(
         throw new AIBudgetExceededError("AI_COST_LIMIT_EXCEEDED");
       }
     } catch (err) {
-      // Degrade open on transient DB issues; keep serving traffic while preserving
-      // hard-stop behavior only for verified budget exceedance.
       if (err instanceof AIBudgetExceededError) {
         throw err;
       }

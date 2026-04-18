@@ -1,5 +1,5 @@
 /**
- * Worker entry point. Thin fetch handler; all logic lives in workerApp.ts (Phase 2: Worker modularization).
+ * Worker entry point. Thin fetch handler; request routing and orchestration live in workerApp.ts.
  */
 
 import type { Env } from "./env.js";

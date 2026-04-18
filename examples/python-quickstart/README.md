@@ -5,7 +5,7 @@ Minimal **ingest → search → context** flow using the MemoryNode HTTP API (sa
 ## Prereqs
 
 - Python **3.10+**
-- `pip install -r requirements.pip` (uses **httpx**)
+- `pip install -r requirements.txt` (uses **httpx**)
 
 ## Run
 
@@ -32,11 +32,11 @@ python examples/python-quickstart/main.py
 ## Expected output
 
 - `INGEST` section with `memory_id`
-- `SEARCH` with at least one hit when data is visible
+- `SEARCH` with hits when data is visible
 - `CONTEXT` with `context_text` / citations
-- Final `PASS` line
+- Final lines include **`PASS`** (simple health check for scripts / CI)
 
 ## Docs
 
 - [Start here](../../docs/start-here/README.md)
-- [API usage](../../docs/external/API_USAGE.md)
+- [Build mode](../../docs/build/README.md)

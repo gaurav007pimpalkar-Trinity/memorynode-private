@@ -1,10 +1,7 @@
 /**
- * Memory CRUD handlers. Phase 4: Worker split (IMPROVEMENT_PLAN.md).
- * All dependencies injected via MemoryHandlerDeps to avoid circular dependency with index.
+ * Memory CRUD handlers. Dependencies are injected via MemoryHandlerDeps to avoid circular imports.
  *
- * Phase 6 additions:
- * - memory_type column support on insert
- * - Optional lightweight extraction (extract: true) that creates child memories
+ * Supports optional LLM extraction (`extract`, default true) that creates child memories without failing the parent write.
  */
 
 import type { SupabaseClient } from "@supabase/supabase-js";
@@ -481,6 +478,7 @@ export function createMemoryHandlers(
         extractRequested: extract,
         text,
         metadata,
+        memory_type: memory_type ?? undefined,
         planCode,
         planLimits: quota.planLimits,
         degradedEntitlements: Boolean(quota.degradedEntitlements),
@@ -532,6 +530,7 @@ export function createMemoryHandlers(
         if (reserveResult.response) return reserveResult.response;
         const reservationId = reserveResult.reservationId;
 
+        let budgetTextOnlyIngest = false;
         try {
           await checkGlobalCostGuard(supabase, env);
         } catch (e) {
@@ -543,18 +542,120 @@ export function createMemoryHandlers(
                 "ai_budget_exceeded_pre_embed",
               );
             }
+            budgetTextOnlyIngest = true;
+          } else {
+            throw e;
+          }
+        }
+
+        if (budgetTextOnlyIngest) {
+          const reserveMinimal = await d.reserveQuotaAndMaybeRespond(
+            quota,
+            supabase,
+            auth.workspaceId,
+            today,
+            {
+              writesDelta: 1,
+              readsDelta: 0,
+              embedsDelta: 0,
+              embedTokensDelta: 0,
+              extractionCallsDelta: 0,
+            },
+            concurrencyHeaders,
+            env,
+            jsonResponse,
+            { route: "/v1/memories", requestId },
+          );
+          if (reserveMinimal.response) return reserveMinimal.response;
+          const textOnlyReservationId = reserveMinimal.reservationId;
+
+          const { data: memRow, error: memErr } = await supabase
+            .from("memories")
+            .insert({
+              workspace_id: auth.workspaceId,
+              user_id,
+              namespace: namespaceVal,
+              text,
+              metadata: metadata ?? {},
+              ...(memory_type ? { memory_type } : {}),
+              ...(importance !== undefined ? { importance } : {}),
+            })
+            .select("id")
+            .single();
+
+          if (memErr || !memRow) {
+            if (textOnlyReservationId) {
+              await d.markUsageReservationRefundPending(
+                supabase,
+                textOnlyReservationId,
+                memErr?.message ?? "memory_insert_failed_text_only",
+              );
+            }
             return jsonResponse(
               {
                 error: {
-                  code: "ai_budget_exceeded",
-                  message: "AI usage temporarily paused due to budget protection.",
+                  code: "DB_ERROR",
+                  message: memErr?.message ?? "Failed to insert memory",
                 },
               },
-              503,
+              500,
               concurrencyHeaders,
             );
           }
-          throw e;
+
+          const textOnlyMemoryId = memRow.id as string;
+
+          void d.emitProductEvent(
+            supabase,
+            "first_ingest_success",
+            {
+              workspaceId: auth.workspaceId,
+              requestId,
+              route: "/v1/memories",
+              method: "POST",
+              status: 200,
+              effectivePlan: d.effectivePlan(auth.plan, auth.planStatus),
+              planStatus: auth.planStatus,
+            },
+            {
+              body_bytes: Number(request.headers.get("content-length") ?? "0") || undefined,
+              chunk_profile: chunk_profile ?? null,
+              text_only_ingest: true,
+            },
+            true,
+          );
+
+          logger.info({
+            event: "memory_text_only_ingest",
+            request_id: requestId,
+            memory_id: textOnlyMemoryId,
+            reason: "global_ai_budget",
+          });
+
+          const textOnlyBody: Record<string, unknown> = {
+            memory_id: textOnlyMemoryId,
+            stored: true,
+            embedding: "skipped_due_to_budget",
+            extraction: { status: "skipped", reason: "budget_limit" },
+          };
+
+          const piiScanOnBudget = (request.headers.get("x-safety-pii-scan") ?? "").trim() === "1";
+          if (piiScanOnBudget) {
+            const pii_hints_budget = detectPiiHints(text);
+            if (pii_hints_budget.length > 0) {
+              textOnlyBody.safety = { pii_hints: pii_hints_budget };
+            }
+          }
+
+          if (textOnlyReservationId) {
+            await d.markUsageReservationCommitted(supabase, textOnlyReservationId);
+          }
+
+          return jsonResponse(textOnlyBody, 200, {
+            ...concurrencyHeaders,
+            "x-extraction-status": "skipped",
+            "x-extraction-reason": "budget_limit",
+          });
         }
 
         let embedResult: EmbedResult;
@@ -770,23 +871,25 @@ export function createMemoryHandlers(
       );
 
         /* Quota already reserved via reserveQuotaAndMaybeRespond */
-        const response: Record<string, unknown> = { memory_id: memoryId, chunks: rows.length };
-        const reasonForHeader =
-          extractionFinalReason === "none" ? "" : extractionFinalReason;
-        response.extraction = {
-          status: extractionFinalStatus,
-          ...(reasonForHeader ? { reason: extractionFinalReason } : {}),
-          triggered: willAttemptExtraction,
-          children_created: extractionResult?.children_created ?? 0,
-          skipped: extractionFinalStatus === "skipped",
-          ...(extractionResult?.error ? { error: extractionResult.error } : {}),
+        const response: Record<string, unknown> = {
+          memory_id: memoryId,
+          stored: true,
+          chunks: rows.length,
         };
+        const extractionPayload: Record<string, unknown> = { status: extractionFinalStatus };
+        if (extractionFinalStatus === "skipped") {
+          extractionPayload.reason = extractionFinalReason;
+          if (extractionResult?.error) extractionPayload.error = extractionResult.error;
+        }
+        response.extraction = extractionPayload;
 
         const responseHeaders: Record<string, string> = {
           ...concurrencyHeaders,
           "x-extraction-status": extractionFinalStatus,
-          ...(reasonForHeader ? { "x-extraction-reason": reasonForHeader } : {}),
         };
+        if (extractionFinalStatus === "skipped" && extractionFinalReason !== "none") {
+          responseHeaders["x-extraction-reason"] = String(extractionFinalReason);
+        }
 
         const piiScanOn = (request.headers.get("x-safety-pii-scan") ?? "").trim() === "1";
         if (piiScanOn) {

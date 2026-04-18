@@ -1,5 +1,5 @@
 /**
- * Zod schemas for memory API. Phase 5 (Option A). Source of truth for POST /v1/memories.
+ * Zod schemas for memory API — source of truth for POST /v1/memories.
  */
 
 import { z } from "zod";

@@ -1,6 +1,6 @@
-# Founder path (no repo, no infra)
+# Founder path (no repo, no engineers required for step one)
 
-You are **not** expected to clone GitHub, run databases, or read runbooks.
+You are **not** expected to clone GitHub or run anything on your computer.
 
 ## Checklist
 
@@ -10,11 +10,14 @@ You are **not** expected to clone GitHub, run databases, or read runbooks.
 
 ## Using AI tools (Cursor, etc.)
 
-If your team uses MCP in the editor, install the MemoryNode MCP package and set `MEMORYNODE_API_KEY` and `MEMORYNODE_BASE_URL`. Details: [MCP_SERVER.md](../../docs/MCP_SERVER.md).
+If your team uses MCP in the editor, see **[MCP.md](./MCP.md)** (install package, set two environment variables).
 
 ## Trust and compliance
 
 - [Trust (customer-facing)](../external/TRUST.md)
 - [Data retention](../DATA_RETENTION.md)
 
-When you need namespaces, metadata filters, or language-specific examples, switch to **[Build mode](../build/README.md)** — not required for your first ship.
+When you need namespaces, metadata filters, or language-specific examples, open **[Build mode](../build/README.md)** — not required for your first ship.
+
+**Need more control?** → [Build mode](../build/README.md).
+
