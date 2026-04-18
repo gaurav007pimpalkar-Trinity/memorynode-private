@@ -92,7 +92,7 @@ pnpm add @memorynodeai/mcp-server
 Only if you chose **Self-host** above or you contribute to this repo:
 
 1. **[docs/self-host/LOCAL_DEV.md](docs/self-host/LOCAL_DEV.md)** — environment, stub mode, first run  
-2. From repo root: `pnpm preflight:dev` then `pnpm dev:stub`
+2. From repo root: `pnpm dev:stub` (runs preflight, then starts the API with `wrangler dev`). To only validate `.dev.vars` without starting the server, use `pnpm preflight:dev` alone, or `pnpm dev` if you already ran preflight.
 
 **Repository layout (contributors):**
 

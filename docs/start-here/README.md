@@ -103,13 +103,12 @@ curl -sS -G "https://api.memorynode.ai/v1/context/explain" \
   --data-urlencode "top_k=5"
 ```
 
-This returns:
+This returns JSON including:
 
-- `chunk_ids_used`
-- per-result ranking scores (`relevance_score`, `recency_score`, `importance_score`, `final_score`)
-- `ordering_explanation`
+- Top-level: `chunk_ids_used`, `memories_retrieved`, and a `results` array (plus pagination fields such as `total` / `page` when applicable).
+- Each element of **`results`**: `rank`, `memory_id`, `chunk_id`, `text`, a **`scores`** object (`relevance_score`, `recency_score`, `importance_score`, `final_score`), and an **`ordering_explanation`** string for that row.
 
-Example interpretation:
+Example interpretation (using each result’s `scores`):
 
 - higher `relevance_score` -> semantically matched query
 - higher `recency_score` -> recently accessed memory

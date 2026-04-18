@@ -37,30 +37,63 @@ curl -sS -G "https://api.memorynode.ai/v1/context/explain" \
   --data-urlencode "top_k=5"
 ```
 
-### Example interpretation
+## Context explain response
+
+### What `GET /v1/context/explain` returns
+
+The JSON includes a **`query`** object (echo of the params you sent), **`chunk_ids_used`**, **`memories_retrieved`**, and a **`results`** array. Each **`results[i]`** has `rank`, `memory_id`, `chunk_id`, `chunk_index`, `text`, a **`scores`** object (`relevance_score`, `recency_score`, `importance_score`, `final_score`), and **`ordering_explanation`**. You also get pagination fields such as **`total`**, **`page`**, **`page_size`**, and **`has_more`** when applicable.
+
+### How to read each result’s `scores`
 
 - higher `relevance_score` -> semantically matched query
 - higher `recency_score` -> recently accessed memory
 - higher `importance_score` -> manually or implicitly boosted memory
 - `final_score` determines ranking order
 
-Step 4 (Aha): See exactly why this was chosen.
+### Example (truncated; IDs are illustrative)
 
 ```json
 {
-  "query": "user onboarding issue",
-  "top_result": "User struggles with login flow due to expired token",
-  "scores": {
-    "relevance_score": 0.91,
-    "recency_score": 0.78,
-    "importance_score": 0.84,
-    "final_score": 0.88
+  "query": {
+    "user_id": "user-123",
+    "namespace": "myapp",
+    "query": "What do we know about theme preferences?",
+    "top_k": 5,
+    "search_mode": "hybrid",
+    "min_score": null,
+    "retrieval_profile": null
   },
-  "ordering_explanation": "High semantic match + recent access pattern boosted ranking"
+  "memories_retrieved": [
+    {
+      "memory_id": "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa",
+      "text": "User prefers dark mode."
+    }
+  ],
+  "chunk_ids_used": ["bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb"],
+  "results": [
+    {
+      "rank": 1,
+      "memory_id": "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa",
+      "chunk_id": "bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb",
+      "chunk_index": 0,
+      "text": "User prefers dark mode.",
+      "scores": {
+        "relevance_score": 0.71,
+        "recency_score": 0.99,
+        "importance_score": 1,
+        "final_score": 0.84
+      },
+      "ordering_explanation": "Ranked #1 by fused relevance and then adjusted by recency and importance signals."
+    }
+  ],
+  "total": 1,
+  "page": 1,
+  "page_size": 50,
+  "has_more": false
 }
 ```
 
-Why this was chosen: high semantic match and recent usage signals pushed this memory above alternatives.
+Why this was chosen: high semantic match and recent usage signals pushed this memory above alternatives (see **`ordering_explanation`** on each **`results`** row).
 
 Flow mental model:
 
