@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { SearchPayloadSchema, MemoryInsertSchema, MEMORY_TYPES, SEARCH_MODES } from "../src/contracts/index.js";
 
-describe("SearchPayloadSchema Phase 6 fields", () => {
+describe("SearchPayloadSchema advanced fields", () => {
   it("accepts search_mode values", () => {
     for (const mode of SEARCH_MODES) {
       const result = SearchPayloadSchema.safeParse({
@@ -75,7 +75,7 @@ describe("SearchPayloadSchema Phase 6 fields", () => {
   });
 });
 
-describe("MemoryInsertSchema Phase 6 fields", () => {
+describe("MemoryInsertSchema extended fields", () => {
   it("accepts memory_type values", () => {
     for (const mt of MEMORY_TYPES) {
       const result = MemoryInsertSchema.safeParse({
@@ -105,11 +105,12 @@ describe("MemoryInsertSchema Phase 6 fields", () => {
     expect(result.success).toBe(true);
   });
 
-  it("accepts payload without Phase 6 fields (backward compatible)", () => {
+  it("defaults extract to true when omitted (backward compatible: opt out with extract:false)", () => {
     const result = MemoryInsertSchema.safeParse({
       user_id: "u1",
       text: "some text",
     });
     expect(result.success).toBe(true);
+    if (result.success) expect(result.data.extract).toBe(true);
   });
 });

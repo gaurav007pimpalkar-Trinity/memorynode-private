@@ -39,6 +39,51 @@ describe("405 Method Not Allowed (known paths)", () => {
     expect(json.error?.code).toBe("METHOD_NOT_ALLOWED");
   });
 
+  it("POST /v1/search/history returns 405 with Allow: GET", async () => {
+    const res = await api.fetch(
+      new Request("http://localhost/v1/search/history", { method: "POST" }),
+      baseEnv as unknown as FetchEnv,
+    );
+    expect(res.status).toBe(405);
+    expect(res.headers.get("Allow")).toBe("GET");
+  });
+
+  it("GET /v1/search/replay returns 405 with Allow: POST", async () => {
+    const res = await api.fetch(
+      new Request("http://localhost/v1/search/replay", { method: "GET" }),
+      baseEnv as unknown as FetchEnv,
+    );
+    expect(res.status).toBe(405);
+    expect(res.headers.get("Allow")).toBe("POST");
+  });
+
+  it("PATCH /v1/evals/sets returns 405 with Allow: GET, POST", async () => {
+    const res = await api.fetch(
+      new Request("http://localhost/v1/evals/sets", { method: "PATCH" }),
+      baseEnv as unknown as FetchEnv,
+    );
+    expect(res.status).toBe(405);
+    expect(res.headers.get("Allow")).toBe("GET, POST");
+  });
+
+  it("POST /v1/evals/sets/<uuid> returns 405 with Allow: DELETE", async () => {
+    const res = await api.fetch(
+      new Request("http://localhost/v1/evals/sets/00000000-0000-4000-8000-000000000001", { method: "POST" }),
+      baseEnv as unknown as FetchEnv,
+    );
+    expect(res.status).toBe(405);
+    expect(res.headers.get("Allow")).toBe("DELETE");
+  });
+
+  it("GET /v1/context/feedback returns 405 with Allow: POST", async () => {
+    const res = await api.fetch(
+      new Request("http://localhost/v1/context/feedback", { method: "GET" }),
+      baseEnv as unknown as FetchEnv,
+    );
+    expect(res.status).toBe(405);
+    expect(res.headers.get("Allow")).toBe("POST");
+  });
+
   it("PATCH /v1/memories returns 405 with Allow: GET, POST", async () => {
     const res = await api.fetch(
       new Request("http://localhost/v1/memories", { method: "PATCH" }),
@@ -60,6 +105,33 @@ describe("405 Method Not Allowed (known paths)", () => {
   it("GET /v1/billing/checkout returns 405 with Allow: POST", async () => {
     const res = await api.fetch(
       new Request("http://localhost/v1/billing/checkout", { method: "GET" }),
+      baseEnv as unknown as FetchEnv,
+    );
+    expect(res.status).toBe(405);
+    expect(res.headers.get("Allow")).toBe("POST");
+  });
+
+  it("POST /v1/pruning/metrics returns 405 with Allow: GET", async () => {
+    const res = await api.fetch(
+      new Request("http://localhost/v1/pruning/metrics", { method: "POST" }),
+      baseEnv as unknown as FetchEnv,
+    );
+    expect(res.status).toBe(405);
+    expect(res.headers.get("Allow")).toBe("GET");
+  });
+
+  it("POST /v1/audit/log returns 405 with Allow: GET", async () => {
+    const res = await api.fetch(
+      new Request("http://localhost/v1/audit/log", { method: "POST" }),
+      baseEnv as unknown as FetchEnv,
+    );
+    expect(res.status).toBe(405);
+    expect(res.headers.get("Allow")).toBe("GET");
+  });
+
+  it("GET /v1/explain/answer returns 405 with Allow: POST", async () => {
+    const res = await api.fetch(
+      new Request("http://localhost/v1/explain/answer", { method: "GET" }),
       baseEnv as unknown as FetchEnv,
     );
     expect(res.status).toBe(405);

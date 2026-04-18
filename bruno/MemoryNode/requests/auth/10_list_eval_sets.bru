@@ -1,0 +1,16 @@
+meta {
+  name: List Eval Sets
+  type: http
+  seq: 10
+}
+
+get {
+  url: {{base_url}}/v1/evals/sets
+  body: none
+  auth: none
+}
+
+headers {
+  Accept: application/json
+  Authorization: Bearer {{api_key}}
+}

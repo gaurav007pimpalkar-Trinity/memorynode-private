@@ -500,7 +500,7 @@ function seedEntitlement(
   options: {
     workspaceId?: string;
     txnId: string;
-    status?: "active" | "expired" | "revoked" | "pending";
+    status?: "active" | "expired" | "revoked" | "pending" | "grace";
     planCode?: string;
     startsAt?: string;
     expiresAt?: string | null;
@@ -623,6 +623,40 @@ describe("non-billing endpoints without PayU config", () => {
     expect(res.status).toBe(200);
     const json = await res.json();
     expect(json.writes).toBeDefined();
+    expect(Array.isArray(json.cap_alerts)).toBe(true);
+  });
+});
+
+describe("grace entitlement soft downgrade", () => {
+  it("GET /v1/usage/today returns grace_soft_downgrade and Launch-floored limits while plan stays deploy", async () => {
+    const supabase = makeSupabase();
+    seedEntitlement(supabase, {
+      txnId: "txn_grace_deploy_usage",
+      status: "grace",
+      planCode: "deploy",
+      caps: { writes: 5000, reads: 15000, embeds: 15000 },
+    });
+    const res = await handleUsageToday(
+      new Request("http://localhost/v1/usage/today", {
+        method: "GET",
+        headers: { authorization: "Bearer mn_live_test" },
+      }),
+      makeEnv({
+        PAYU_MERCHANT_KEY: undefined,
+        PAYU_MERCHANT_SALT: undefined,
+        PAYU_BASE_URL: undefined,
+        PUBLIC_APP_URL: undefined,
+      }),
+      supabase as SupabaseClient,
+      {},
+    );
+    expect(res.status).toBe(200);
+    const json = await res.json();
+    expect(json.plan).toBe("deploy");
+    expect(json.grace_soft_downgrade).toBe(true);
+    expect(json.limits.writes).toBe(250);
+    expect(json.operational_mode).toBe("degraded");
+    expect(json.limits_v3?.included_writes).toBe(250);
   });
 });
 

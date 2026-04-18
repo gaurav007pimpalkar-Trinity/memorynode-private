@@ -1,71 +1,10 @@
-# Quickstart
+# Quickstart (redirect)
 
-**Why:** Customer-facing AI fails when it **forgets**. MemoryNode is the hosted **save → search → context** loop so you ship memory without running pgvector yourself.
+**The default quickstart moved** so new users are not exposed to repo-only steps here.
 
-**After this page:** pick a **[use-case recipe](./RECIPE_SUPPORT_AGENT.md)** (support, SaaS copilot, or SMB chat) for copy-paste patterns.
+👉 **Use: [docs/start-here/README.md](../start-here/README.md)** — get an API key, run three `curl`s (`/v1/memories`, `/v1/search`, `/v1/context`), done in about 10 minutes.
 
-Get from zero to stored and retrieved memory in a few minutes.
+- Advanced fields & SDK: [docs/build/README.md](../build/README.md) · [API_USAGE.md](./API_USAGE.md)
+- Run the Worker locally: [docs/self-host/LOCAL_DEV.md](../self-host/LOCAL_DEV.md)
 
-## 1. Setup
-
-- Sign up at [memorynode.ai](https://memorynode.ai), create a workspace, create an API key. Copy the key once (e.g. `mn_live_...`).
-- Base URL: `https://api.memorynode.ai` (or your deployment).
-- Send the key on every request: `Authorization: Bearer <key>` or header `x-api-key: <key>`.
-
-## 2. Insert
-
-**POST /v1/memories**
-
-```bash
-curl -X POST "https://api.memorynode.ai/v1/memories" \
-  -H "Authorization: Bearer YOUR_API_KEY" \
-  -H "Content-Type: application/json" \
-  -d '{"user_id":"user-123","namespace":"myapp","text":"User prefers dark mode"}'
-```
-
-Response: `{"memory_id":"...", "chunks": 1}`. Use the same `user_id` and `namespace` when you search.
-
-## 3. Search
-
-**POST /v1/search**
-
-```bash
-curl -X POST "https://api.memorynode.ai/v1/search" \
-  -H "Authorization: Bearer YOUR_API_KEY" \
-  -H "Content-Type: application/json" \
-  -d '{"user_id":"user-123","namespace":"myapp","query":"theme preference","top_k":5}'
-```
-
-Response: `{"results": [{"chunk_id":"...", "memory_id":"...", "text":"...", "score": 0.9}, ...]}`.
-
-For prompt-ready text and citations, use **POST /v1/context** with the same body; response includes `context_text` and `citations`.
-
-## 4. Connect MCP
-
-To let AI agents read/write memory via MCP tools:
-
-1. Install: `pnpm add @memorynodeai/mcp-server` (or use the repo package).
-2. Configure your MCP client with:
-   - `MEMORYNODE_API_KEY` — your API key.
-   - `MEMORYNODE_BASE_URL` — `https://api.memorynode.ai` (or your base URL).
-   - `MEMORYNODE_NAMESPACE` — optional, defaults to `default`.
-3. Use the `memory://search` resource and the memory insert tool from your agent.
-
-See [packages/mcp-server](packages/mcp-server) and [API usage](API_USAGE.md) for full request/response shapes.
-
-## 5. Import data (paid plans)
-
-Bulk import is available on paid plans only.
-
-**POST /v1/import**
-
-```bash
-curl -X POST "https://api.memorynode.ai/v1/import" \
-  -H "Authorization: Bearer YOUR_API_KEY" \
-  -H "Content-Type: application/json" \
-  -d '{"artifact_base64":"<base64>","mode":"upsert"}'
-```
-
-Free plans receive `402` with `UPGRADE_REQUIRED`.
-
-<!-- Migration manifest (CI-checked): MIGRATIONS_TOTAL=54; MIGRATIONS_LATEST=052_reserve_before_execute_unified_accounting.sql -->
+Import on paid plans: `POST /v1/import` — free plans receive `402` with `UPGRADE_REQUIRED`.

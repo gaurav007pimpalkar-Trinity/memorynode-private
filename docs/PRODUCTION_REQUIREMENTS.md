@@ -29,4 +29,4 @@ In **production** (and when `ENVIRONMENT=production` or `staging`), the followin
 - `SUPABASE_MODE=stub` — in-memory stub DB for tests.
 - `RATE_LIMIT_MODE=off` — only when `ENVIRONMENT=dev` (bypasses rate limit).
 
-See `apps/api/.dev.vars.template`, `docs/QUICKSTART.md`, and `scripts/check_config.mjs`.
+See `apps/api/.dev.vars.template`, `docs/self-host/LOCAL_DEV.md`, and `scripts/check_config.mjs`.

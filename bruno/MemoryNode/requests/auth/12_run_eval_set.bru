@@ -1,0 +1,26 @@
+meta {
+  name: Run Eval Set
+  type: http
+  seq: 12
+}
+
+post {
+  url: {{base_url}}/v1/evals/run
+  body: json
+  auth: none
+}
+
+headers {
+  content-type: application/json
+  Authorization: Bearer {{api_key}}
+}
+
+body:json {
+  {
+    "eval_set_id": "{{eval_set_id}}",
+    "user_id": "{{user_id}}",
+    "namespace": "{{namespace}}",
+    "top_k": 5,
+    "search_mode": "hybrid"
+  }
+}

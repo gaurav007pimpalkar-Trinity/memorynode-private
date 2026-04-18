@@ -1,0 +1,15 @@
+meta {
+  name: List audit log
+  type: http
+  seq: 14
+}
+
+get {
+  url: {{base_url}}/v1/audit/log?limit=50&page=1
+  body: none
+  auth: bearer
+}
+
+headers {
+  Authorization: Bearer {{api_key}}
+}

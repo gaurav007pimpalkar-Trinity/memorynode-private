@@ -108,7 +108,7 @@ console.log("Search results:", JSON.stringify(results, null, 2));
 ## Documentation
 
 - **Recipes:** [support](../docs/external/RECIPE_SUPPORT_AGENT.md) · [SaaS copilot](../docs/external/RECIPE_SAAS_COPILOT.md) · [SMB](../docs/external/RECIPE_SMB_CHATBOT.md)
-- **Quickstart (curl):** [docs/external/QUICKSTART.md](../docs/external/QUICKSTART.md)
+- **Quickstart (curl):** [docs/start-here/README.md](../docs/start-here/README.md)
 - **Trust:** [docs/external/TRUST.md](../docs/external/TRUST.md)
 
 **Repository:** [github.com/gaurav007pimpalkar-Trinity/memorynode](https://github.com/gaurav007pimpalkar-Trinity/memorynode)

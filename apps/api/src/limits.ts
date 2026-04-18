@@ -68,6 +68,7 @@ export function getRouteRateLimitMax(
     | "default"
     | "search"
     | "context"
+    | "explain"
     | "import"
     | "billing"
     | "admin"
@@ -77,6 +78,7 @@ export function getRouteRateLimitMax(
   const base = getRateLimitMax(env, keyCreatedAt);
   if (route === "search") return Math.min(base, parseRate(env.RATE_LIMIT_SEARCH_MAX, RATE_LIMIT_SEARCH_MAX));
   if (route === "context") return Math.min(base, parseRate(env.RATE_LIMIT_CONTEXT_MAX, RATE_LIMIT_CONTEXT_MAX));
+  if (route === "explain") return Math.min(base, parseRate(env.RATE_LIMIT_CONTEXT_MAX, RATE_LIMIT_CONTEXT_MAX));
   if (route === "import") return Math.min(base, parseRate(env.RATE_LIMIT_IMPORT_MAX, RATE_LIMIT_IMPORT_MAX));
   if (route === "billing") return Math.min(base, parseRate(env.RATE_LIMIT_BILLING_MAX, RATE_LIMIT_BILLING_MAX));
   if (route === "admin") return Math.min(base, parseRate(env.RATE_LIMIT_ADMIN_MAX, RATE_LIMIT_ADMIN_MAX));

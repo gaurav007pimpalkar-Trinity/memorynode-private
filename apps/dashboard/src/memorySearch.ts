@@ -4,6 +4,7 @@ export type SearchApiResult = {
   chunk_index: number;
   text: string;
   score: number;
+  _explain?: unknown;
 };
 
 export type MemorySearchRow = {
@@ -13,6 +14,7 @@ export type MemorySearchRow = {
   chunkIndex: number;
   text: string;
   score: number;
+  explain?: unknown;
 };
 
 export function mapSearchResultsToRows(results: SearchApiResult[]): MemorySearchRow[] {
@@ -23,5 +25,6 @@ export function mapSearchResultsToRows(results: SearchApiResult[]): MemorySearch
     chunkIndex: result.chunk_index,
     text: result.text,
     score: result.score,
+    explain: result._explain,
   }));
 }

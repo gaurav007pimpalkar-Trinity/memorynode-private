@@ -1,0 +1,16 @@
+meta {
+  name: Search History
+  type: http
+  seq: 8
+}
+
+get {
+  url: {{base_url}}/v1/search/history?limit=20
+  body: none
+  auth: none
+}
+
+headers {
+  Accept: application/json
+  Authorization: Bearer {{api_key}}
+}

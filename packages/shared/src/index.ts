@@ -1,4 +1,5 @@
 import type { InternalCreditsBreakdown } from "./plans.js";
+import type { PiiHintKind } from "./piiHints.js";
 
 export type WorkspaceId = string;
 export type MemoryId = string;
@@ -13,19 +14,29 @@ export interface HealthResponse {
   status: "ok";
 }
 
-/** Recognized memory type tags for categorization. */
-export type MemoryType = "fact" | "preference" | "event" | "note";
+/** Recognized memory type tags for categorization (includes task for actionable items). */
+export type MemoryType = "fact" | "preference" | "event" | "note" | "task";
 
 /** Search strategy selector. "hybrid" (default) uses vector+keyword fusion. */
 export type SearchMode = "hybrid" | "vector" | "keyword";
+
+/** Search ranking preset (adjusts default min_score thresholds server-side). */
+export type RetrievalProfile = "balanced" | "recall" | "precision";
+
+/** Ingest chunking preset (paragraph-aware splitter on the worker). */
+export type ChunkProfile = "balanced" | "dense" | "document";
 
 export interface AddMemoryRequest {
   userId: string;
   namespace?: string;
   text: string;
   metadata?: Record<string, unknown>;
+  /** Optional ranking multiplier for search (default 1). */
+  importance?: number;
   /** Optional type tag for categorization. */
   memory_type?: MemoryType;
+  /** Chunking preset for long text before embedding (default balanced). */
+  chunk_profile?: ChunkProfile;
   /** When true, runs a lightweight LLM extraction to create child fact/preference memories. */
   extract?: boolean;
 }
@@ -33,6 +44,8 @@ export interface AddMemoryRequest {
 export interface AddMemoryResponse {
   memory_id: MemoryId;
   chunks: number;
+  /** Present when `x-safety-pii-scan: 1` was sent on the request and hints were found. */
+  safety?: { pii_hints: PiiHintKind[] };
 }
 
 export interface SearchRequest {
@@ -55,6 +68,7 @@ export interface SearchRequest {
   search_mode?: SearchMode;
   /** Minimum relevance score (0–1). Results below this threshold are dropped. This is a ranking-derived score, not a raw cosine similarity. */
   min_score?: number;
+  retrieval_profile?: RetrievalProfile;
 }
 
 export interface SearchResult {
@@ -71,6 +85,111 @@ export interface SearchResponse {
   page_size?: number;
   total?: number;
   has_more?: boolean;
+  retrieval_trace?: Record<string, unknown>;
+}
+
+export interface SearchHistoryEntry {
+  id: string;
+  query: string;
+  params: Record<string, unknown>;
+  created_at: string;
+  retrieval_trace?: Record<string, unknown> | null;
+}
+
+export interface SearchHistoryResponse {
+  history: SearchHistoryEntry[];
+}
+
+export interface ReplaySearchResponse {
+  query_id: string;
+  previous: unknown;
+  current: SearchResponse;
+}
+
+export interface EvalSet {
+  id: string;
+  name: string;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface EvalItem {
+  id: string;
+  eval_set_id: string;
+  query: string;
+  expected_memory_ids: string[];
+  created_at: string;
+}
+
+export interface ListEvalSetsResponse {
+  eval_sets: EvalSet[];
+}
+
+export interface CreateEvalSetResponse {
+  eval_set: EvalSet;
+}
+
+export interface DeleteEvalSetResponse {
+  deleted: boolean;
+  id: string;
+}
+
+export interface ListEvalItemsResponse {
+  eval_items: EvalItem[];
+}
+
+export interface CreateEvalItemResponse {
+  eval_item: EvalItem;
+}
+
+export interface DeleteEvalItemResponse {
+  deleted: boolean;
+  id: string;
+}
+
+export interface EvalRunItemResult {
+  eval_item_id: string;
+  query: string;
+  expected_memory_ids: string[];
+  matched_expected_memory_ids: string[];
+  precision_at_k: number;
+  recall: number;
+}
+
+export interface EvalRunResponse {
+  eval_set_id: string;
+  item_count: number;
+  avg_precision_at_k: number;
+  avg_recall: number;
+  items: EvalRunItemResult[];
+}
+
+export interface ContextFeedbackRequest {
+  trace_id: string;
+  query_id?: string;
+  /** Optional eval set id for learning-loop correlation. */
+  eval_set_id?: string;
+  chunk_ids_used?: string[];
+  chunk_ids_unused?: string[];
+}
+
+export interface ContextFeedbackResponse {
+  accepted: boolean;
+}
+
+export interface ExplainAnswerRequest {
+  question: string;
+  context: string;
+}
+
+export interface ExplainAnswerResponse {
+  answer: string;
+}
+
+export interface PruningMetricsResponse {
+  memories_total: number;
+  memories_marked_duplicate: number;
+  memory_chunks_total: number;
 }
 
 export interface ContextResponse {
@@ -97,6 +216,8 @@ export interface MemoryRecord {
   created_at: string;
   memory_type?: MemoryType | null;
   source_memory_id?: MemoryId | null;
+  importance?: number;
+  retrieval_count?: number;
 }
 
 export interface ListMemoriesResponse {
@@ -128,6 +249,26 @@ export interface ImportRequest {
 export interface ImportResponse {
   imported_memories: number;
   imported_chunks: number;
+}
+
+export interface AuditLogEntry {
+  id: string;
+  route: string;
+  method: string;
+  status: number;
+  bytes_in: number;
+  bytes_out: number;
+  latency_ms: number;
+  ip_hash: string;
+  api_key_id: string | null;
+  created_at: string;
+}
+
+export interface AuditLogListResponse {
+  entries: AuditLogEntry[];
+  page: number;
+  limit: number;
+  has_more: boolean;
 }
 
 export interface UsageTodayResponse {
@@ -165,6 +306,12 @@ export interface UsageTodayResponse {
     daily_cap: "hard";
     monthly_cap: "hard";
   };
+  /** Non-empty when any daily counter is near or over its cap (polling surface for UI / automation). */
+  cap_alerts?: import("./capAlerts.js").UsageCapAlert[];
+  /** Derived posture: sleep = core caps critical; degraded = warnings or entitlement read degradation. */
+  operational_mode?: import("./capAlerts.js").OperationalMode;
+  /** True when entitlement row is `grace`: paid plan label kept, daily caps floored toward Launch. */
+  grace_soft_downgrade?: boolean;
 }
 
 export interface CreateWorkspaceResponse {
@@ -214,6 +361,8 @@ export {
   getLimitsForPlanCode,
   embedsCapFromEmbedTokens,
   getUsageCapsForPlanCode,
+  minUsageCaps,
+  applyLaunchFloorToPlanLimits,
   getWorkspaceRpmForPlanCode,
   computeInternalCredits,
   computePlanIncludedInternalCredits,
@@ -232,3 +381,9 @@ export {
   computeCredits,
   estimateCostInr,
 } from "./costModel.js";
+
+export type { UsageCapAlert, UsageCapAlertResource, UsageCapAlertSeverity, OperationalMode } from "./capAlerts.js";
+export { computeUsageCapAlerts, computeOperationalMode } from "./capAlerts.js";
+
+export type { PiiHintKind } from "./piiHints.js";
+export { detectPiiHints } from "./piiHints.js";

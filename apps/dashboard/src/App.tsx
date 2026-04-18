@@ -3,7 +3,7 @@ import { Session, type AuthChangeEvent } from "@supabase/supabase-js";
 import { supabase, supabaseEnvError } from "./supabaseClient";
 import { ApiKeyRow, InviteRow, MemoryRow, UsageRow } from "./types";
 import { loadWorkspaceId, persistWorkspaceId } from "./state";
-import { apiEnvError, apiGet, apiPost, ensureDashboardSession, dashboardLogout, setOnUnauthorized, userFacingErrorMessage } from "./apiClient";
+import { apiDelete, apiEnvError, apiGet, apiPost, ensureDashboardSession, dashboardLogout, setOnUnauthorized, userFacingErrorMessage } from "./apiClient";
 import { mapSearchResultsToRows, type MemorySearchRow, type SearchApiResult } from "./memorySearch";
 import { DeveloperNextSteps } from "./DeveloperNextSteps";
 
@@ -92,9 +92,11 @@ function shortWorkspaceId(id: string): string {
 
 function devLog(payload: Record<string, unknown>): void {
   if (!import.meta.env.DEV) return;
-  void fetch("http://127.0.0.1:7420/ingest/253793e2-9a0d-4620-b251-39382727da68", {
+  const url = (import.meta.env.VITE_DEV_LOG_INGEST_URL ?? "").trim();
+  if (!url) return;
+  void fetch(url, {
     method: "POST",
-    headers: { "Content-Type": "application/json", "X-Debug-Session-Id": "aa3f1d" },
+    headers: { "Content-Type": "application/json" },
     body: JSON.stringify(payload),
   }).catch(() => {});
 }
@@ -1578,6 +1580,17 @@ function ApiKeysView({
   );
 }
 
+type RetrievalExplainPayload = {
+  explain_requested: true;
+  results: Array<{
+    memory_id: string;
+    chunk_id: string;
+    chunk_index: number;
+    score: number;
+    _explain: unknown | null;
+  }>;
+};
+
 function MemoryBrowserView({
   userId,
   workspaceId,
@@ -1601,6 +1614,49 @@ function MemoryBrowserView({
   const [pageSize] = useState(10);
   const [selected, setSelected] = useState<MemoryRow | null>(null);
   const [saveToHistory, setSaveToHistory] = useState(false);
+  const [searchExplainEnabled, setSearchExplainEnabled] = useState(false);
+  const [explainPayload, setExplainPayload] = useState<RetrievalExplainPayload | null>(null);
+  const [historyRows, setHistoryRows] = useState<Array<{ id: string; query: string; created_at: string }>>([]);
+  const [historyLoading, setHistoryLoading] = useState(false);
+  const [historyError, setHistoryError] = useState<string | null>(null);
+  const [replayLoadingId, setReplayLoadingId] = useState<string | null>(null);
+  const [replayError, setReplayError] = useState<string | null>(null);
+  const [replayResult, setReplayResult] = useState<{
+    query_id: string;
+    previous: { results?: Array<{ chunk_id?: string; memory_id?: string; score?: number }> } | null;
+    current: { results?: Array<{ chunk_id?: string; memory_id?: string; score?: number }> } | null;
+  } | null>(null);
+  const [evalSets, setEvalSets] = useState<Array<{ id: string; name: string; created_at: string }>>([]);
+  const [selectedEvalSetId, setSelectedEvalSetId] = useState<string>("");
+  const [newEvalSetName, setNewEvalSetName] = useState("");
+  const [evalItems, setEvalItems] = useState<Array<{ id: string; query: string; expected_memory_ids: string[] }>>([]);
+  const [newEvalQuery, setNewEvalQuery] = useState("");
+  const [newEvalExpectedIds, setNewEvalExpectedIds] = useState("");
+  const [evalLoading, setEvalLoading] = useState(false);
+  const [evalItemsLoading, setEvalItemsLoading] = useState(false);
+  const [evalError, setEvalError] = useState<string | null>(null);
+  const [evalRunLoading, setEvalRunLoading] = useState(false);
+  const [evalRunResult, setEvalRunResult] = useState<{
+    item_count: number;
+    avg_precision_at_k: number;
+    avg_recall: number;
+    items: Array<{
+      eval_item_id: string;
+      query: string;
+      precision_at_k: number;
+      recall: number;
+      matched_expected_memory_ids: string[];
+    }>;
+  } | null>(null);
+  const [evalItemsPage, setEvalItemsPage] = useState(1);
+  const [evalItemsPageSize] = useState(5);
+  const [expectedIdsValidationError, setExpectedIdsValidationError] = useState<string | null>(null);
+  const [feedbackTraceId, setFeedbackTraceId] = useState("");
+  const [feedbackUsedIds, setFeedbackUsedIds] = useState("");
+  const [feedbackUnusedIds, setFeedbackUnusedIds] = useState("");
+  const [feedbackBusy, setFeedbackBusy] = useState(false);
+  const [feedbackMessage, setFeedbackMessage] = useState<string | null>(null);
+  const uuidRe = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 
   if (!workspaceId?.trim()) {
     return (
@@ -1637,6 +1693,7 @@ function MemoryBrowserView({
           setRows([]);
           setTotal(0);
           setHasMore(false);
+          setExplainPayload(null);
           setError("Enter a search query to run semantic search.");
           return;
         }
@@ -1647,6 +1704,7 @@ function MemoryBrowserView({
           query: string;
           page: number;
           page_size: number;
+          explain?: boolean;
           filters?: SearchFilters;
         } = {
           user_id: userId,
@@ -1655,6 +1713,7 @@ function MemoryBrowserView({
           page: pageToUse,
           page_size: pageSize,
         };
+        if (searchExplainEnabled) body.explain = true;
       const filters = parseMetadata();
       if (filters) {
         body.filters = { metadata: filters };
@@ -1670,11 +1729,31 @@ function MemoryBrowserView({
         body,
         saveToHistory ? { "x-save-history": "true" } : undefined,
       );
-      const mappedRows = mapSearchResultsToRows(res.results ?? []);
+      const rawResults = res.results ?? [];
+      const mappedRows = mapSearchResultsToRows(rawResults);
       setRows((prev) => (resetPage ? mappedRows : [...prev, ...mappedRows]));
+      if (searchExplainEnabled) {
+        const slice = rawResults.map((row) => ({
+          memory_id: row.memory_id,
+          chunk_id: row.chunk_id,
+          chunk_index: row.chunk_index,
+          score: row.score,
+          _explain: row._explain ?? null,
+        }));
+        setExplainPayload((prev) => {
+          if (resetPage) return { explain_requested: true, results: slice };
+          const merged = [...(prev?.results ?? []), ...slice];
+          return { explain_requested: true, results: merged };
+        });
+      } else {
+        setExplainPayload(null);
+      }
       setTotal(res.total ?? null);
       setHasMore(res.has_more ?? false);
       onSearchCompleted();
+      if (saveToHistory) {
+        void loadHistory();
+      }
     } catch (err: unknown) {
       setError(userFacingErrorMessage(err));
     } finally {
@@ -1685,6 +1764,248 @@ function MemoryBrowserView({
   const loadMore = () => {
     void search(false, page + 1);
   };
+
+  const loadHistory = async () => {
+    setHistoryLoading(true);
+    setHistoryError(null);
+    try {
+      const res = await apiGet<{ history?: Array<{ id: string; query: string; created_at: string }> }>("/v1/search/history?limit=20");
+      setHistoryRows(res.history ?? []);
+    } catch (err: unknown) {
+      setHistoryError(userFacingErrorMessage(err));
+    } finally {
+      setHistoryLoading(false);
+    }
+  };
+
+  const replayQuery = async (queryId: string) => {
+    setReplayLoadingId(queryId);
+    setReplayError(null);
+    try {
+      const res = await apiPost<{
+        query_id: string;
+        previous: { results?: Array<{ chunk_id?: string; memory_id?: string; score?: number }> } | null;
+        current: { results?: Array<{ chunk_id?: string; memory_id?: string; score?: number }> } | null;
+      }>("/v1/search/replay", { query_id: queryId });
+      setReplayResult(res);
+      setFeedbackTraceId(res.query_id);
+    } catch (err: unknown) {
+      setReplayError(userFacingErrorMessage(err));
+    } finally {
+      setReplayLoadingId(null);
+    }
+  };
+
+  const loadEvalSets = async () => {
+    setEvalLoading(true);
+    setEvalError(null);
+    try {
+      const res = await apiGet<{ eval_sets?: Array<{ id: string; name: string; created_at: string }> }>("/v1/evals/sets");
+      const sets = res.eval_sets ?? [];
+      setEvalSets(sets);
+      if (sets.length > 0 && !selectedEvalSetId) {
+        setSelectedEvalSetId(sets[0].id);
+      }
+    } catch (err: unknown) {
+      setEvalError(userFacingErrorMessage(err));
+    } finally {
+      setEvalLoading(false);
+    }
+  };
+
+  const createEvalSet = async () => {
+    if (!newEvalSetName.trim()) return;
+    setEvalLoading(true);
+    setEvalError(null);
+    try {
+      const res = await apiPost<{ eval_set?: { id: string; name: string; created_at: string } }>("/v1/evals/sets", {
+        name: newEvalSetName.trim(),
+      });
+      setNewEvalSetName("");
+      await loadEvalSets();
+      if (res.eval_set?.id) setSelectedEvalSetId(res.eval_set.id);
+    } catch (err: unknown) {
+      setEvalError(userFacingErrorMessage(err));
+    } finally {
+      setEvalLoading(false);
+    }
+  };
+
+  const deleteEvalSet = async (id: string) => {
+    setEvalLoading(true);
+    setEvalError(null);
+    try {
+      await apiDelete<{ deleted: boolean; id: string }>(`/v1/evals/sets/${encodeURIComponent(id)}`);
+      if (selectedEvalSetId === id) setSelectedEvalSetId("");
+      setEvalItems([]);
+      setEvalRunResult(null);
+      await loadEvalSets();
+    } catch (err: unknown) {
+      setEvalError(userFacingErrorMessage(err));
+    } finally {
+      setEvalLoading(false);
+    }
+  };
+
+  const loadEvalItems = async (evalSetId: string) => {
+    if (!evalSetId) {
+      setEvalItems([]);
+      return;
+    }
+    setEvalItemsLoading(true);
+    setEvalError(null);
+    try {
+      const res = await apiGet<{ eval_items?: Array<{ id: string; query: string; expected_memory_ids: string[] }> }>(
+        `/v1/evals/items?eval_set_id=${encodeURIComponent(evalSetId)}`,
+      );
+      setEvalItems(res.eval_items ?? []);
+      setEvalItemsPage(1);
+    } catch (err: unknown) {
+      setEvalError(userFacingErrorMessage(err));
+    } finally {
+      setEvalItemsLoading(false);
+    }
+  };
+
+  const createEvalItem = async () => {
+    if (!selectedEvalSetId || !newEvalQuery.trim()) return;
+    setEvalItemsLoading(true);
+    setEvalError(null);
+    setExpectedIdsValidationError(null);
+    try {
+      const expectedIds = newEvalExpectedIds
+        .split(",")
+        .map((v) => v.trim())
+        .filter(Boolean);
+      const invalidExpected = expectedIds.filter((id) => !uuidRe.test(id));
+      if (invalidExpected.length > 0) {
+        setExpectedIdsValidationError(`Invalid UUID(s): ${invalidExpected.slice(0, 3).join(", ")}${invalidExpected.length > 3 ? "…" : ""}`);
+        return;
+      }
+      await apiPost<{ eval_item?: { id: string } }>("/v1/evals/items", {
+        eval_set_id: selectedEvalSetId,
+        query: newEvalQuery.trim(),
+        expected_memory_ids: expectedIds,
+      });
+      setNewEvalQuery("");
+      setNewEvalExpectedIds("");
+      await loadEvalItems(selectedEvalSetId);
+    } catch (err: unknown) {
+      setEvalError(userFacingErrorMessage(err));
+    } finally {
+      setEvalItemsLoading(false);
+    }
+  };
+
+  const exportEvalRunJson = () => {
+    if (!evalRunResult) return;
+    const blob = new Blob([JSON.stringify(evalRunResult, null, 2)], { type: "application/json" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = `eval-run-${selectedEvalSetId || "set"}.json`;
+    a.click();
+    URL.revokeObjectURL(url);
+  };
+
+  const submitContextFeedback = async () => {
+    const traceId = feedbackTraceId.trim() || replayResult?.query_id;
+    if (!traceId) {
+      setFeedbackMessage("Trace ID is required.");
+      return;
+    }
+    const parseCsv = (raw: string): string[] => raw.split(",").map((v) => v.trim()).filter(Boolean);
+    setFeedbackBusy(true);
+    setFeedbackMessage(null);
+    try {
+      await apiPost<{ accepted: boolean }>("/v1/context/feedback", {
+        trace_id: traceId,
+        query_id: replayResult?.query_id,
+        chunk_ids_used: parseCsv(feedbackUsedIds),
+        chunk_ids_unused: parseCsv(feedbackUnusedIds),
+      });
+      setFeedbackMessage("Feedback submitted.");
+    } catch (err: unknown) {
+      setFeedbackMessage(userFacingErrorMessage(err));
+    } finally {
+      setFeedbackBusy(false);
+    }
+  };
+
+  const deleteEvalItem = async (id: string) => {
+    if (!selectedEvalSetId) return;
+    setEvalItemsLoading(true);
+    setEvalError(null);
+    try {
+      await apiDelete<{ deleted: boolean; id: string }>(`/v1/evals/items/${encodeURIComponent(id)}`);
+      await loadEvalItems(selectedEvalSetId);
+    } catch (err: unknown) {
+      setEvalError(userFacingErrorMessage(err));
+    } finally {
+      setEvalItemsLoading(false);
+    }
+  };
+
+  const runEvalSet = async () => {
+    if (!selectedEvalSetId) return;
+    setEvalRunLoading(true);
+    setEvalError(null);
+    try {
+      const res = await apiPost<{
+        item_count: number;
+        avg_precision_at_k: number;
+        avg_recall: number;
+        items: Array<{
+          eval_item_id: string;
+          query: string;
+          precision_at_k: number;
+          recall: number;
+          matched_expected_memory_ids: string[];
+        }>;
+      }>("/v1/evals/run", {
+        eval_set_id: selectedEvalSetId,
+        user_id: userId,
+        namespace: namespace || undefined,
+        top_k: 5,
+        search_mode: "hybrid",
+      });
+      setEvalRunResult(res);
+    } catch (err: unknown) {
+      setEvalError(userFacingErrorMessage(err));
+    } finally {
+      setEvalRunLoading(false);
+    }
+  };
+
+  useEffect(() => {
+    void loadEvalSets();
+  }, []);
+
+  useEffect(() => {
+    if (!selectedEvalSetId) return;
+    void loadEvalItems(selectedEvalSetId);
+  }, [selectedEvalSetId]);
+
+  useEffect(() => {
+    setEvalItemsPage((p) => Math.min(Math.max(1, p), Math.max(1, Math.ceil(evalItems.length / evalItemsPageSize))));
+  }, [evalItems, evalItemsPageSize]);
+
+  const replayPrevIds = useMemo(
+    () => new Set((replayResult?.previous?.results ?? []).map((r) => r.chunk_id).filter((id): id is string => Boolean(id))),
+    [replayResult],
+  );
+  const replayCurrIds = useMemo(
+    () => new Set((replayResult?.current?.results ?? []).map((r) => r.chunk_id).filter((id): id is string => Boolean(id))),
+    [replayResult],
+  );
+  const replayAdded = useMemo(() => Array.from(replayCurrIds).filter((id) => !replayPrevIds.has(id)), [replayCurrIds, replayPrevIds]);
+  const replayRemoved = useMemo(() => Array.from(replayPrevIds).filter((id) => !replayCurrIds.has(id)), [replayCurrIds, replayPrevIds]);
+  const replayUnchanged = useMemo(() => Array.from(replayCurrIds).filter((id) => replayPrevIds.has(id)), [replayCurrIds, replayPrevIds]);
+  const evalItemsTotalPages = Math.max(1, Math.ceil(evalItems.length / evalItemsPageSize));
+  const pagedEvalItems = useMemo(
+    () => evalItems.slice((evalItemsPage - 1) * evalItemsPageSize, evalItemsPage * evalItemsPageSize),
+    [evalItems, evalItemsPage, evalItemsPageSize],
+  );
 
   const openMemory = async (id: string) => {
     try {
@@ -1712,11 +2033,26 @@ function MemoryBrowserView({
           <input type="checkbox" checked={saveToHistory} onChange={(e) => setSaveToHistory(e.target.checked)} />
           Save to history (for replay)
         </label>
+        <label title="Adds explain: true to the search request and shows structured trace JSON when present">
+          <input type="checkbox" checked={searchExplainEnabled} onChange={(e) => setSearchExplainEnabled(e.target.checked)} />
+          Retrieval explain (debug)
+        </label>
         <button onClick={() => search(true)} disabled={loading}>
           {loading ? "Searching…" : "Search"}
         </button>
-        <button className="ghost" onClick={() => { setRows([]); setTotal(null); setHasMore(false); }}>
+        <button
+          className="ghost"
+          onClick={() => {
+            setRows([]);
+            setTotal(null);
+            setHasMore(false);
+            setExplainPayload(null);
+          }}
+        >
           Clear
+        </button>
+        <button className="ghost" onClick={loadHistory} disabled={historyLoading}>
+          {historyLoading ? "Loading history…" : "Load history"}
         </button>
       </div>
       {error && (
@@ -1739,11 +2075,22 @@ function MemoryBrowserView({
             </div>
             <div className="muted small">
               Score: {r.score.toFixed(3)} · Chunk: <code>{r.chunkId}</code>
+              {searchExplainEnabled && r.explain != null && (
+                <span className="muted small"> · trace</span>
+              )}
             </div>
             <p>{r.text.slice(0, 240)}</p>
           </div>
         ))}
       </div>
+      {searchExplainEnabled && explainPayload != null && (
+        <div className="panel mt-md">
+          <div className="panel-head">Retrieval explain (_explain)</div>
+          <div className="panel-body">
+            <pre className="code-block">{JSON.stringify(explainPayload, null, 2)}</pre>
+          </div>
+        </div>
+      )}
       {rows.length > 0 && (
         <>
           {total != null && (
@@ -1760,6 +2107,217 @@ function MemoryBrowserView({
           </button>
         </>
       )}
+
+      <div className="panel mt-md">
+        <div className="panel-head">Retrieval history and replay</div>
+        <div className="panel-body">
+          {historyError && <div className="badge">{historyError}</div>}
+          {historyRows.length === 0 && !historyLoading && (
+            <div className="muted small">
+              No saved history yet. Enable “Save to history” before searching, then click Load history.
+            </div>
+          )}
+          <ul className="list">
+            {historyRows.map((h) => (
+              <li key={h.id} className="card">
+                <div className="row-space">
+                  <div>
+                    <strong>{h.query || "(empty query)"}</strong>
+                    <div className="muted small">{new Date(h.created_at).toLocaleString()}</div>
+                  </div>
+                  <button className="ghost" onClick={() => replayQuery(h.id)} disabled={replayLoadingId === h.id}>
+                    {replayLoadingId === h.id ? "Replaying…" : "Replay"}
+                  </button>
+                </div>
+              </li>
+            ))}
+          </ul>
+          {replayError && <div className="badge">{replayError}</div>}
+          {replayResult && (
+            <div className="card">
+              <strong>Replay diff</strong>
+              <div className="muted small">Query ID: <code>{replayResult.query_id}</code></div>
+              <div className="muted small">
+                Previous results: {replayResult.previous?.results?.length ?? 0} · Current results: {replayResult.current?.results?.length ?? 0}
+              </div>
+              <div className="mt-sm">
+                <div className="muted small">
+                  Added chunks: {replayAdded.length} · Removed chunks: {replayRemoved.length} · Unchanged: {replayUnchanged.length}
+                </div>
+                {replayAdded.length > 0 && (
+                  <div className="muted small">
+                    Added: {replayAdded.slice(0, 5).map((id) => id.slice(0, 8)).join(", ")}{replayAdded.length > 5 ? "…" : ""}
+                  </div>
+                )}
+                {replayRemoved.length > 0 && (
+                  <div className="muted small">
+                    Removed: {replayRemoved.slice(0, 5).map((id) => id.slice(0, 8)).join(", ")}{replayRemoved.length > 5 ? "…" : ""}
+                  </div>
+                )}
+                <div className="row mt-sm">
+                  <input
+                    value={feedbackTraceId}
+                    onChange={(e) => setFeedbackTraceId(e.target.value)}
+                    placeholder="Trace ID (defaults to replay query ID)"
+                  />
+                  <button className="ghost" onClick={() => setFeedbackTraceId(replayResult.query_id)}>
+                    Use replay ID
+                  </button>
+                </div>
+                <div className="row mt-sm">
+                  <input
+                    value={feedbackUsedIds}
+                    onChange={(e) => setFeedbackUsedIds(e.target.value)}
+                    placeholder="Used chunk IDs (comma-separated)"
+                  />
+                  <input
+                    value={feedbackUnusedIds}
+                    onChange={(e) => setFeedbackUnusedIds(e.target.value)}
+                    placeholder="Unused chunk IDs (comma-separated)"
+                  />
+                  <button onClick={submitContextFeedback} disabled={feedbackBusy}>
+                    {feedbackBusy ? "Submitting…" : "Submit feedback"}
+                  </button>
+                </div>
+                {feedbackMessage && <div className="muted small">{feedbackMessage}</div>}
+              </div>
+            </div>
+          )}
+        </div>
+      </div>
+
+      <div className="panel mt-md">
+        <div className="panel-head">Eval sets and runs</div>
+        <div className="panel-body">
+          <div className="row">
+            <input
+              value={newEvalSetName}
+              onChange={(e) => setNewEvalSetName(e.target.value)}
+              placeholder="New eval set name"
+            />
+            <button onClick={createEvalSet} disabled={evalLoading || !newEvalSetName.trim()}>
+              {evalLoading ? "Saving…" : "Create set"}
+            </button>
+            <button className="ghost" onClick={loadEvalSets} disabled={evalLoading}>
+              Refresh sets
+            </button>
+          </div>
+          {evalError && <div className="badge">{evalError}</div>}
+          <ul className="list">
+            {evalSets.map((s) => (
+              <li key={s.id} className="card">
+                <div className="row-space">
+                  <div>
+                    <strong>{s.name}</strong>
+                    <div className="muted small">{new Date(s.created_at).toLocaleString()}</div>
+                  </div>
+                  <div className="row">
+                    <button
+                      className={selectedEvalSetId === s.id ? "" : "ghost"}
+                      onClick={() => {
+                        setSelectedEvalSetId(s.id);
+                        setEvalRunResult(null);
+                      }}
+                    >
+                      {selectedEvalSetId === s.id ? "Selected" : "Use"}
+                    </button>
+                    <button className="ghost" onClick={() => deleteEvalSet(s.id)} disabled={evalLoading}>
+                      Delete
+                    </button>
+                  </div>
+                </div>
+              </li>
+            ))}
+          </ul>
+
+          {selectedEvalSetId && (
+            <>
+              <div className="row mt-sm">
+                <input
+                  value={newEvalQuery}
+                  onChange={(e) => setNewEvalQuery(e.target.value)}
+                  placeholder="Eval query"
+                />
+                <input
+                  value={newEvalExpectedIds}
+                  onChange={(e) => setNewEvalExpectedIds(e.target.value)}
+                  placeholder="Expected memory IDs (comma-separated UUIDs)"
+                />
+                <button onClick={createEvalItem} disabled={evalItemsLoading || !newEvalQuery.trim()}>
+                  {evalItemsLoading ? "Saving…" : "Add item"}
+                </button>
+              </div>
+              {expectedIdsValidationError && <div className="badge">{expectedIdsValidationError}</div>}
+              <div className="row mt-sm">
+                <button onClick={runEvalSet} disabled={evalRunLoading || evalItems.length === 0}>
+                  {evalRunLoading ? "Running…" : "Run eval set"}
+                </button>
+              </div>
+              {evalItemsLoading && <div className="muted small">Loading eval items…</div>}
+              <ul className="list">
+                {pagedEvalItems.map((item) => (
+                  <li key={item.id} className="card">
+                    <div className="row-space">
+                      <div>
+                        <strong>{item.query}</strong>
+                        <div className="muted small">
+                          Expected IDs: {item.expected_memory_ids?.length ?? 0}
+                        </div>
+                      </div>
+                      <button className="ghost" onClick={() => deleteEvalItem(item.id)} disabled={evalItemsLoading}>
+                        Delete
+                      </button>
+                    </div>
+                  </li>
+                ))}
+              </ul>
+              {evalItems.length > 0 && (
+                <div className="row">
+                  <button
+                    className="ghost"
+                    onClick={() => setEvalItemsPage((p) => Math.max(1, p - 1))}
+                    disabled={evalItemsPage <= 1}
+                  >
+                    Prev
+                  </button>
+                  <span className="muted small">Page {evalItemsPage} / {evalItemsTotalPages}</span>
+                  <button
+                    className="ghost"
+                    onClick={() => setEvalItemsPage((p) => Math.min(evalItemsTotalPages, p + 1))}
+                    disabled={evalItemsPage >= evalItemsTotalPages}
+                  >
+                    Next
+                  </button>
+                </div>
+              )}
+            </>
+          )}
+
+          {evalRunResult && (
+            <div className="card mt-sm">
+              <strong>Eval run result</strong>
+              <div className="muted small">
+                Items: {evalRunResult.item_count} · Avg Precision@k: {evalRunResult.avg_precision_at_k.toFixed(3)} · Avg Recall: {evalRunResult.avg_recall.toFixed(3)}
+              </div>
+              <div className="row mt-sm">
+                <button className="ghost" onClick={exportEvalRunJson}>Export JSON</button>
+              </div>
+              <ul className="list">
+                {evalRunResult.items.slice(0, 10).map((item) => (
+                  <li key={item.eval_item_id} className="card">
+                    <div className="row-space">
+                      <span>{item.query}</span>
+                      <span className="muted small">
+                        P@k {item.precision_at_k.toFixed(3)} · R {item.recall.toFixed(3)}
+                      </span>
+                    </div>
+                  </li>
+                ))}
+              </ul>
+            </div>
+          )}
+        </div>
+      </div>
 
       {selected && (
         <div className="modal" onClick={() => setSelected(null)}>
@@ -1831,10 +2389,26 @@ function UsageView({ workspaceId, embedded = false }: { workspaceId: string; emb
       )}
       {usage && (
         <div className="list">
+          {usage.cap_alerts && usage.cap_alerts.length > 0 && (
+            <div className="card mt-sm">
+              <strong className="small">Usage caps</strong>
+              <ul className="muted small usage-cap-alert-list">
+                {usage.cap_alerts.map((a) => (
+                  <li key={`${a.resource}-${a.severity}`}>
+                    <span className="badge">{a.severity}</span> {a.resource}: {a.used} / {a.cap} (
+                    {Math.round(a.ratio * 100)}% of daily cap)
+                  </li>
+                ))}
+              </ul>
+            </div>
+          )}
           <div className="card">
             <div className="row-space">
               <strong>{usage.day}</strong>
               {usage.plan && <span className="badge">{usage.plan}</span>}
+              {usage.operational_mode && usage.operational_mode !== "normal" && (
+                <span className="badge">{usage.operational_mode}</span>
+              )}
             </div>
             <div className="row-space">
               <span>Writes</span>

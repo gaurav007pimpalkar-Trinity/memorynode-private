@@ -5,11 +5,14 @@
 import { z } from "zod";
 import { MAX_QUERY_CHARS, MAX_TOPK } from "../limits.js";
 
-export const MEMORY_TYPES = ["fact", "preference", "event", "note"] as const;
+export const MEMORY_TYPES = ["fact", "preference", "event", "note", "task"] as const;
 export type MemoryType = (typeof MEMORY_TYPES)[number];
 
 export const SEARCH_MODES = ["hybrid", "vector", "keyword"] as const;
 export type SearchMode = (typeof SEARCH_MODES)[number];
+
+export const RETRIEVAL_PROFILES = ["balanced", "recall", "precision"] as const;
+export type RetrievalProfile = (typeof RETRIEVAL_PROFILES)[number];
 
 const memoryTypeEnum = z.enum(MEMORY_TYPES);
 
@@ -39,6 +42,8 @@ export const SearchPayloadSchema = z.object({
   search_mode: z.enum(SEARCH_MODES).optional(),
   /** Minimum relevance score (0–1). Results below this threshold are dropped. This is a ranking-derived score, not a raw cosine similarity. */
   min_score: z.number().min(0).max(1).optional(),
+  /** Ranking preset: recall (looser min_score default), precision (stricter), or balanced (default). */
+  retrieval_profile: z.enum(RETRIEVAL_PROFILES).optional(),
 });
 
 export type SearchPayload = z.infer<typeof SearchPayloadSchema>;

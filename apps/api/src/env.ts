@@ -16,6 +16,8 @@ export interface Env {
   MASTER_ADMIN_TOKEN: string;
   AUTH_DEBUG?: string;
   EMBEDDINGS_MODE?: string;
+  /** OpenAI embedding model id (default text-embedding-3-small). For text-embedding-3-large, worker sends dimensions=1536 to match pgvector(1536). */
+  EMBEDDING_MODEL?: string;
   SUPABASE_MODE?: string;
   /** Access posture marker: service-role-only | rpc-first | rls-first. */
   SUPABASE_ACCESS_MODE?: string;

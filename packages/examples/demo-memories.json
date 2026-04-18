@@ -1,0 +1,29 @@
+[
+  {
+    "user_id": "demo-user",
+    "text": "User prefers dark mode in the dashboard.",
+    "namespace": "default",
+    "memory_type": "preference",
+    "importance": 1.2
+  },
+  {
+    "user_id": "demo-user",
+    "text": "Ship the retrieval trace column migration before enabling history replay in prod.",
+    "namespace": "default",
+    "memory_type": "task",
+    "importance": 1.5
+  },
+  {
+    "user_id": "demo-user",
+    "text": "Acme Corp renewal is due on 2026-05-01.",
+    "namespace": "default",
+    "memory_type": "event"
+  },
+  {
+    "user_id": "demo-user",
+    "text": "Section 1. Purpose. This appendix describes data handling.\n\nSection 2. Scope. Applies to all subprocessors.\n\nSection 3. Retention. Logs kept ninety days unless law requires longer.",
+    "namespace": "default",
+    "memory_type": "note",
+    "chunk_profile": "document"
+  }
+]

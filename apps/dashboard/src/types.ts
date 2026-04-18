@@ -20,6 +20,16 @@ export type MemoryRow = {
   score?: number;
   memory_type?: string | null;
   source_memory_id?: string | null;
+  importance?: number;
+  retrieval_count?: number;
+};
+
+export type UsageCapAlertRow = {
+  resource: string;
+  severity: "warning" | "critical";
+  used: number;
+  cap: number;
+  ratio: number;
 };
 
 export type UsageRow = {
@@ -33,6 +43,8 @@ export type UsageRow = {
     reads: number;
     embeds: number;
   };
+  cap_alerts?: UsageCapAlertRow[];
+  operational_mode?: "normal" | "degraded" | "sleep";
 };
 
 export type MemberRow = {

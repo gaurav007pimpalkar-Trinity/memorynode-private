@@ -12,7 +12,7 @@
 - `docs/internal/ALERTS.md` – lightweight monitoring + alert thresholds and Cloudflare setup notes.
 - `docs/external/README.md` – product overview (what it is, who for, capabilities).
 - `docs/external/POSITIONING.md` – canonical ICP, promise, and non-goals (keep marketing aligned).
-- `docs/external/QUICKSTART.md` – get value quickly (API key, store, search).
+- `docs/start-here/README.md` – get value quickly (API key, store, search).
 - `docs/external/API_USAGE.md` – how to call the API and SDK (inputs, outputs, errors).
 - `docs/internal/GTM_PLAYBOOK_2026.md` – messaging, agency one-pager, checklist, metrics (internal).
 
@@ -22,11 +22,12 @@ Follow this path depending on what you need:
 
 ### New developer? Start here:
 
-1. **`docs/external/README.md`** — what the product is and what you can do
+1. **`docs/start-here/README.md`** — hosted API: key + three calls in minutes
 1. **`docs/external/POSITIONING.md`** — who it is for and what we explicitly are not
-1. **`docs/external/QUICKSTART.md`** — get from zero to first memory and search
+1. **`docs/build/README.md`** — advanced usage (filters, SDK, OpenAPI)
 1. **`docs/external/RECIPE_*.md`** — support, SaaS copilot, SMB chatbot copy-paste paths
-1. **`docs/external/API_USAGE.md`** — API and SDK usage (inputs, outputs, errors)
+1. **`docs/external/API_USAGE.md`** — API field reference (inputs, outputs, errors)
+1. **`docs/self-host/LOCAL_DEV.md`** — run the Worker locally (contributors)
 
 ### Solo founder / non-technical CTO?
 
@@ -60,7 +61,7 @@ Follow this path depending on what you need:
 ### User-facing docs (external):
 
 - **`docs/external/README.md`** — product overview for users and stakeholders
-- **`docs/external/QUICKSTART.md`** — quick path to first API use
+- **`docs/start-here/README.md`** — quick path to first API use
 - **`docs/external/API_USAGE.md`** — API and SDK usage
 
 ## Billing (PayU)
@@ -129,10 +130,10 @@ cp .env.example .env && cp apps/api/.dev.vars.template apps/api/.dev.vars   # fi
 DATABASE_URL=postgres://... pnpm db:migrate
 pnpm dev:api   # terminal 1
 pnpm --filter @memorynode/dashboard dev   # terminal 2 → dashboard, create workspace + API key
-# curl ingest + search (see docs/external/QUICKSTART.md)
+# curl ingest + search (see docs/start-here/README.md)
 ```
 
-Full steps: `docs/external/QUICKSTART.md` and `docs/external/API_USAGE.md`.
+Full steps: `docs/start-here/README.md` and `docs/external/API_USAGE.md`.
 
 ## Getting Started
 1) Install dependencies:
@@ -285,7 +286,7 @@ It checks `/healthz`, validates authenticated usage/search/context paths, and ve
    - `MASTER_ADMIN_TOKEN`
    - `EMBEDDINGS_MODE` (`openai` or `stub`; use `stub` for local dev to avoid OpenAI calls)
 
-Migration manifest (CI-checked): `MIGRATIONS_TOTAL=54; MIGRATIONS_LATEST=052_reserve_before_execute_unified_accounting.sql`
+Migration manifest (CI-checked): `MIGRATIONS_TOTAL=58; MIGRATIONS_LATEST=056_search_query_retrieval_trace.sql`
 
 ## Admin & Bootstrap
 - Admin endpoints require header `x-admin-token: $MASTER_ADMIN_TOKEN`.

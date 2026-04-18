@@ -31,9 +31,56 @@ components:
         chunks:
           type: integer
           example: 3
+        extraction:
+          type: object
+          properties:
+            status:
+              type: string
+              enum:
+                - run
+                - degraded
+                - skipped
+            reason:
+              type: string
+              enum:
+                - user_disabled
+                - low_importance
+                - plan_limit
+                - entitlement_degraded
+                - budget_limit
+                - extraction_error
+                - none
+            triggered:
+              type: boolean
+            children_created:
+              type: integer
+            skipped:
+              type: boolean
+            error:
+              type: string
+          required:
+            - status
+            - triggered
+            - children_created
+            - skipped
+          description: Extraction outcome for this write (always present).
+        safety:
+          type: object
+          properties:
+            pii_hints:
+              type: array
+              items:
+                type: string
+                enum:
+                  - email
+                  - phone
+          required:
+            - pii_hints
+          description: 'Present when request included header x-safety-pii-scan: "1" and hints were found.'
       required:
         - memory_id
         - chunks
+        - extraction
     ErrorResponse:
       type: object
       properties:
@@ -91,6 +138,18 @@ components:
           example:
             project: alpha
             priority: 1
+        chunk_profile:
+          type: string
+          enum:
+            - balanced
+            - dense
+            - document
+          description: Chunking preset for long text before embedding.
+        extract:
+          type: boolean
+          default: true
+          description: When true (default), may run lightweight LLM extraction to child memories when plan and budget allow. Set
+            false to store only the parent memory.
       required:
         - user_id
         - text
@@ -225,9 +284,42 @@ components:
         - page
         - total
         - has_more
+    UsageCapAlert:
+      type: object
+      properties:
+        resource:
+          type: string
+          enum:
+            - writes
+            - reads
+            - embeds
+            - embed_tokens
+            - extraction_calls
+            - gen_tokens
+            - storage
+        severity:
+          type: string
+          enum:
+            - warning
+            - critical
+        used:
+          type: number
+        cap:
+          type: number
+        ratio:
+          type: number
+      required:
+        - resource
+        - severity
+        - used
+        - cap
+        - ratio
     UsageResponse:
       type: object
       properties:
+        day:
+          type: string
+          example: 2026-04-18
         plan:
           type: string
           example: launch
@@ -237,6 +329,19 @@ components:
           type: integer
         embeds:
           type: integer
+        limits:
+          type: object
+          properties:
+            writes:
+              type: integer
+            reads:
+              type: integer
+            embeds:
+              type: integer
+          required:
+            - writes
+            - reads
+            - embeds
         caps:
           type: object
           properties:
@@ -250,12 +355,82 @@ components:
             - writes
             - reads
             - embeds
+          description: Legacy alias; prefer limits.
+          deprecated: true
+        cap_alerts:
+          type: array
+          items:
+            $ref: "#/components/schemas/UsageCapAlert"
+        operational_mode:
+          type: string
+          enum:
+            - normal
+            - degraded
+            - sleep
+        grace_soft_downgrade:
+          type: boolean
+          description: "True when entitlement is in billing grace: daily limits floored toward Launch while plan reflects the paid
+            tier."
       required:
         - plan
         - writes
         - reads
         - embeds
-        - caps
+    AuditLogEntry:
+      type: object
+      properties:
+        id:
+          type: string
+        route:
+          type: string
+        method:
+          type: string
+        status:
+          type: integer
+        bytes_in:
+          type: integer
+        bytes_out:
+          type: integer
+        latency_ms:
+          type: integer
+        ip_hash:
+          type: string
+        api_key_id:
+          type: string
+          nullable: true
+        created_at:
+          type: string
+      required:
+        - id
+        - route
+        - method
+        - status
+        - bytes_in
+        - bytes_out
+        - latency_ms
+        - ip_hash
+        - api_key_id
+        - created_at
+    AuditLogListResponse:
+      type: object
+      properties:
+        entries:
+          type: array
+          items:
+            $ref: "#/components/schemas/AuditLogEntry"
+        page:
+          type: integer
+          minimum: 1
+        limit:
+          type: integer
+          minimum: 1
+        has_more:
+          type: boolean
+      required:
+        - entries
+        - page
+        - limit
+        - has_more
     DashboardOverviewResponse:
       type: object
       properties:
@@ -495,6 +670,15 @@ paths:
         - Memories
       security:
         - BearerAuth: []
+      parameters:
+        - schema:
+            type: string
+            enum:
+              - "1"
+            description: When set to "1", response may include safety.pii_hints (heuristic email/phone hints only; not a DLP scan).
+          required: false
+          name: x-safety-pii-scan
+          in: header
       requestBody:
         required: true
         content:
@@ -710,6 +894,48 @@ paths:
                 $ref: "#/components/schemas/UsageResponse"
         "401":
           description: Unauthorized
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+  /v1/audit/log:
+    get:
+      summary: Tenant-scoped API request audit trail (paginated)
+      tags:
+        - Usage
+      security:
+        - BearerAuth: []
+      parameters:
+        - schema:
+            type: integer
+            minimum: 1
+            example: 1
+          required: false
+          name: page
+          in: query
+        - schema:
+            type: integer
+            minimum: 1
+            maximum: 200
+            example: 50
+          required: false
+          name: limit
+          in: query
+      responses:
+        "200":
+          description: Audit log page
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AuditLogListResponse"
+        "401":
+          description: Unauthorized
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "402":
+          description: Upgrade required
           content:
             application/json:
               schema:

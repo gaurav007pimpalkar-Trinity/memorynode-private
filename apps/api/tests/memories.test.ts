@@ -1,5 +1,6 @@
 /* eslint-disable @typescript-eslint/no-explicit-any, @typescript-eslint/no-unused-vars */
 import { describe, expect, it } from "vitest";
+import { MemoryInsertSchema } from "../src/contracts/memories.js";
 import { deleteMemoryCascade, normalizeMemoryListParams } from "../src/index.js";
 
 describe("normalizeMemoryListParams", () => {
@@ -41,11 +42,41 @@ describe("normalizeMemoryListParams", () => {
   });
 
   it("accepts all valid memory_type values", () => {
-    for (const mt of ["fact", "preference", "event", "note"]) {
+    for (const mt of ["fact", "preference", "event", "note", "task"]) {
       const url = new URL(`http://localhost/v1/memories?memory_type=${mt}`);
       const params = normalizeMemoryListParams(url);
       expect(params.memory_type).toBe(mt);
     }
+  });
+});
+
+describe("MemoryInsertSchema", () => {
+  it("defaults extract to true when omitted", () => {
+    const parsed = MemoryInsertSchema.safeParse({
+      user_id: "u1",
+      text: "hello world",
+    });
+    expect(parsed.success).toBe(true);
+    if (parsed.success) expect(parsed.data.extract).toBe(true);
+  });
+
+  it("accepts optional chunk_profile", () => {
+    const parsed = MemoryInsertSchema.safeParse({
+      user_id: "u1",
+      text: "hello",
+      chunk_profile: "document",
+    });
+    expect(parsed.success).toBe(true);
+    if (parsed.success) expect(parsed.data.chunk_profile).toBe("document");
+  });
+
+  it("rejects invalid chunk_profile", () => {
+    const parsed = MemoryInsertSchema.safeParse({
+      user_id: "u1",
+      text: "hello",
+      chunk_profile: "huge",
+    });
+    expect(parsed.success).toBe(false);
   });
 });
 

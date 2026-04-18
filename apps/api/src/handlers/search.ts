@@ -27,6 +27,8 @@ export interface SearchOutcome {
   page: number;
   page_size: number;
   has_more: boolean;
+  /** Compact fusion / candidate stats for history and clients. */
+  retrieval_trace?: Record<string, unknown>;
 }
 
 export interface SearchHandlerDeps extends HandlerDeps {
@@ -105,6 +107,14 @@ export function createSearchHandlers(
     deps?: HandlerDeps,
   ) => Promise<Response>;
   handleReplaySearch: (
+    request: Request,
+    env: Env,
+    supabase: SupabaseClient,
+    auditCtx: { workspaceId?: string; apiKeyId?: string },
+    requestId: string,
+    deps?: HandlerDeps,
+  ) => Promise<Response>;
+  handleContextFeedback: (
     request: Request,
     env: Env,
     supabase: SupabaseClient,
@@ -269,6 +279,7 @@ export function createSearchHandlers(
               explain: parseResult.data.explain,
               search_mode: parseResult.data.search_mode,
               min_score: parseResult.data.min_score,
+              retrieval_profile: parseResult.data.retrieval_profile,
             },
             results_snapshot: {
               results: outcome.results,
@@ -276,6 +287,7 @@ export function createSearchHandlers(
               page: outcome.page,
               has_more: outcome.has_more,
             },
+            retrieval_trace: outcome.retrieval_trace ?? null,
           })
           .then(() => {});
       }
@@ -325,6 +337,7 @@ export function createSearchHandlers(
           page_size: outcome.page_size,
           total: outcome.total,
           has_more: outcome.has_more,
+          ...(outcome.retrieval_trace ? { retrieval_trace: outcome.retrieval_trace } : {}),
         },
         200,
         concurrencyHeaders,
@@ -364,7 +377,7 @@ export function createSearchHandlers(
       const limit = Math.min(parseInt(url.searchParams.get("limit") ?? "20", 10) || 20, 100);
       const { data, error } = await supabase
         .from("search_query_history")
-        .select("id, query, params, created_at")
+        .select("id, query, params, created_at, retrieval_trace")
         .eq("workspace_id", auth.workspaceId)
         .order("created_at", { ascending: false })
         .limit(limit);
@@ -409,6 +422,11 @@ export function createSearchHandlers(
         ? (params.search_mode as "hybrid" | "vector" | "keyword")
         : undefined;
       const replayMinScore = typeof params.min_score === "number" ? params.min_score : undefined;
+      const replayProfile =
+        typeof params.retrieval_profile === "string" &&
+        ["balanced", "recall", "precision"].includes(params.retrieval_profile)
+          ? (params.retrieval_profile as SearchPayload["retrieval_profile"])
+          : undefined;
       const payload: SearchPayload = {
         user_id: typeof params.user_id === "string" ? params.user_id : "default",
         query: String(row.query ?? ""),
@@ -420,6 +438,7 @@ export function createSearchHandlers(
         explain: params.explain === true,
         search_mode: replaySearchMode,
         min_score: replayMinScore,
+        retrieval_profile: replayProfile,
       };
       const replayEmbedsDelta = (replaySearchMode ?? "hybrid") === "keyword" ? 0 : 1;
       const replayEmbedTokensDelta = d.estimateEmbedTokens(String(row.query ?? "").length);
@@ -514,6 +533,64 @@ export function createSearchHandlers(
       } finally {
         await releaseWorkspaceConcurrencySlot(auth.workspaceId, concurrency.leaseToken, env);
       }
+    },
+
+    async handleContextFeedback(request, env, supabase, auditCtx, requestId = "", deps?) {
+      const d = (deps ?? defaultDeps) as SearchHandlerDeps;
+      const { jsonResponse } = d;
+      const auth = await authenticate(request, env, supabase, auditCtx);
+      requireWorkspaceId(auth.workspaceId);
+      const rate = await rateLimit(auth.keyHash, env, auth, getRouteRateLimitMax(env, "search", auth.keyCreatedAt));
+      if (!rate.allowed) {
+        return jsonResponse({ error: { code: "rate_limited", message: "Rate limit exceeded" } }, 429, rate.headers);
+      }
+      const bodyResult = await d.safeParseJson<{
+        trace_id?: string;
+        query_id?: string;
+        chunk_ids_used?: string[];
+        chunk_ids_unused?: string[];
+        eval_set_id?: string;
+      }>(request);
+      if (!bodyResult.ok) {
+        return jsonResponse({ error: { code: "BAD_REQUEST", message: bodyResult.error } }, 400, rate.headers);
+      }
+      const traceId = typeof bodyResult.data.trace_id === "string" ? bodyResult.data.trace_id.trim() : "";
+      if (!traceId) {
+        return jsonResponse({ error: { code: "BAD_REQUEST", message: "trace_id is required" } }, 400, rate.headers);
+      }
+      const used = Array.isArray(bodyResult.data.chunk_ids_used)
+        ? bodyResult.data.chunk_ids_used.filter((id) => typeof id === "string" && id.length > 0).slice(0, 200)
+        : [];
+      const unused = Array.isArray(bodyResult.data.chunk_ids_unused)
+        ? bodyResult.data.chunk_ids_unused.filter((id) => typeof id === "string" && id.length > 0).slice(0, 200)
+        : [];
+      const evalSetId =
+        typeof bodyResult.data.eval_set_id === "string" && bodyResult.data.eval_set_id.trim()
+          ? bodyResult.data.eval_set_id.trim()
+          : undefined;
+      await d.emitProductEvent(
+        supabase,
+        "context_feedback",
+        {
+          workspaceId: auth.workspaceId,
+          requestId,
+          route: "/v1/context/feedback",
+          method: "POST",
+          status: 202,
+          effectivePlan: d.effectivePlan(auth.plan, auth.planStatus),
+          planStatus: auth.planStatus,
+        },
+        {
+          trace_id: traceId,
+          query_id: typeof bodyResult.data.query_id === "string" ? bodyResult.data.query_id : undefined,
+          eval_set_id: evalSetId,
+          chunk_ids_used: used,
+          chunk_ids_unused: unused,
+          used_count: used.length,
+          unused_count: unused.length,
+        },
+      );
+      return jsonResponse({ accepted: true }, 202, rate.headers);
     },
   };
 }

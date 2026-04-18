@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   chunkText,
+  chunkTextWithProfile,
   dedupeFusionResults,
   finalizeResults,
   normalizeSearchPayload,
@@ -138,6 +139,20 @@ describe("chunkText paragraph aware", () => {
     const text = "Line1\n\n\n\n";
     const chunks = chunkText(text, 10, 2);
     expect(chunks.every((c) => c.trim().length > 0)).toBe(true);
+  });
+});
+
+describe("chunkTextWithProfile", () => {
+  it("uses larger windows for document profile than dense", () => {
+    const text = "A".repeat(2500);
+    const dense = chunkTextWithProfile(text, "dense");
+    const doc = chunkTextWithProfile(text, "document");
+    expect(doc.length).toBeLessThanOrEqual(dense.length);
+  });
+
+  it("matches plain chunkText for balanced default", () => {
+    const text = "One\n\nTwo\n\nThree longish paragraph ".repeat(20);
+    expect(chunkTextWithProfile(text, undefined)).toEqual(chunkText(text));
   });
 });
 

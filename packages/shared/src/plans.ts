@@ -298,6 +298,44 @@ export function getUsageCapsForPlanCode(planCode: string | null | undefined): Us
   };
 }
 
+/** Per-dimension minimum of two daily-cap snapshots (custom caps_json vs plan defaults). */
+export function minUsageCaps(a: UsageCaps, b: UsageCaps): UsageCaps {
+  return {
+    writes: Math.min(a.writes, b.writes),
+    reads: Math.min(a.reads, b.reads),
+    embeds: Math.min(a.embeds, b.embeds),
+  };
+}
+
+/**
+ * Billing grace: enforce the stricter of paid plan limits vs Launch on each quota dimension.
+ * Overage INR rates stay on the paid row for settlement; only hard gates are floored.
+ */
+export function applyLaunchFloorToPlanLimits(paid: PlanLimits): PlanLimits {
+  const floor = getLimitsForPlanCode("launch");
+  const rpm = (lim: PlanLimits) => lim.workspace_rpm ?? WORKSPACE_RPM_DEFAULT;
+  return {
+    included_writes: Math.min(paid.included_writes, floor.included_writes),
+    included_reads: Math.min(paid.included_reads, floor.included_reads),
+    included_embed_tokens: Math.min(paid.included_embed_tokens, floor.included_embed_tokens),
+    included_gen_tokens: Math.min(paid.included_gen_tokens, floor.included_gen_tokens),
+    included_storage_gb: Math.min(paid.included_storage_gb, floor.included_storage_gb),
+    daily_usage_pct_cap: Math.min(paid.daily_usage_pct_cap, floor.daily_usage_pct_cap),
+    retention_days: Math.min(paid.retention_days, floor.retention_days),
+    overage_writes_per_1k_inr: paid.overage_writes_per_1k_inr,
+    overage_reads_per_1k_inr: paid.overage_reads_per_1k_inr,
+    overage_embed_tokens_per_1m_inr: paid.overage_embed_tokens_per_1m_inr,
+    overage_gen_tokens_per_1m_inr: paid.overage_gen_tokens_per_1m_inr,
+    overage_storage_gb_month_inr: paid.overage_storage_gb_month_inr,
+    writes_per_day: Math.min(paid.writes_per_day, floor.writes_per_day),
+    reads_per_day: Math.min(paid.reads_per_day, floor.reads_per_day),
+    embed_tokens_per_day: Math.min(paid.embed_tokens_per_day, floor.embed_tokens_per_day),
+    extraction_calls_per_day: Math.min(paid.extraction_calls_per_day, floor.extraction_calls_per_day),
+    max_text_chars: Math.min(paid.max_text_chars, floor.max_text_chars),
+    workspace_rpm: Math.min(rpm(paid), rpm(floor)),
+  };
+}
+
 /** Returns workspace RPM for plan (Scale/Scale+: 300, others: 120). */
 export function getWorkspaceRpmForPlanCode(planCode: string | null | undefined): number {
   const limits = getLimitsForPlanCode(planCode);

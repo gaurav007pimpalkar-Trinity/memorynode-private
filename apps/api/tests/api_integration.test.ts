@@ -67,6 +67,51 @@ describe("POST /v1/memories", () => {
   });
 });
 
+describe("memory importance & retrieval_count (stub)", () => {
+  it("persists importance and increments retrieval_count after search", async () => {
+    const { apiKey } = await getStubApiKey();
+    const auth = { authorization: `Bearer ${apiKey}` };
+    const token = "retrievalcountuniq999";
+    const insertRes = await api.fetch(
+      new Request("http://localhost/v1/memories", {
+        method: "POST",
+        headers: { "content-type": "application/json", ...auth },
+        body: JSON.stringify({
+          user_id: "u-rc",
+          text: `Hold the ${token} marker for retrieval stats`,
+          namespace: "default",
+          importance: 4,
+        }),
+      }),
+      stubEnv as unknown as Record<string, unknown>,
+    );
+    expect(insertRes.status).toBe(200);
+    const inserted = await insertRes.json();
+    const memoryId = inserted.memory_id as string;
+
+    let getRes = await api.fetch(new Request(`http://localhost/v1/memories/${memoryId}`, { headers: auth }), stubEnv as unknown as Record<string, unknown>);
+    expect(getRes.status).toBe(200);
+    let mem = await getRes.json();
+    expect(mem.importance).toBe(4);
+    expect(Number(mem.retrieval_count ?? 0)).toBe(0);
+
+    const searchRes = await api.fetch(
+      new Request("http://localhost/v1/search", {
+        method: "POST",
+        headers: { "content-type": "application/json", ...auth },
+        body: JSON.stringify({ user_id: "u-rc", query: token, top_k: 10 }),
+      }),
+      stubEnv as unknown as Record<string, unknown>,
+    );
+    expect(searchRes.status).toBe(200);
+
+    getRes = await api.fetch(new Request(`http://localhost/v1/memories/${memoryId}`, { headers: auth }), stubEnv as unknown as Record<string, unknown>);
+    expect(getRes.status).toBe(200);
+    mem = await getRes.json();
+    expect(Number(mem.retrieval_count ?? 0)).toBeGreaterThanOrEqual(1);
+  });
+});
+
 describe("POST /v1/search", () => {
   it("returns 200 and results ordered by score descending", async () => {
     const { apiKey } = await getStubApiKey();
@@ -128,5 +173,137 @@ describe("GET /v1/health", () => {
     expect(json.status).toBe("ok");
     expect(typeof json.version).toBe("string");
     expect(typeof json.embedding_model).toBe("string");
+  });
+});
+
+describe("eval API (stub)", () => {
+  it("creates set, item, runs eval, lists, deletes", async () => {
+    const { apiKey } = await getStubApiKey();
+    const auth = { authorization: `Bearer ${apiKey}` };
+    const userId = "eval-user-int";
+
+    const memRes = await api.fetch(
+      new Request("http://localhost/v1/memories", {
+        method: "POST",
+        headers: { "content-type": "application/json", ...auth },
+        body: JSON.stringify({
+          user_id: userId,
+          text: "evaluniqtoken987654321 context for retrieval test",
+          namespace: "default",
+        }),
+      }),
+      stubEnv as unknown as Record<string, unknown>,
+    );
+    expect(memRes.status).toBe(200);
+    const memJson = await memRes.json();
+    const memoryId = memJson.memory_id as string;
+    expect(typeof memoryId).toBe("string");
+
+    const setRes = await api.fetch(
+      new Request("http://localhost/v1/evals/sets", {
+        method: "POST",
+        headers: { "content-type": "application/json", ...auth },
+        body: JSON.stringify({ name: "integration-eval-set" }),
+      }),
+      stubEnv as unknown as Record<string, unknown>,
+    );
+    expect(setRes.status).toBe(201);
+    const setJson = await setRes.json();
+    const evalSetId = setJson.eval_set?.id as string;
+    expect(typeof evalSetId).toBe("string");
+
+    const itemRes = await api.fetch(
+      new Request("http://localhost/v1/evals/items", {
+        method: "POST",
+        headers: { "content-type": "application/json", ...auth },
+        body: JSON.stringify({
+          eval_set_id: evalSetId,
+          query: "evaluniqtoken987654321",
+          expected_memory_ids: [memoryId],
+        }),
+      }),
+      stubEnv as unknown as Record<string, unknown>,
+    );
+    expect(itemRes.status).toBe(201);
+    const itemJson = await itemRes.json();
+    const evalItemId = itemJson.eval_item?.id as string;
+    expect(typeof evalItemId).toBe("string");
+
+    const listSets = await api.fetch(
+      new Request("http://localhost/v1/evals/sets", { method: "GET", headers: auth }),
+      stubEnv as unknown as Record<string, unknown>,
+    );
+    expect(listSets.status).toBe(200);
+    const listSetsJson = await listSets.json();
+    expect(Array.isArray(listSetsJson.eval_sets)).toBe(true);
+    expect(listSetsJson.eval_sets.some((s: { id: string }) => s.id === evalSetId)).toBe(true);
+
+    const listItems = await api.fetch(
+      new Request(`http://localhost/v1/evals/items?eval_set_id=${encodeURIComponent(evalSetId)}`, {
+        method: "GET",
+        headers: auth,
+      }),
+      stubEnv as unknown as Record<string, unknown>,
+    );
+    expect(listItems.status).toBe(200);
+    const listItemsJson = await listItems.json();
+    expect(listItemsJson.eval_items?.length).toBeGreaterThanOrEqual(1);
+
+    const runRes = await api.fetch(
+      new Request("http://localhost/v1/evals/run", {
+        method: "POST",
+        headers: { "content-type": "application/json", ...auth },
+        body: JSON.stringify({
+          eval_set_id: evalSetId,
+          user_id: userId,
+          search_mode: "keyword",
+          top_k: 5,
+        }),
+      }),
+      stubEnv as unknown as Record<string, unknown>,
+    );
+    expect(runRes.status).toBe(200);
+    const runJson = await runRes.json();
+    expect(runJson.eval_set_id).toBe(evalSetId);
+    expect(runJson.item_count).toBe(1);
+    expect(typeof runJson.avg_precision_at_k).toBe("number");
+    expect(typeof runJson.avg_recall).toBe("number");
+    expect(Array.isArray(runJson.items)).toBe(true);
+    expect(runJson.items[0].eval_item_id).toBe(evalItemId);
+    expect(typeof runJson.items[0].precision_at_k).toBe("number");
+    expect(typeof runJson.items[0].recall).toBe("number");
+
+    const delItem = await api.fetch(
+      new Request(`http://localhost/v1/evals/items/${encodeURIComponent(evalItemId)}`, {
+        method: "DELETE",
+        headers: auth,
+      }),
+      stubEnv as unknown as Record<string, unknown>,
+    );
+    expect(delItem.status).toBe(200);
+
+    const delSet = await api.fetch(
+      new Request(`http://localhost/v1/evals/sets/${encodeURIComponent(evalSetId)}`, {
+        method: "DELETE",
+        headers: auth,
+      }),
+      stubEnv as unknown as Record<string, unknown>,
+    );
+    expect(delSet.status).toBe(200);
+  });
+
+  it("returns 400 for invalid eval item payload", async () => {
+    const { apiKey } = await getStubApiKey();
+    const res = await api.fetch(
+      new Request("http://localhost/v1/evals/items", {
+        method: "POST",
+        headers: { "content-type": "application/json", authorization: `Bearer ${apiKey}` },
+        body: JSON.stringify({ eval_set_id: "not-a-uuid", query: "x", expected_memory_ids: [] }),
+      }),
+      stubEnv as unknown as Record<string, unknown>,
+    );
+    expect(res.status).toBe(400);
+    const json = await res.json();
+    expect(json?.error?.code).toBe("BAD_REQUEST");
   });
 });

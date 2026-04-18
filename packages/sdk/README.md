@@ -40,7 +40,7 @@ const results = await client.search({
 await client.importMemories("<artifact_base64>", "upsert");
 ```
 
-Get an API key at [console.memorynode.ai](https://console.memorynode.ai).
+Get an API key at [console.memorynode.ai](https://console.memorynode.ai). **Quickstart:** [docs/start-here/README.md](../../docs/start-here/README.md).
 
 ## Links
 

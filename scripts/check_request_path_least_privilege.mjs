@@ -27,6 +27,7 @@ const tenantTables = new Set([
   "payu_transactions",
   "api_keys",
   "workspaces",
+  "api_audit_log",
 ]);
 
 for (const file of files) {
@@ -75,6 +76,7 @@ const scopeViolations = scanWorkspaceScopeViolations({
     { fileIncludes: "workerApp.ts", table: "workspace_entitlements", op: "insert" },
     { fileIncludes: "workerApp.ts", table: "workspaces", op: "select" },
     { fileIncludes: "workerApp.ts", table: "workspaces", op: "update" },
+    { fileIncludes: "handlers/auditLog.ts", table: "api_audit_log", op: "select" },
   ],
 });
 for (const v of scopeViolations) {

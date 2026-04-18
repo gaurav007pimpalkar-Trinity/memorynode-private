@@ -1,0 +1,22 @@
+meta {
+  name: Create Eval Set
+  type: http
+  seq: 11
+}
+
+post {
+  url: {{base_url}}/v1/evals/sets
+  body: json
+  auth: none
+}
+
+headers {
+  content-type: application/json
+  Authorization: Bearer {{api_key}}
+}
+
+body:json {
+  {
+    "name": "Support Baseline Set"
+  }
+}

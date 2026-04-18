@@ -9,6 +9,9 @@
   },
   "scripts": {
     "dev": "pnpm --filter @memorynode/api dev",
+    "dev:stub": "node scripts/dev_stub.mjs",
+    "preflight:dev": "node scripts/preflight_dev_env.mjs",
+    "mn": "node packages/cli/bin/mn.mjs",
     "dev:api": "node -e \"console.log('Base URL: http://127.0.0.1:' + (process.env.PORT || '8787'))\" && pnpm --filter @memorynode/api dev",
     "build": "pnpm -r build",
     "lint": "eslint .",

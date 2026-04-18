@@ -9,7 +9,13 @@ import type { AuthContext } from "../auth.js";
 import { authenticate, rateLimit } from "../auth.js";
 import type { HandlerDeps } from "../router.js";
 import type { UsageSnapshot } from "../limits.js";
-import { computeInternalCredits, computePlanIncludedInternalCredits, type PlanLimits } from "@memorynodeai/shared";
+import {
+  computeInternalCredits,
+  computeOperationalMode,
+  computePlanIncludedInternalCredits,
+  computeUsageCapAlerts,
+  type PlanLimits,
+} from "@memorynodeai/shared";
 
 export interface UsageRowLike {
   writes: number;
@@ -28,6 +34,12 @@ export interface QuotaResolutionLike {
   effectivePlan: string;
   planStatus: AuthContext["planStatus"];
   blocked: boolean;
+  errorCode?: string;
+  message?: string;
+  /** When false and not blocked: entitlement row read failed; vector/search may be restricted in prod. */
+  degradedEntitlements?: boolean;
+  /** Billing grace row: caps floored toward Launch while `effectivePlan` stays paid. */
+  grace_soft_downgrade?: boolean;
   periodStart?: string | null;
   periodEnd?: string | null;
   semantics?: "dual_hard";
@@ -113,6 +125,28 @@ export function createUsageHandlers(
         storage_gb: (usage.storage_bytes_used ?? 0) / 1_000_000_000,
       });
       const includedCredits = computePlanIncludedInternalCredits(quota.planLimits);
+      const embedTokensCap = quota.planLimits.included_embed_tokens ?? quota.planLimits.embed_tokens_per_day;
+      const genTokensCap = Math.max(0, quota.planLimits.included_gen_tokens ?? 0);
+      const storageBytesCap = Math.max(0, (quota.planLimits.included_storage_gb ?? 0) * 1_000_000_000);
+      const capAlerts = computeUsageCapAlerts({
+        writes: usage.writes,
+        reads: usage.reads,
+        embeds: usage.embeds,
+        embed_tokens: usage.embed_tokens_used ?? 0,
+        extraction_calls: usage.extraction_calls ?? 0,
+        gen_tokens: (usage.gen_input_tokens_used ?? 0) + (usage.gen_output_tokens_used ?? 0),
+        storage_bytes: usage.storage_bytes_used ?? 0,
+        caps,
+        embed_tokens_cap: embedTokensCap,
+        extraction_calls_cap: quota.planLimits.extraction_calls_per_day,
+        gen_tokens_cap: genTokensCap,
+        storage_bytes_cap: storageBytesCap,
+      });
+      const operationalMode = computeOperationalMode({
+        degradedEntitlements: Boolean(quota.degradedEntitlements),
+        capAlerts,
+        graceSoftDowngrade: Boolean(quota.grace_soft_downgrade),
+      });
       return jsonResponse(
         {
           day,
@@ -125,6 +159,9 @@ export function createUsageHandlers(
           storage_bytes: usage.storage_bytes_used ?? 0,
           plan: quota.effectivePlan,
           limits: caps,
+          cap_alerts: capAlerts,
+          operational_mode: operationalMode,
+          ...(quota.grace_soft_downgrade ? { grace_soft_downgrade: true } : {}),
           limits_v3: {
             included_writes: quota.planLimits.included_writes ?? quota.planLimits.writes_per_day,
             included_reads: quota.planLimits.included_reads ?? quota.planLimits.reads_per_day,

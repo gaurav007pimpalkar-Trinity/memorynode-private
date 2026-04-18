@@ -154,6 +154,12 @@ export async function apiGet<T>(path: string): Promise<T> {
   return fetchJson<T>(path, { method: "GET" });
 }
 
+export async function apiDelete<T>(path: string): Promise<T> {
+  const headers: Record<string, string> = {};
+  if (csrfToken) headers["x-csrf-token"] = csrfToken;
+  return fetchJson<T>(path, { method: "DELETE", headers });
+}
+
 export async function adminGet<T>(path: string, adminToken: string): Promise<T> {
   return fetchJson<T>(
     path,

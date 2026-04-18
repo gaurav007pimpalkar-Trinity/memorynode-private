@@ -13,8 +13,6 @@ import {
   COST_MODEL_VERSION,
   computeInternalCredits,
   estimateCostInr,
-  getPlan,
-  getLimitsForPlanCode,
   type PlanLimits,
 } from "@memorynodeai/shared";
 import type { Env } from "./env.js";
@@ -60,6 +58,7 @@ import {
 } from "./handlers/search.js";
 import { createContextHandlers } from "./handlers/context.js";
 import { createUsageHandlers, type UsageHandlerDeps } from "./handlers/usage.js";
+import { createAuditLogHandlers, type AuditLogHandlerDeps } from "./handlers/auditLog.js";
 import { createDashboardOverviewHandlers } from "./handlers/dashboardOverview.js";
 import { createBillingHandlers, type BillingHandlerDeps } from "./handlers/billing.js";
 import { createWebhookHandlers, type WebhookHandlerDeps } from "./handlers/webhooks.js";
@@ -67,6 +66,9 @@ import { createAdminHandlers, type AdminHandlerDeps } from "./handlers/admin.js"
 import { createImportHandlers, type ImportHandlerDeps, type ImportMode } from "./handlers/import.js";
 import { createWorkspacesHandlers, type WorkspacesHandlerDeps } from "./handlers/workspaces.js";
 import { createApiKeysHandlers, type ApiKeysHandlerDeps } from "./handlers/apiKeys.js";
+import { createEvalHandlers, type EvalHandlerDeps } from "./handlers/evals.js";
+import { createPruningHandlers } from "./handlers/pruning.js";
+import { createExplainHandlers } from "./handlers/explain.js";
 import {
   createDashboardSession,
   deleteDashboardSession,
@@ -82,9 +84,7 @@ import {
   RETRY_MAX_ATTEMPTS,
   SUPABASE_RETRY_DELAYS_MS,
   OPENAI_EMBED_RETRY_DELAYS_MS,
-  PAYU_VERIFY_RETRY_DELAYS_MS,
   EMBED_REQUEST_TIMEOUT_MS,
-  PAYU_VERIFY_TIMEOUT_MS,
 } from "./resilienceConstants.js";
 import { withCircuitBreaker } from "./circuitBreaker.js";
 import { assertRowsWorkspaceScoped } from "./supabaseScoped.js";
@@ -93,36 +93,48 @@ import {
   createRequestScopedSupabaseClient,
   createServiceRoleSupabaseClient,
 } from "./dbClientFactory.js";
-
-type MetadataFilter = Record<string, string | number | boolean>;
-
-interface SearchFilters {
-  metadata?: MetadataFilter;
-  start_time?: string;
-  end_time?: string;
-  memory_type?: string | string[];
-  filter_mode?: "and" | "or";
-}
-
-type PayUWebhookPayload = {
-  key?: string;
-  txnid?: string;
-  mihpayid?: string;
-  status?: string;
-  hash?: string;
-  amount?: string;
-  productinfo?: string;
-  firstname?: string;
-  email?: string;
-  udf1?: string;
-  udf2?: string;
-  udf3?: string;
-  udf4?: string;
-  udf5?: string;
-  currency?: string;
-  addedon?: string;
-  [key: string]: unknown;
-};
+import { chunkParamsForProfile, type ChunkProfile } from "./contracts/memories.js";
+import {
+  buildPayURequestHashInput,
+  computeSha512Hex,
+} from "./billing/payuHash.js";
+import { resolveEntitlementPlanCode } from "./billing/entitlements.js";
+import type { EffectivePlanCode } from "./billing/entitlements.js";
+export type { EffectivePlanCode } from "./billing/entitlements.js";
+import {
+  assertPayUEnvFor,
+  asNonEmptyString,
+  createPayUWebhookReconciler,
+  DEFAULT_PAYU_PRODUCT_INFO,
+  DEFAULT_WEBHOOK_REPROCESS_LIMIT,
+  fetchPayUTransactionByTxnId,
+  formatAmountStrict,
+  isPayUBillingConfigured,
+  isPayUWebhookSignatureValid,
+  normalizeCurrency,
+  normalizePayUBaseUrl,
+  parseWebhookPayload,
+  resolvePayUAmountForPlan,
+  resolvePayUEventCreated,
+  resolvePayUEventId,
+  resolvePayUEventType,
+  resolvePayUVerifyTimeoutMs,
+  resolveProductInfoForPlan,
+  transitionPayUTransactionStatus,
+} from "./billing/payuReconcile.js";
+import {
+  buildUpgradeUrl,
+  planLimitExceededResponse,
+  reserveQuotaAndMaybeRespond,
+  markUsageReservationCommitted,
+  markUsageReservationRefundPending,
+  estimateRequestCostInr,
+} from "./usage/quotaReservation.js";
+import { resolveQuotaForWorkspace } from "./usage/quotaResolution.js";
+import type { SearchPayload } from "./contracts/search.js";
+import type { MetadataFilter } from "./search/normalizeRequest.js";
+import { normalizeSearchPayload, normalizeMemoryListParams } from "./search/normalizeRequest.js";
+import type { MemoryListParams } from "./handlers/memories.js";
 
 function parseApiKeyMeta(raw: string): { prefix: string; last4: string } {
   const parts = raw.split("_");
@@ -135,56 +147,9 @@ function parseApiKeyMeta(raw: string): { prefix: string; last4: string } {
   return { prefix: "", last4: raw.slice(-4) };
 }
 
-interface SearchPayload {
-  user_id: string;
-  namespace?: string;
-  query: string;
-  top_k?: number;
-  page?: number;
-  page_size?: number;
-  filters?: SearchFilters;
-  explain?: boolean;
-  search_mode?: "hybrid" | "vector" | "keyword";
-  min_score?: number;
-}
-
-interface NormalizedSearchParams {
-  user_id: string;
-  namespace: string;
-  query: string;
-  top_k: number;
-  page: number;
-  page_size: number;
-  explain?: boolean;
-  search_mode: "hybrid" | "vector" | "keyword";
-  min_score?: number;
-  filters: {
-    metadata?: MetadataFilter;
-    start_time?: string;
-    end_time?: string;
-    memory_types?: string[];
-    filter_mode: "and" | "or";
-  };
-}
-
-interface MemoryListParams {
-  page: number;
-  page_size: number;
-  namespace?: string;
-  user_id?: string;
-  memory_type?: string;
-  filters: {
-    metadata?: MetadataFilter;
-    start_time?: string;
-    end_time?: string;
-  };
-}
-
 const DEFAULT_NAMESPACE = "default";
 const SEARCH_MATCH_COUNT = 200;
-const MAX_PAGE_SIZE = 50;
 const MAX_FUSE_RESULTS = 200;
-const DEFAULT_LIST_PAGE_SIZE = 20;
 const DEFAULT_MAX_BODY_BYTES = 1_000_000; // 1 MB
 const DEFAULT_MAX_IMPORT_BYTES = 10_000_000; // 10 MB
 const DEFAULT_MAX_EXPORT_BYTES = 10_000_000; // 10 MB
@@ -194,22 +159,6 @@ const ADMIN_MAX_BODY_BYTES = 100_000; // 100 KB for admin/control plane ops
 const RRF_K = 60;
 const DEFAULT_SUCCESS_PATH = "/settings/billing?status=success";
 const DEFAULT_CANCEL_PATH = "/settings/billing?status=canceled";
-const DEFAULT_PAYU_CURRENCY = "INR";
-const DEFAULT_PAYU_PRODUCT_INFO = "MemoryNode Platform";
-const DEFAULT_PAYU_VERIFY_URL = "https://info.payu.in/merchant/postservice?form=2";
-const DEFAULT_WEBHOOK_REPROCESS_LIMIT = 50;
-
-const ENTITLEMENT_DURATION_DAYS: Record<string, number | null> = {
-  launch: 7,
-  build: 30,
-  deploy: 30,
-  scale: 30,
-  scale_plus: null,
-  pro: 30,
-};
-
-/** Effective plan surfaced in API responses (plan_code). Not internal DB plan (pro/team). */
-export type EffectivePlanCode = "launch" | "build" | "deploy" | "scale" | "scale_plus";
 
 type ProductEventContext = {
   workspaceId?: string | null;
@@ -271,792 +220,11 @@ async function emitProductEvent(
   }
 }
 
+const reconcilePayUWebhook = createPayUWebhookReconciler({ emitProductEvent });
+
 function effectivePlan(plan: AuthContext["plan"], status?: AuthContext["planStatus"]): AuthContext["plan"] {
   if (status === "active" || status === "trialing") return plan;
   return "pro";
-}
-
-function assertPayUEnvFor(path: string, env: Env): void {
-  const missing: string[] = [];
-  if (!env.PAYU_MERCHANT_KEY) missing.push("PAYU_MERCHANT_KEY");
-  if (!env.PAYU_MERCHANT_SALT) missing.push("PAYU_MERCHANT_SALT");
-  if (!env.PAYU_BASE_URL) missing.push("PAYU_BASE_URL");
-  if (!env.PUBLIC_APP_URL) missing.push("PUBLIC_APP_URL");
-  if (path === "/v1/billing/webhook" && !env.PAYU_VERIFY_URL) missing.push("PAYU_VERIFY_URL");
-  if (missing.length) {
-    throw createHttpError(500, "CONFIG_ERROR", `Missing PayU configuration: ${missing.join(", ")}`);
-  }
-}
-
-function isPayUBillingConfigured(env: Env): boolean {
-  return Boolean(env.PAYU_MERCHANT_KEY && env.PAYU_MERCHANT_SALT && env.PAYU_BASE_URL && env.PUBLIC_APP_URL);
-}
-
-function normalizePayUStatus(status: string | null | undefined): "success" | "pending" | "failure" | "canceled" {
-  const normalized = (status ?? "").trim().toLowerCase();
-  if (normalized === "success") return "success";
-  if (normalized === "pending") return "pending";
-  if (normalized === "cancel" || normalized === "cancelled" || normalized === "canceled") return "canceled";
-  return "failure";
-}
-
-function planStatusFromPayUStatus(status: "success" | "pending" | "failure" | "canceled"): AuthContext["planStatus"] {
-  if (status === "success") return "active";
-  if (status === "pending") return "past_due";
-  if (status === "canceled") return "canceled";
-  return "past_due";
-}
-
-function normalizeMoneyString(raw: string | undefined, fallback = "999.00"): string {
-  const parsed = Number(raw ?? fallback);
-  if (!Number.isFinite(parsed) || parsed <= 0) return fallback;
-  return parsed.toFixed(2);
-}
-
-/** Format INR amount as string with two decimals (PayU expects "499.00", never "499"). */
-function formatINRAmount(n: number): string {
-  return Number.isFinite(n) ? Number(n).toFixed(2) : "0.00";
-}
-
-function resolvePayUAmountForPlan(planCode: string, env: Env): string {
-  const code = resolveEntitlementPlanCode(planCode);
-  const fromEnv =
-    code === "launch" ? env.PAYU_LAUNCH_AMOUNT
-    : code === "build" ? env.PAYU_BUILD_AMOUNT
-    : code === "deploy" ? env.PAYU_DEPLOY_AMOUNT
-    : code === "scale" ? env.PAYU_SCALE_AMOUNT
-    : env.PAYU_PRO_AMOUNT;
-  if (fromEnv != null && fromEnv.trim() !== "") {
-    const parsed = Number(fromEnv.trim());
-    if (Number.isFinite(parsed) && parsed > 0) return formatINRAmount(parsed);
-  }
-  const plan = getPlan(code);
-  return plan && plan.price_inr > 0
-    ? formatINRAmount(plan.price_inr)
-    : (env.PAYU_PRO_AMOUNT ? normalizeMoneyString(env.PAYU_PRO_AMOUNT, "999.00") : "999.00");
-}
-
-function resolveProductInfoForPlan(planCode: string, env: Env): string {
-  const code = resolveEntitlementPlanCode(planCode);
-  const plan = getPlan(code);
-  const base = (env.PAYU_PRODUCT_INFO ?? DEFAULT_PAYU_PRODUCT_INFO).trim() || DEFAULT_PAYU_PRODUCT_INFO;
-  return plan ? `${base} — ${plan.label}` : base;
-}
-
-function normalizeCurrency(raw: string | undefined): string {
-  const normalized = (raw ?? DEFAULT_PAYU_CURRENCY).trim().toUpperCase();
-  return normalized || DEFAULT_PAYU_CURRENCY;
-}
-
-function paymentPeriodEndFromStatus(status: "success" | "pending" | "failure" | "canceled"): string | null {
-  if (status !== "success") return null;
-  const next = new Date(Date.now() + 30 * 24 * 60 * 60 * 1000);
-  return next.toISOString();
-}
-
-function resolveEntitlementExpiry(planCode: string, now = new Date()): string | null {
-  const durationDays = ENTITLEMENT_DURATION_DAYS[planCode] ?? 30;
-  if (durationDays === null) return null;
-  return new Date(now.getTime() + durationDays * 24 * 60 * 60 * 1000).toISOString();
-}
-
-function resolveEntitlementPlanCode(raw: string | null | undefined): string {
-  const normalized = (raw ?? "").trim().toLowerCase();
-  if (!normalized) return "pro";
-  if (normalized === "launch") return "launch";
-  if (normalized === "build") return "build";
-  if (normalized === "deploy") return "deploy";
-  if (normalized === "scale") return "scale";
-  if (normalized === "scale+" || normalized === "scale_plus") return "scale_plus";
-  if (normalized === "pro") return "pro";
-  return "pro";
-}
-
-function normalizePayUBaseUrl(raw: string): string {
-  const trimmed = raw.trim();
-  if (!trimmed) throw createHttpError(500, "CONFIG_ERROR", "PAYU_BASE_URL not set");
-  const parsed = new URL(trimmed);
-  if (!parsed.pathname || parsed.pathname === "/") {
-    parsed.pathname = "/_payment";
-  }
-  return parsed.toString();
-}
-
-function normalizePayUHash(input: unknown): string {
-  return String(input ?? "").trim().toLowerCase();
-}
-
-function asNonEmptyString(raw: unknown): string | null {
-  if (typeof raw !== "string") return null;
-  const trimmed = raw.trim();
-  return trimmed.length > 0 ? trimmed : null;
-}
-
-function parsePayUEventCreated(raw: unknown): number {
-  const direct = Number(raw);
-  if (Number.isFinite(direct) && direct > 0) return Math.floor(direct);
-  if (typeof raw === "string" && raw.trim().length > 0) {
-    const ts = Date.parse(raw);
-    if (Number.isFinite(ts) && ts > 0) return Math.floor(ts / 1000);
-  }
-  return Math.floor(Date.now() / 1000);
-}
-
-type PayURequestHashFields = {
-  key: string;
-  txnid: string;
-  amount: string;
-  productinfo: string;
-  firstname: string;
-  email: string;
-  udf1?: string;
-  udf2?: string;
-  udf3?: string;
-  udf4?: string;
-  udf5?: string;
-  salt: string;
-};
-
-function payURequestHashSequence(fields: PayURequestHashFields): string {
-  return [
-    fields.key,
-    fields.txnid,
-    fields.amount,
-    fields.productinfo,
-    fields.firstname,
-    fields.email,
-    fields.udf1 ?? "",
-    fields.udf2 ?? "",
-    fields.udf3 ?? "",
-    fields.udf4 ?? "",
-    fields.udf5 ?? "",
-    "",
-    "",
-    "",
-    "",
-    "",
-    fields.salt,
-  ].join("|");
-}
-
-function payUHashReverseSequence(payload: PayUWebhookPayload, env: Pick<Env, "PAYU_MERCHANT_SALT" | "PAYU_MERCHANT_KEY">): string {
-  return [
-    env.PAYU_MERCHANT_SALT ?? "",
-    payload.status ?? "",
-    "",
-    "",
-    "",
-    "",
-    "",
-    payload.udf5 ?? "",
-    payload.udf4 ?? "",
-    payload.udf3 ?? "",
-    payload.udf2 ?? "",
-    payload.udf1 ?? "",
-    payload.email ?? "",
-    payload.firstname ?? "",
-    payload.productinfo ?? "",
-    payload.amount ?? "",
-    payload.txnid ?? "",
-    env.PAYU_MERCHANT_KEY ?? "",
-  ].join("|");
-}
-
-export function buildPayURequestHashInput(fields: PayURequestHashFields): string {
-  return payURequestHashSequence(fields);
-}
-
-export function buildPayUResponseReverseHashInput(payload: PayUWebhookPayload, env: Pick<Env, "PAYU_MERCHANT_SALT" | "PAYU_MERCHANT_KEY">): string {
-  return payUHashReverseSequence(payload, env);
-}
-
-export async function computeSha512Hex(input: string): Promise<string> {
-  const data = new TextEncoder().encode(input);
-  const digest = await crypto.subtle.digest("SHA-512", data);
-  return Array.from(new Uint8Array(digest))
-    .map((b) => b.toString(16).padStart(2, "0"))
-    .join("");
-}
-
-function parseWebhookPayload(raw: string, contentType: string): PayUWebhookPayload {
-  if (contentType.includes("application/json")) {
-    try {
-      const parsed = JSON.parse(raw);
-      return (parsed ?? {}) as PayUWebhookPayload;
-    } catch {
-      throw createHttpError(400, "BAD_REQUEST", "Webhook body must be valid JSON");
-    }
-  }
-  const params = new URLSearchParams(raw);
-  const payload: Record<string, string> = {};
-  for (const [k, v] of params.entries()) {
-    payload[k] = v;
-  }
-  return payload as PayUWebhookPayload;
-}
-
-async function isPayUWebhookSignatureValid(
-  payload: PayUWebhookPayload,
-  rawBody: string,
-  request: Request,
-  env: Env,
-): Promise<boolean> {
-  const received = normalizePayUHash(payload.hash);
-  if (!received) return false;
-
-  const merchantKey = asNonEmptyString(payload.key);
-  if (merchantKey && merchantKey !== env.PAYU_MERCHANT_KEY) return false;
-
-  const reverse = buildPayUResponseReverseHashInput(payload, env);
-  const expected = normalizePayUHash(await computeSha512Hex(reverse));
-  if (expected === received) return true;
-
-  const additionalCharges = asNonEmptyString((payload as { additionalCharges?: unknown }).additionalCharges);
-  if (additionalCharges) {
-    const expectedWithCharges = normalizePayUHash(await computeSha512Hex(`${additionalCharges}|${reverse}`));
-    if (expectedWithCharges === received) return true;
-  }
-
-  const webhookSecret = asNonEmptyString(env.PAYU_WEBHOOK_SECRET);
-  const signatureHeader = asNonEmptyString(request.headers.get("x-payu-signature"));
-  if (webhookSecret && signatureHeader) {
-    const fallback = normalizePayUHash(await computeSha512Hex(`${rawBody}|${webhookSecret}`));
-    return fallback === normalizePayUHash(signatureHeader);
-  }
-
-  return false;
-}
-
-type PayUTransactionStatus =
-  | "created"
-  | "initiated"
-  | "verify_failed"
-  | "verified"
-  | "success"
-  | "failed"
-  | "canceled"
-  | "pending";
-
-type PayUTransactionRow = {
-  txn_id: string;
-  workspace_id: string;
-  plan_code: string;
-  amount: number | string;
-  currency: string;
-  status: PayUTransactionStatus;
-  payu_payment_id?: string | null;
-};
-
-type PayUVerifyResponse = {
-  ok: boolean;
-  status: "success" | "pending" | "failure" | "canceled";
-  statusRaw: string;
-  txnId: string;
-  paymentId: string | null;
-  amount: string;
-  currency: string;
-  payload: Record<string, unknown>;
-};
-
-type QuotaResolution = {
-  caps: UsageSnapshot;
-  planLimits: PlanLimits;
-  effectivePlan: EffectivePlanCode;
-  planStatus: AuthContext["planStatus"];
-  blocked: false;
-  degradedEntitlements: boolean;
-  periodStart?: string | null;
-  periodEnd?: string | null;
-  semantics?: "dual_hard";
-} | {
-  caps: UsageSnapshot;
-  planLimits: PlanLimits;
-  effectivePlan: EffectivePlanCode;
-  planStatus: AuthContext["planStatus"];
-  blocked: true;
-  errorCode: "ENTITLEMENT_EXPIRED" | "ENTITLEMENT_REQUIRED";
-  message: string;
-  expiredAt: string | null;
-  periodStart?: string | null;
-  periodEnd?: string | null;
-  semantics?: "dual_hard";
-};
-
-function normalizePayUTxnStatus(raw: string | null | undefined): PayUTransactionStatus {
-  const normalized = (raw ?? "").trim().toLowerCase();
-  if (normalized === "created") return "created";
-  if (normalized === "initiated") return "initiated";
-  if (normalized === "verify_failed") return "verify_failed";
-  if (normalized === "verified") return "verified";
-  if (normalized === "success") return "success";
-  if (normalized === "failed") return "failed";
-  if (normalized === "canceled") return "canceled";
-  if (normalized === "pending") return "pending";
-  return "created";
-}
-
-function payUTxnStatusRank(status: PayUTransactionStatus): number {
-  switch (status) {
-    case "created":
-      return 10;
-    case "initiated":
-      return 20;
-    case "verify_failed":
-      return 30;
-    case "pending":
-      return 35;
-    case "verified":
-      return 40;
-    case "success":
-      return 50;
-    case "failed":
-      return 60;
-    case "canceled":
-      return 60;
-    default:
-      return 0;
-  }
-}
-
-function canTransitionPayUTxnStatus(current: PayUTransactionStatus, next: PayUTransactionStatus): boolean {
-  if (current === "success" && next !== "success") return false;
-  if (current === "failed" && next !== "failed") return false;
-  if (current === "canceled" && next !== "canceled") return false;
-  return payUTxnStatusRank(next) >= payUTxnStatusRank(current);
-}
-
-function payUStatusFromTxnStatus(status: PayUTransactionStatus): "success" | "pending" | "failure" | "canceled" {
-  if (status === "success" || status === "verified") return "success";
-  if (status === "pending") return "pending";
-  if (status === "canceled") return "canceled";
-  return "failure";
-}
-
-function formatAmountStrict(raw: unknown): string {
-  const value = Number(raw);
-  if (!Number.isFinite(value) || value <= 0) return "0.00";
-  return value.toFixed(2);
-}
-
-/** Returns effective plan code for API responses (launch|build|deploy|scale|scale_plus). */
-function authPlanFromEntitlement(planCode: string): EffectivePlanCode {
-  const normalized = resolveEntitlementPlanCode(planCode);
-  if (normalized === "launch" || normalized === "build" || normalized === "deploy" || normalized === "scale" || normalized === "scale_plus") {
-    return normalized;
-  }
-  if (normalized === "pro") return "build"; // legacy
-  return "launch";
-}
-
-function normalizeUsageCaps(raw: unknown): UsageSnapshot | null {
-  if (!raw || typeof raw !== "object" || Array.isArray(raw)) return null;
-  const writes = Number((raw as Record<string, unknown>).writes);
-  const reads = Number((raw as Record<string, unknown>).reads);
-  const embeds = Number((raw as Record<string, unknown>).embeds);
-  if (![writes, reads, embeds].every((v) => Number.isFinite(v) && v >= 0)) return null;
-  return {
-    writes: Math.floor(writes),
-    reads: Math.floor(reads),
-    embeds: Math.floor(embeds),
-  };
-}
-
-function resolveCapsByEntitlementPlan(planCode: string): UsageSnapshot {
-  return capsByPlanCode(resolveEntitlementPlanCode(planCode));
-}
-
-async function resolveQuotaForWorkspace(
-  auth: AuthContext,
-  supabase: SupabaseClient,
-): Promise<QuotaResolution> {
-  const fallbackCaps = capsByPlanCode("launch");
-  const fallbackPlanLimits = getLimitsForPlanCode("launch");
-  const fallbackPlan: EffectivePlanCode = "launch";
-  const fallbackStatus = auth.planStatus ?? "past_due";
-  const now = Date.now();
-  try {
-    const query = await supabase
-      .from("workspace_entitlements")
-      .select("plan_code,status,starts_at,expires_at,caps_json")
-      .eq("workspace_id", auth.workspaceId)
-      .order("created_at", { ascending: false })
-      .limit(25);
-    if (query.error) {
-      return {
-        caps: fallbackCaps,
-        planLimits: fallbackPlanLimits,
-        effectivePlan: fallbackPlan,
-        planStatus: fallbackStatus,
-        blocked: false,
-        degradedEntitlements: true,
-        semantics: "dual_hard",
-      };
-    }
-    const rows = (query.data ?? []) as Array<{
-      plan_code?: string | null;
-      status?: string | null;
-      starts_at?: string | null;
-      expires_at?: string | null;
-      caps_json?: unknown;
-    }>;
-    if (rows.length === 0) {
-      return {
-        caps: fallbackCaps,
-        planLimits: fallbackPlanLimits,
-        effectivePlan: fallbackPlan,
-        planStatus: "past_due",
-        blocked: true,
-        errorCode: "ENTITLEMENT_REQUIRED",
-        message: "No active paid entitlement found. Start a plan to use API endpoints.",
-        expiredAt: null,
-        semantics: "dual_hard",
-      };
-    }
-
-    const active = rows.find((row) => {
-      const status = (row.status ?? "").toLowerCase();
-      if (status !== "active") return false;
-      const startsAt = row.starts_at ? Date.parse(row.starts_at) : 0;
-      if (Number.isFinite(startsAt) && startsAt > now) return false;
-      const expiresAt = row.expires_at ? Date.parse(row.expires_at) : Number.POSITIVE_INFINITY;
-      return !Number.isFinite(expiresAt) || expiresAt > now;
-    });
-    if (active) {
-      const planCode = resolveEntitlementPlanCode(active.plan_code);
-      const caps = normalizeUsageCaps(active.caps_json) ?? resolveCapsByEntitlementPlan(planCode);
-      return {
-        caps,
-        planLimits: getLimitsForPlanCode(planCode),
-        effectivePlan: authPlanFromEntitlement(planCode),
-        planStatus: "active",
-        blocked: false,
-        degradedEntitlements: false,
-        periodStart: active.starts_at ?? null,
-        periodEnd: active.expires_at ?? null,
-        semantics: "dual_hard",
-      };
-    }
-
-    const expired = rows.find((row) => {
-      const expiresAt = row.expires_at ? Date.parse(row.expires_at) : Number.NaN;
-      return Number.isFinite(expiresAt) && expiresAt <= now;
-    });
-    if (expired) {
-      return {
-        caps: fallbackCaps,
-        planLimits: fallbackPlanLimits,
-        effectivePlan: "launch",
-        planStatus: "canceled",
-        blocked: true,
-        errorCode: "ENTITLEMENT_EXPIRED",
-        message: "Active entitlement expired. Renew to continue quota-consuming API calls.",
-        expiredAt: expired.expires_at ?? null,
-        semantics: "dual_hard",
-      };
-    }
-  } catch {
-    // Best-effort compatibility with test stubs or pre-migration schemas.
-  }
-  return {
-    caps: fallbackCaps,
-    planLimits: fallbackPlanLimits,
-    effectivePlan: fallbackPlan,
-    planStatus: "past_due",
-    blocked: true,
-    errorCode: "ENTITLEMENT_REQUIRED",
-    message: "Unable to verify active entitlement. Please complete billing before using API endpoints.",
-    expiredAt: null,
-    semantics: "dual_hard",
-  };
-}
-
-async function fetchPayUTransactionByTxnId(
-  supabase: SupabaseClient,
-  txnId: string,
-): Promise<PayUTransactionRow | null> {
-  const row = await supabase
-    .from("payu_transactions")
-    .select("txn_id,workspace_id,plan_code,amount,currency,status,payu_payment_id")
-    .eq("txn_id", txnId)
-    .maybeSingle();
-  if (row.error) {
-    throw createHttpError(500, "DB_ERROR", row.error.message ?? "Failed to read PayU transaction");
-  }
-  return (row.data as PayUTransactionRow | null) ?? null;
-}
-
-async function transitionPayUTransactionStatus(
-  supabase: SupabaseClient,
-  txnId: string,
-  next: PayUTransactionStatus,
-  fields: {
-    paymentId?: string | null;
-    verifyStatus?: string | null;
-    verifyPayload?: Record<string, unknown> | null;
-    lastError?: string | null;
-    requestId?: string | null;
-  } = {},
-): Promise<PayUTransactionStatus> {
-  const current = await supabase
-    .from("payu_transactions")
-    .select("status")
-    .eq("txn_id", txnId)
-    .maybeSingle();
-  if (current.error) {
-    throw createHttpError(500, "DB_ERROR", current.error.message ?? "Failed to read transaction status");
-  }
-  const currentStatus = normalizePayUTxnStatus((current.data as { status?: string } | null)?.status);
-  if (!canTransitionPayUTxnStatus(currentStatus, next)) {
-    return currentStatus;
-  }
-  const payload: Record<string, unknown> = {
-    status: next,
-    updated_at: new Date().toISOString(),
-  };
-  if (fields.paymentId !== undefined) payload.payu_payment_id = fields.paymentId;
-  if (fields.verifyStatus !== undefined) payload.verify_status = fields.verifyStatus;
-  if (fields.verifyPayload !== undefined) payload.verify_payload = fields.verifyPayload;
-  if (fields.lastError !== undefined) payload.last_error = fields.lastError;
-  if (fields.requestId !== undefined) payload.request_id = fields.requestId;
-  if (fields.verifyStatus !== undefined || fields.verifyPayload !== undefined) {
-    payload.verify_checked_at = new Date().toISOString();
-  }
-
-  const updated = await supabase.from("payu_transactions").update(payload).eq("txn_id", txnId);
-  if (updated.error) {
-    throw createHttpError(500, "DB_ERROR", updated.error.message ?? "Failed to update transaction state");
-  }
-  return next;
-}
-
-function resolvePayUVerifyUrl(env: Env): string {
-  const raw = (env.PAYU_VERIFY_URL ?? DEFAULT_PAYU_VERIFY_URL).trim();
-  if (!raw) throw createHttpError(500, "CONFIG_ERROR", "PAYU_VERIFY_URL not set");
-  return raw;
-}
-
-function resolvePayUVerifyTimeoutMs(env: Env): number {
-  const parsed = Number(env.PAYU_VERIFY_TIMEOUT_MS ?? PAYU_VERIFY_TIMEOUT_MS);
-  if (!Number.isFinite(parsed) || parsed <= 0) return PAYU_VERIFY_TIMEOUT_MS;
-  return Math.min(30_000, Math.max(1_000, Math.floor(parsed)));
-}
-
-function parsePayUVerifyTransactionDetails(payload: Record<string, unknown>, txnId: string): Record<string, unknown> | null {
-  const details = payload.transaction_details;
-  if (!details || typeof details !== "object" || Array.isArray(details)) return null;
-  const byTxn = (details as Record<string, unknown>)[txnId];
-  if (!byTxn || typeof byTxn !== "object" || Array.isArray(byTxn)) return null;
-  return byTxn as Record<string, unknown>;
-}
-
-async function verifyPayUTransactionViaApi(
-  env: Env,
-  txn: PayUTransactionRow,
-): Promise<PayUVerifyResponse> {
-  const command = "verify_payment";
-  const var1 = txn.txn_id;
-  const hashSeed = [env.PAYU_MERCHANT_KEY ?? "", command, var1, env.PAYU_MERCHANT_SALT ?? ""].join("|");
-  const verifyHash = await computeSha512Hex(hashSeed);
-  const body = new URLSearchParams({
-    key: env.PAYU_MERCHANT_KEY ?? "",
-    command,
-    var1,
-    hash: verifyHash,
-  });
-
-  const maxAttempts = RETRY_MAX_ATTEMPTS;
-  const delaysMs = PAYU_VERIFY_RETRY_DELAYS_MS;
-  let lastError: unknown;
-  for (let attempt = 0; attempt <= maxAttempts; attempt++) {
-    if (attempt > 0) {
-      logger.info({
-        event: "payu_verify_retry",
-        attempt,
-        txn_id: txn.txn_id,
-        max_attempts: maxAttempts + 1,
-      });
-      await new Promise((r) => setTimeout(r, delaysMs[attempt - 1] ?? 500));
-    }
-    const controller = new AbortController();
-    const timeout = setTimeout(() => controller.abort(), resolvePayUVerifyTimeoutMs(env));
-    let response: Response;
-    try {
-      response = await fetch(resolvePayUVerifyUrl(env), {
-        method: "POST",
-        headers: { "content-type": "application/x-www-form-urlencoded" },
-        body,
-        signal: controller.signal,
-      });
-    } catch (err) {
-      clearTimeout(timeout);
-      lastError = err;
-      if (attempt === maxAttempts) {
-        const message = redact((err as Error)?.message, "message");
-        throw createHttpError(502, "VERIFY_API_UNAVAILABLE", `PayU verify API unavailable: ${message}`);
-      }
-      continue;
-    }
-    clearTimeout(timeout);
-
-    if (!response.ok) {
-      lastError = new Error(`HTTP ${response.status}`);
-      if (attempt === maxAttempts) {
-        throw createHttpError(502, "VERIFY_API_UNAVAILABLE", `PayU verify API failed with status ${response.status}`);
-      }
-      continue;
-    }
-
-    let payload: Record<string, unknown>;
-    try {
-      payload = (await response.json()) as Record<string, unknown>;
-    } catch {
-      throw createHttpError(502, "VERIFY_API_BAD_RESPONSE", "PayU verify API returned non-JSON payload");
-    }
-
-    const details = parsePayUVerifyTransactionDetails(payload, txn.txn_id);
-    if (!details) {
-      throw createHttpError(502, "VERIFY_API_BAD_RESPONSE", "PayU verify response missing transaction_details entry");
-    }
-
-    const verifyTxnId = asNonEmptyString(details.txnid) ?? txn.txn_id;
-    const amount = formatAmountStrict(details.amount ?? details.amt ?? details.net_amount_debit);
-    const currency = normalizeCurrency(asNonEmptyString(details.currency) ?? txn.currency);
-    const paymentId =
-      asNonEmptyString(details.mihpayid) ??
-      asNonEmptyString(details.payuMoneyId) ??
-      asNonEmptyString(details.payment_id) ??
-      null;
-    const statusRaw =
-      asNonEmptyString(details.unmappedstatus) ??
-      asNonEmptyString(details.status) ??
-      asNonEmptyString(details.field9) ??
-      "failure";
-    const status = normalizePayUStatus(statusRaw);
-    const approved = status === "success";
-    return {
-      ok: approved && verifyTxnId === txn.txn_id,
-      status,
-      statusRaw,
-      txnId: verifyTxnId,
-      paymentId,
-      amount,
-      currency,
-      payload,
-    };
-  }
-  throw lastError;
-}
-
-async function upsertWorkspaceEntitlementFromTransaction(
-  supabase: SupabaseClient,
-  txn: PayUTransactionRow,
-  verify: PayUVerifyResponse,
-): Promise<void> {
-  const now = new Date();
-  const startsAt = now.toISOString();
-  const expiresAt = resolveEntitlementExpiry(resolveEntitlementPlanCode(txn.plan_code), now);
-  const planCode = resolveEntitlementPlanCode(txn.plan_code);
-  const caps = resolveCapsByEntitlementPlan(planCode);
-  const existing = await supabase
-    .from("workspace_entitlements")
-    .select("id")
-    .eq("source_txn_id", txn.txn_id)
-    .maybeSingle();
-  if (existing.error) {
-    throw createHttpError(500, "DB_ERROR", existing.error.message ?? "Failed to read entitlement");
-  }
-  const payload = {
-    workspace_id: txn.workspace_id,
-    source_txn_id: txn.txn_id,
-    plan_code: planCode,
-    status: "active",
-    starts_at: startsAt,
-    expires_at: expiresAt,
-    caps_json: caps,
-    metadata: {
-      payu_status: verify.status,
-      payu_status_raw: verify.statusRaw,
-      payu_payment_id: verify.paymentId,
-      amount: verify.amount,
-      currency: verify.currency,
-    },
-    updated_at: new Date().toISOString(),
-  };
-  if ((existing.data as { id?: number } | null)?.id) {
-    const updated = await supabase
-      .from("workspace_entitlements")
-      .update(payload)
-      .eq("id", (existing.data as { id: number }).id);
-    if (updated.error) {
-      throw createHttpError(500, "DB_ERROR", updated.error.message ?? "Failed to update entitlement");
-    }
-    return;
-  }
-  const inserted = await supabase.from("workspace_entitlements").insert(payload);
-  if (inserted.error) {
-    throw createHttpError(500, "DB_ERROR", inserted.error.message ?? "Failed to create entitlement");
-  }
-
-  // Best-effort v3 entitlement mirror (plans + entitlements tables).
-  try {
-    const planRow = await supabase
-      .from("plans")
-      .select("id")
-      .eq("plan_code", planCode)
-      .maybeSingle();
-    const planId = Number((planRow.data as { id?: number } | null)?.id ?? 0);
-    if (planId > 0) {
-      const existingV3 = await supabase
-        .from("entitlements")
-        .select("id")
-        .eq("source_txn_id", txn.txn_id)
-        .maybeSingle();
-      const periodStart = startsAt;
-      const periodEnd = expiresAt ?? new Date(Date.parse(startsAt) + 30 * 24 * 60 * 60 * 1000).toISOString();
-      const payloadV3 = {
-        workspace_id: txn.workspace_id,
-        plan_id: planId,
-        status: "active",
-        period_start: periodStart,
-        period_end: periodEnd,
-        auto_renew: true,
-        source_txn_id: txn.txn_id,
-        billing_provider: "payu",
-        hard_cap_enabled: true,
-        soft_cap_enabled: true,
-        metadata: {
-          payu_status: verify.status,
-          payu_status_raw: verify.statusRaw,
-          payu_payment_id: verify.paymentId,
-          amount: verify.amount,
-          currency: verify.currency,
-          mirrored_from: "workspace_entitlements",
-        },
-        updated_at: new Date().toISOString(),
-      };
-      if ((existingV3.data as { id?: number } | null)?.id) {
-        await supabase
-          .from("entitlements")
-          .update(payloadV3)
-          .eq("id", Number((existingV3.data as { id: number }).id));
-      } else {
-        await supabase.from("entitlements").insert(payloadV3);
-      }
-    }
-  } catch {
-    // Keep webhook path resilient while schema rolls out progressively.
-  }
-}
-
-function buildUpgradeUrl(env: Env): string {
-  if (env.PUBLIC_APP_URL) {
-    try {
-      return new URL("/billing", env.PUBLIC_APP_URL).toString();
-    } catch {
-      /* ignore invalid URL */
-    }
-  }
-  return "/billing";
 }
 
 async function sha256HexString(value: string): Promise<string> {
@@ -1100,36 +268,6 @@ function capExceededResponse(
         effective_plan: effectivePlanOverride,
         limits: caps,
         usage,
-        upgrade_url: buildUpgradeUrl(env),
-      },
-    },
-    402,
-    rateHeaders,
-  );
-}
-
-/** Plan v2: 402 with PLAN_LIMIT_EXCEEDED and limit/used/cap for clarity. */
-function planLimitExceededResponse(
-  limit: string,
-  used: number,
-  cap: number,
-  rateHeaders: Record<string, string> | undefined,
-  jsonResponse: (data: unknown, status?: number, extraHeaders?: Record<string, string>) => Response,
-  env: Env,
-): Response {
-  const monthly = limit === "budget";
-  const message = monthly
-    ? "Monthly billing-period cap exceeded."
-    : "Daily fair-use cap exceeded.";
-  return jsonResponse(
-    {
-      error: {
-        code: monthly ? "monthly_cap_exceeded" : "daily_cap_exceeded",
-        limit,
-        used,
-        cap,
-        message,
-        ...(monthly ? { action: "upgrade_required" } : { retry_after: "next_day" }),
         upgrade_url: buildUpgradeUrl(env),
       },
     },
@@ -1295,7 +433,17 @@ function enforceRuntimeConfigGuards(env: Env): void {
 function resolveBodyLimit(method: string, path: string, env: Env): number {
   const base = Number(env.MAX_BODY_BYTES ?? DEFAULT_MAX_BODY_BYTES);
   if (method === "POST" && path === "/v1/memories") return Math.min(base, MEMORIES_MAX_BODY_BYTES);
-  if (method === "POST" && (path === "/v1/search" || path === "/v1/context"))
+  if (
+    method === "POST" &&
+    (path === "/v1/search" ||
+      path === "/v1/context" ||
+      path === "/v1/context/feedback" ||
+      path === "/v1/explain/answer" ||
+      path === "/v1/search/replay" ||
+      path === "/v1/evals/sets" ||
+      path === "/v1/evals/items" ||
+      path === "/v1/evals/run")
+  )
     return Math.min(base, SEARCH_MAX_BODY_BYTES);
   if (method === "POST" && path === "/v1/import") return Number(env.MAX_IMPORT_BYTES ?? DEFAULT_MAX_IMPORT_BYTES);
   if (method === "POST" && (path === "/v1/workspaces" || path === "/v1/api-keys" || path === "/v1/api-keys/revoke"))
@@ -1310,9 +458,20 @@ const KNOWN_PATH_ALLOWED_METHODS: Array<{ test: (path: string) => boolean; allow
   { test: (p) => p === "/v1/health", allow: "GET" },
   { test: (p) => p === "/v1/memories", allow: "GET, POST" },
   { test: (p) => /^\/v1\/memories\/[^/]+$/.test(p), allow: "GET, DELETE" },
+  { test: (p) => p === "/v1/search/history", allow: "GET" },
+  { test: (p) => p === "/v1/search/replay", allow: "POST" },
   { test: (p) => p === "/v1/search", allow: "POST" },
+  { test: (p) => p === "/v1/evals/sets", allow: "GET, POST" },
+  { test: (p) => /^\/v1\/evals\/sets\/[^/]+$/.test(p), allow: "DELETE" },
+  { test: (p) => p === "/v1/evals/items", allow: "GET, POST" },
+  { test: (p) => /^\/v1\/evals\/items\/[^/]+$/.test(p), allow: "DELETE" },
+  { test: (p) => p === "/v1/evals/run", allow: "POST" },
   { test: (p) => p === "/v1/context", allow: "POST" },
+  { test: (p) => p === "/v1/context/feedback", allow: "POST" },
+  { test: (p) => p === "/v1/pruning/metrics", allow: "GET" },
+  { test: (p) => p === "/v1/explain/answer", allow: "POST" },
   { test: (p) => p === "/v1/usage/today", allow: "GET" },
+  { test: (p) => p === "/v1/audit/log", allow: "GET" },
   { test: (p) => p === "/v1/dashboard/overview-stats", allow: "GET" },
   { test: (p) => p === "/v1/billing/status", allow: "GET" },
   { test: (p) => p === "/v1/billing/checkout", allow: "POST" },
@@ -1428,8 +587,7 @@ async function handleRequestImpl(request: Request, env: Env): Promise<Response> 
       const buildVersion = (env.BUILD_VERSION ?? "").trim();
       const version = buildVersion || "dev";
       const stageStr = (env.ENVIRONMENT ?? env.NODE_ENV ?? "").trim();
-      const embeddingsMode = (env.EMBEDDINGS_MODE ?? "openai").toLowerCase();
-      const embeddingModel = embeddingsMode === "stub" ? "stub" : "text-embedding-3-small";
+      const embeddingModel = effectiveEmbeddingModelLabelForHealth(env);
       logHealthReadyCompleted(200);
       return new Response(
         JSON.stringify({
@@ -1527,8 +685,7 @@ async function handleRequestImpl(request: Request, env: Env): Promise<Response> 
       const buildVersion = (env.BUILD_VERSION ?? "").trim();
       const version = buildVersion || "dev";
       const stageStr = (env.ENVIRONMENT ?? env.NODE_ENV ?? "").trim();
-      const embeddingsMode = (env.EMBEDDINGS_MODE ?? "openai").toLowerCase();
-      const embeddingModel = embeddingsMode === "stub" ? "stub" : "text-embedding-3-small";
+      const embeddingModel = effectiveEmbeddingModelLabelForHealth(env);
       logHealthReadyCompleted(200);
       return new Response(
         JSON.stringify({
@@ -1732,10 +889,20 @@ async function handleRequestImpl(request: Request, env: Env): Promise<Response> 
         return response;
       }
 
-      const handlerDeps: HandlerDeps & MemoryHandlerDeps & SearchHandlerDeps & UsageHandlerDeps & BillingHandlerDeps & WebhookHandlerDeps & AdminHandlerDeps & ImportHandlerDeps & WorkspacesHandlerDeps & ApiKeysHandlerDeps = {
+      const handlerDeps: HandlerDeps &
+        MemoryHandlerDeps &
+        SearchHandlerDeps &
+        UsageHandlerDeps &
+        AuditLogHandlerDeps &
+        BillingHandlerDeps &
+        WebhookHandlerDeps &
+        AdminHandlerDeps &
+        ImportHandlerDeps &
+        WorkspacesHandlerDeps &
+        ApiKeysHandlerDeps = {
         jsonResponse,
         safeParseJson,
-        chunkText,
+        chunkText: chunkTextWithProfile,
         embedText,
         todayUtc,
         vectorToPgvectorString,
@@ -1801,6 +968,7 @@ async function handleRequestImpl(request: Request, env: Env): Promise<Response> 
       const searchHandlers = createSearchHandlers(handlerDeps, defaultSearchHandlerDeps);
       const contextHandlers = createContextHandlers(handlerDeps, defaultSearchHandlerDeps);
       const usageHandlers = createUsageHandlers(handlerDeps, defaultUsageHandlerDeps);
+      const auditLogHandlers = createAuditLogHandlers(handlerDeps, defaultAuditLogHandlerDeps);
       const dashboardOverviewHandlers = createDashboardOverviewHandlers(handlerDeps, defaultDashboardOverviewDeps);
       const billingHandlers = createBillingHandlers(handlerDeps, defaultBillingHandlerDeps);
       const webhookHandlers = createWebhookHandlers(handlerDeps, defaultWebhookHandlerDeps);
@@ -1808,12 +976,27 @@ async function handleRequestImpl(request: Request, env: Env): Promise<Response> 
       const importHandlers = createImportHandlers(handlerDeps, defaultImportHandlerDeps);
       const workspacesHandlers = createWorkspacesHandlers(handlerDeps, defaultWorkspacesHandlerDeps);
       const apiKeysHandlers = createApiKeysHandlers(handlerDeps, defaultApiKeysHandlerDeps);
+      const evalHandlers = createEvalHandlers(handlerDeps, defaultEvalHandlerDeps);
+      const pruningHandlers = createPruningHandlers(
+        {
+          jsonResponse,
+          resolveQuotaForWorkspace,
+          rateLimitWorkspace,
+        },
+        {
+          jsonResponse,
+          resolveQuotaForWorkspace,
+          rateLimitWorkspace,
+        },
+      );
+      const explainHandlers = createExplainHandlers(handlerDeps, defaultSearchHandlerDeps);
       const routed = await route(request, env, supabase, url, auditCtx, requestId, {
         handlers: {
           ...memoryHandlers,
           ...searchHandlers,
           ...contextHandlers,
           ...usageHandlers,
+          ...auditLogHandlers,
           ...dashboardOverviewHandlers,
           ...billingHandlers,
           ...webhookHandlers,
@@ -1821,6 +1004,9 @@ async function handleRequestImpl(request: Request, env: Env): Promise<Response> 
           ...importHandlers,
           ...workspacesHandlers,
           ...apiKeysHandlers,
+          ...evalHandlers,
+          ...pruningHandlers,
+          ...explainHandlers,
         },
         handlerDeps,
       });
@@ -1902,9 +1088,13 @@ function classifyRouteGroup(pathname: string): string {
   if (pathname === "/healthz" || pathname === "/ready" || pathname === "/ready/") return "health";
   if (pathname === "/v1/health") return "health";
   if (pathname === "/v1/memories" || /^\/v1\/memories\/[^/]+$/.test(pathname)) return "memories";
-  if (pathname === "/v1/search") return "search";
-  if (pathname === "/v1/context") return "context";
-  if (pathname === "/v1/usage/today") return "usage";
+  if (pathname === "/v1/search" || pathname === "/v1/search/history" || pathname === "/v1/search/replay")
+    return "search";
+  if (pathname.startsWith("/v1/evals/")) return "evals";
+  if (pathname === "/v1/context" || pathname === "/v1/context/feedback") return "context";
+  if (pathname === "/v1/pruning/metrics") return "pruning";
+  if (pathname === "/v1/explain/answer") return "explain";
+  if (pathname === "/v1/usage/today" || pathname === "/v1/audit/log") return "usage";
   if (pathname.startsWith("/v1/dashboard/")) return "dashboard";
   if (pathname.startsWith("/v1/billing/")) return "billing";
   if (pathname === "/v1/workspaces") return "workspaces";
@@ -2186,6 +1376,8 @@ let stubState: {
     payu_transactions: StubRow[];
     dashboard_sessions: StubRow[];
     agent_episodes: StubRow[];
+    eval_sets: StubRow[];
+    eval_items: StubRow[];
   };
   rawApiKeys: Map<string, { workspaceId: string }>;
 } | null = null;
@@ -2214,6 +1406,8 @@ function createStubSupabase(env: Env) {
         payu_transactions: [] as StubRow[],
         dashboard_sessions: [] as StubRow[],
         agent_episodes: [] as StubRow[],
+        eval_sets: [] as StubRow[],
+        eval_items: [] as StubRow[],
       },
       rawApiKeys: new Map<string, { workspaceId: string }>(),
     };
@@ -2287,10 +1481,29 @@ function createStubSupabase(env: Env) {
       });
       return makeResult(filtered, count ? filtered.length : undefined);
     },
-    order() {
-      return this;
+    order(col: string, opts?: { ascending?: boolean }) {
+      const asc = opts?.ascending !== false;
+      let sorted = rows;
+      if (col === "created_at" || col === "id") {
+        sorted = [...rows].sort((a, b) => {
+          if (col === "created_at") {
+            const ca = String(a.created_at ?? "");
+            const cb = String(b.created_at ?? "");
+            const c = ca.localeCompare(cb);
+            if (c !== 0) return asc ? c : -c;
+          }
+          const ia = String(a.id ?? "");
+          const ib = String(b.id ?? "");
+          const idc = ia.localeCompare(ib);
+          return asc ? idc : -idc;
+        });
+      }
+      return makeResult(sorted, count);
     },
-    range() {
+    range(from?: number, to?: number) {
+      if (typeof from === "number" && typeof to === "number" && Number.isFinite(from) && Number.isFinite(to) && to >= from && from >= 0) {
+        return makeResult(rows.slice(from, to + 1), count);
+      }
       return this;
     },
     maybeSingle() {
@@ -2342,6 +1555,14 @@ function createStubSupabase(env: Env) {
         if (!r.id) (r as Record<string, unknown>).id = crypto.randomUUID();
         if (!Object.prototype.hasOwnProperty.call(r, "created_at"))
           (r as Record<string, unknown>).created_at = new Date().toISOString();
+        if (table === "eval_sets" && !Object.prototype.hasOwnProperty.call(r, "updated_at")) {
+          (r as Record<string, unknown>).updated_at = (r as Record<string, unknown>).created_at;
+        }
+        if (table === "memories") {
+          const rec = r as Record<string, unknown>;
+          if (rec.importance === undefined) rec.importance = 1;
+          if (rec.retrieval_count === undefined) rec.retrieval_count = 0;
+        }
         db[table].push(structuredClone(r));
         if (table === "workspaces") {
           const nowIso = new Date().toISOString();
@@ -2456,6 +1677,54 @@ function createStubSupabase(env: Env) {
   return {
     from(table: string) {
       const mapped = table === "workspace_entitlements" ? "entitlements" : table;
+      if (mapped === "api_audit_log") {
+        const base = tableBuilder("api_audit_log" as keyof typeof db);
+        return {
+          insert: (payload: StubRow | StubRow[]) => base.insert(payload),
+          delete: (opts?: { count?: "exact" }) => base.delete(opts),
+          update: (values: Record<string, unknown>) => base.update(values),
+          eq: (col: string, val: unknown) => base.eq(col, val),
+          select(_cols?: string) {
+            void _cols;
+            return {
+              eq(col: string, val: unknown) {
+                if (col !== "workspace_id") {
+                  const empty = { data: [] as StubRow[], error: null };
+                  return {
+                    order() {
+                      return this;
+                    },
+                    range() {
+                      return Promise.resolve(empty);
+                    },
+                  };
+                }
+                const wid = String(val);
+                const sortedRows = () =>
+                  [...db.api_audit_log]
+                    .filter((r) => String(r.workspace_id) === wid)
+                    .sort((a, b) => String(b.created_at ?? "").localeCompare(String(a.created_at ?? "")));
+                const chain = {
+                  order(_c?: string, _o?: { ascending?: boolean }) {
+                    void _c;
+                    void _o;
+                    return chain;
+                  },
+                  range(from: number, to: number) {
+                    const rows = sortedRows();
+                    const slice =
+                      Number.isFinite(from) && Number.isFinite(to) && to >= from && from >= 0
+                        ? rows.slice(from, to + 1)
+                        : rows;
+                    return Promise.resolve({ data: slice, error: null });
+                  },
+                };
+                return chain;
+              },
+            };
+          },
+        };
+      }
       return tableBuilder(mapped as keyof typeof db);
     },
     rpc(name: string, params: Record<string, unknown>) {
@@ -2819,6 +2088,34 @@ function createStubSupabase(env: Env) {
             error: null,
           });
         }
+        case "workspace_pruning_metrics": {
+          const ws = params.p_workspace_id as string;
+          const memories = db.memories.filter((m) => m.workspace_id === ws);
+          const memoriesTotal = memories.length;
+          const dup = memories.filter((m) => (m as { duplicate_of?: unknown }).duplicate_of != null).length;
+          const chunks = db.memory_chunks.filter((c) => c.workspace_id === ws).length;
+          return Promise.resolve({
+            data: [
+              {
+                memories_total: memoriesTotal,
+                memories_marked_duplicate: dup,
+                memory_chunks_total: chunks,
+              },
+            ],
+            error: null,
+          });
+        }
+        case "bump_memory_retrieval_counts": {
+          const ws = params.p_workspace_id as string;
+          const ids = (params.p_memory_ids as string[] | null) ?? [];
+          for (const id of ids) {
+            const m = db.memories.find((row) => row.workspace_id === ws && row.id === id) as
+              | (StubRow & { retrieval_count?: number })
+              | undefined;
+            if (m) m.retrieval_count = Number(m.retrieval_count ?? 0) + 1;
+          }
+          return Promise.resolve({ data: null, error: null });
+        }
         case "match_chunks_vector":
         case "match_chunks_text": {
           const memoryTypes = params.p_memory_types as string[] | null;
@@ -2870,16 +2167,27 @@ function createStubSupabase(env: Env) {
           }
 
           const q = (params.p_query as string | undefined)?.toLowerCase() ?? "";
+          const memById = new Map(
+            db.memories
+              .filter((m) => m.workspace_id === params.p_workspace_id)
+              .map((m) => [m.id as string, m as StubRow & { importance?: number; retrieval_count?: number }]),
+          );
           const results = chunks
             .filter((c) => (c.chunk_text as string).toLowerCase().includes(q))
             .slice(0, Number(params.p_match_count ?? 20))
-            .map((c, idx) => ({
-              chunk_id: c.id as string,
-              memory_id: c.memory_id as string,
-              chunk_index: c.chunk_index as number,
-              chunk_text: c.chunk_text as string,
-              score: 1 / (idx + 1),
-            }));
+            .map((c, idx) => {
+              const mem = memById.get(c.memory_id as string);
+              const imp = typeof mem?.importance === "number" ? Math.max(mem.importance, 0.01) : 1;
+              const rc = typeof mem?.retrieval_count === "number" ? Math.max(0, mem.retrieval_count) : 0;
+              const freq = 1 + Math.min(Math.log(1 + rc) / 18, 0.45);
+              return {
+                chunk_id: c.id as string,
+                memory_id: c.memory_id as string,
+                chunk_index: c.chunk_index as number,
+                chunk_text: c.chunk_text as string,
+                score: (1 / (idx + 1)) * imp * freq,
+              };
+            });
           return Promise.resolve({ data: results, error: null });
         }
         case "dashboard_console_overview_stats": {
@@ -2990,6 +2298,12 @@ function createStubSupabase(env: Env) {
             created_at: m.created_at as string,
             memory_type: (m.memory_type as string | null | undefined) ?? null,
             source_memory_id: (m.source_memory_id as string | null | undefined) ?? null,
+            importance: typeof (m as { importance?: number }).importance === "number"
+              ? (m as { importance: number }).importance
+              : 1,
+            retrieval_count: typeof (m as { retrieval_count?: number }).retrieval_count === "number"
+              ? Number((m as { retrieval_count: number }).retrieval_count)
+              : 0,
             total_count: totalCount,
           }));
 
@@ -3011,6 +2325,12 @@ function createStubSupabase(env: Env) {
               created_at: row.created_at as string,
               memory_type: (row.memory_type as string | null | undefined) ?? null,
               source_memory_id: (row.source_memory_id as string | null | undefined) ?? null,
+              importance: typeof (row as { importance?: number }).importance === "number"
+                ? (row as { importance: number }).importance
+                : 1,
+              retrieval_count: typeof (row as { retrieval_count?: number }).retrieval_count === "number"
+                ? Number((row as { retrieval_count: number }).retrieval_count)
+                : 0,
             }],
             error: null,
           });
@@ -3040,128 +2360,6 @@ async function safeParseJson<T>(request: Request): Promise<{ ok: true; data: T }
   } catch {
     return { ok: false, error: "Invalid JSON" };
   }
-}
-
-function clamp(value: number, min: number, max: number): number {
-  if (!Number.isFinite(value)) return min;
-  return Math.min(max, Math.max(min, Math.floor(value)));
-}
-
-function parseIsoTimestamp(value?: string): string | undefined {
-  if (!value) return undefined;
-  const parsed = new Date(value);
-  if (Number.isNaN(parsed.getTime())) {
-    throw createHttpError(400, "BAD_REQUEST", "Invalid ISO timestamp for time filter");
-  }
-  return parsed.toISOString();
-}
-
-function cleanMetadataFilter(raw?: Record<string, unknown> | MetadataFilter): MetadataFilter | undefined {
-  if (!raw) return undefined;
-  const cleaned: MetadataFilter = {};
-  for (const [key, val] of Object.entries(raw)) {
-    if (val === null || typeof val === "undefined") continue;
-    if (typeof val === "string" || typeof val === "number" || typeof val === "boolean") {
-      cleaned[key] = val;
-    } else {
-      throw createHttpError(400, "BAD_REQUEST", "Metadata filter values must be primitives");
-    }
-  }
-  return Object.keys(cleaned).length > 0 ? cleaned : undefined;
-}
-
-export function normalizeSearchPayload(payload: SearchPayload): NormalizedSearchParams {
-  const { user_id, query } = payload;
-  if (!user_id || !query) {
-    throw createHttpError(400, "BAD_REQUEST", "user_id and query are required");
-  }
-  if (query.length > MAX_QUERY_CHARS) {
-    throw createHttpError(400, "BAD_REQUEST", `query exceeds ${MAX_QUERY_CHARS} chars`);
-  }
-
-  const namespace = (payload.namespace ?? DEFAULT_NAMESPACE).trim() || DEFAULT_NAMESPACE;
-  const top_k = clamp(payload.top_k ?? DEFAULT_TOPK, 1, MAX_TOPK);
-  const page = clamp(payload.page ?? 1, 1, Number.MAX_SAFE_INTEGER);
-  const page_size = clamp(payload.page_size ?? top_k, 1, MAX_PAGE_SIZE);
-
-  const metadata = cleanMetadataFilter(payload.filters?.metadata);
-  const start_time = parseIsoTimestamp(payload.filters?.start_time);
-  const end_time = parseIsoTimestamp(payload.filters?.end_time);
-  if (start_time && end_time && new Date(start_time) > new Date(end_time)) {
-    throw createHttpError(400, "BAD_REQUEST", "start_time must be before or equal to end_time");
-  }
-
-  const rawMemoryType = payload.filters?.memory_type;
-  const memory_types: string[] | undefined = rawMemoryType
-    ? (Array.isArray(rawMemoryType) ? rawMemoryType : [rawMemoryType])
-    : undefined;
-
-  const filter_mode = payload.filters?.filter_mode ?? "and";
-  const search_mode = payload.search_mode ?? "hybrid";
-  const min_score = payload.min_score != null && payload.min_score >= 0 && payload.min_score <= 1
-    ? payload.min_score
-    : undefined;
-
-  return {
-    user_id,
-    query,
-    namespace,
-    top_k,
-    page,
-    page_size,
-    explain: payload.explain === true,
-    search_mode,
-    min_score,
-    filters: {
-      metadata,
-      start_time,
-      end_time,
-      memory_types,
-      filter_mode,
-    },
-  };
-}
-
-export function normalizeMemoryListParams(url: URL): MemoryListParams {
-  const page = clamp(Number(url.searchParams.get("page") ?? 1), 1, Number.MAX_SAFE_INTEGER);
-  const page_size = clamp(
-    Number(url.searchParams.get("page_size") ?? DEFAULT_LIST_PAGE_SIZE),
-    1,
-    MAX_PAGE_SIZE,
-  );
-  const namespace = url.searchParams.get("namespace") ?? undefined;
-  const user_id = url.searchParams.get("user_id") ?? undefined;
-
-  let metadata: MetadataFilter | undefined;
-  const metadataRaw = url.searchParams.get("metadata");
-  if (metadataRaw) {
-    try {
-      const parsed = JSON.parse(decodeURIComponent(metadataRaw)) as Record<string, unknown>;
-      metadata = cleanMetadataFilter(parsed);
-    } catch {
-      throw createHttpError(400, "BAD_REQUEST", "metadata must be valid JSON object");
-    }
-  }
-
-  const start_time = parseIsoTimestamp(url.searchParams.get("start_time") ?? undefined);
-  const end_time = parseIsoTimestamp(url.searchParams.get("end_time") ?? undefined);
-  if (start_time && end_time && new Date(start_time) > new Date(end_time)) {
-    throw createHttpError(400, "BAD_REQUEST", "start_time must be before or equal to end_time");
-  }
-
-  const memory_type = url.searchParams.get("memory_type")?.trim() || undefined;
-  if (memory_type && !["fact", "preference", "event", "note"].includes(memory_type)) {
-    throw createHttpError(400, "BAD_REQUEST", "memory_type must be one of: fact, preference, event, note");
-  }
-
-  return {
-    page,
-    page_size,
-    namespace: namespace || undefined,
-    user_id: user_id || undefined,
-    memory_type,
-    filters: { metadata, start_time, end_time },
-  };
 }
 
 export { parseAllowedOrigins, isOriginAllowed, makeCorsHeaders } from "./cors.js";
@@ -3515,6 +2713,18 @@ export function chunkText(text: string, chunkSize = 800, overlap = 100): string[
   return chunks;
 }
 
+export function chunkTextWithProfile(text: string, profile?: ChunkProfile): string[] {
+  const { chunkSize, overlap } = chunkParamsForProfile(profile);
+  return chunkText(text, chunkSize, overlap);
+}
+
+function effectiveEmbeddingModelLabelForHealth(env: Env): string {
+  const mode = (env.EMBEDDINGS_MODE ?? "openai").toLowerCase();
+  if (mode === "stub") return "stub";
+  const trimmed = (env.EMBEDDING_MODEL ?? "text-embedding-3-small").trim();
+  return trimmed.length > 0 ? trimmed : "text-embedding-3-small";
+}
+
 const EMBED_MAX_RETRIES = RETRY_MAX_ATTEMPTS;
 const EMBED_RETRY_DELAYS_MS = OPENAI_EMBED_RETRY_DELAYS_MS;
 
@@ -3571,11 +2781,15 @@ async function embedText(texts: string[], env: Env): Promise<EmbedResult> {
     throw createHttpError(500, "CONFIG_ERROR", "OPENAI_API_KEY not set");
   }
 
+  const modelRaw = (env.EMBEDDING_MODEL ?? "text-embedding-3-small").trim();
+  const model = modelRaw.length > 0 ? modelRaw : "text-embedding-3-small";
+  const bodyPayload: { model: string; input: string[]; dimensions?: number } = { model, input: texts };
+  if (model === "text-embedding-3-large") {
+    bodyPayload.dimensions = 1536;
+  }
+
   const embedStart = Date.now();
-  const body = JSON.stringify({
-    model: "text-embedding-3-small",
-    input: texts,
-  });
+  const body = JSON.stringify(bodyPayload);
   let response: Response;
   try {
     response = await withCircuitBreaker("openai", () =>
@@ -3610,6 +2824,7 @@ async function embedText(texts: string[], env: Env): Promise<EmbedResult> {
       embed_count: texts.length,
       status: response.status,
       success: false,
+      embedding_model: model,
       upstream_error: redact(rawErrorBody, "upstream_error"),
     });
     throw createHttpError(500, "EMBED_ERROR", `Embedding service returned HTTP ${response.status}`);
@@ -3630,6 +2845,7 @@ async function embedText(texts: string[], env: Env): Promise<EmbedResult> {
     tokens_used: tokensUsed,
     status: response.status,
     success: true,
+    embedding_model: model,
   });
 
   if (!json.data || json.data.length !== texts.length) {
@@ -3730,6 +2946,18 @@ function bumpChunkAccess(
     .eq("workspace_id", workspaceId)
     .in("id", chunkIds);
   void Promise.resolve(p).catch(() => {});
+}
+
+/** Fire-and-forget: increments memories.retrieval_count for rows shown in search results. */
+function bumpMemoryRetrievalCounts(supabase: SupabaseClient, workspaceId: string, memoryIds: string[]): void {
+  const uniq = [...new Set(memoryIds)].filter(Boolean);
+  if (uniq.length === 0) return;
+  void Promise.resolve(
+    supabase.rpc("bump_memory_retrieval_counts", {
+      p_workspace_id: workspaceId,
+      p_memory_ids: uniq,
+    }),
+  ).catch(() => {});
 }
 
 async function callMatchText(
@@ -3859,6 +3087,7 @@ type SearchOutcome = {
   page: number;
   page_size: number;
   has_more: boolean;
+  retrieval_trace?: Record<string, unknown>;
 };
 
 type ListOutcome = {
@@ -3871,6 +3100,8 @@ type ListOutcome = {
     created_at: string;
     memory_type?: string | null;
     source_memory_id?: string | null;
+    importance?: number;
+    retrieval_count?: number;
   }[];
   total: number;
   page: number;
@@ -3902,7 +3133,8 @@ async function performSearch(
 ): Promise<SearchOutcome> {
   const searchStart = Date.now();
   const params = normalizeSearchPayload(payload);
-  const { user_id, query, namespace, top_k, page, page_size, explain, search_mode, min_score, filters } = params;
+  const { user_id, query, namespace, top_k, page, page_size, explain, search_mode, min_score, filters, retrieval_profile } =
+    params;
 
   const needsVector = search_mode === "hybrid" || search_mode === "vector";
   if (needsVector) {
@@ -3967,6 +3199,7 @@ async function performSearch(
 
   if (final.results.length > 0) {
     bumpChunkAccess(supabase, auth.workspaceId, final.results.map((r) => r.chunk_id));
+    bumpMemoryRetrievalCounts(supabase, auth.workspaceId, final.results.map((r) => r.memory_id));
   }
 
   const searchLatency = Date.now() - searchStart;
@@ -3979,12 +3212,25 @@ async function performSearch(
     page_size,
   });
 
+  const retrieval_trace: Record<string, unknown> = {
+    search_mode,
+    retrieval_profile,
+    effective_min_score: min_score ?? null,
+    vector_candidates: vectorResults.length,
+    text_candidates: textResults.length,
+    fused_count: fused.length,
+    after_min_score_count: scored.length,
+    result_total: final.total,
+    latency_ms: searchLatency,
+  };
+
   return {
     results: final.results,
     total: final.total,
     page,
     page_size,
     has_more: final.has_more,
+    retrieval_trace,
   };
 }
 
@@ -4218,29 +3464,6 @@ function estimateEmbedTokens(textLength: number): number {
   return Math.ceil(Math.max(0, textLength) / 4);
 }
 
-function estimateRequestCostInr(
-  deltas: {
-    writesDelta: number;
-    readsDelta: number;
-    embedTokensDelta: number;
-    extractionCallsDelta: number;
-  },
-  env: Env,
-): number {
-  return estimateCostInr(
-    {
-      writes: deltas.writesDelta,
-      reads: deltas.readsDelta,
-      embed_tokens: deltas.embedTokensDelta,
-      extraction_calls: deltas.extractionCallsDelta,
-    },
-    {
-      usd_to_inr: Number(env.USD_TO_INR),
-      drift_multiplier: Number(env.COST_DRIFT_MULTIPLIER),
-    },
-  );
-}
-
 /** Result of atomic cap check + bump. On success usage was incremented; on exceeded nothing was changed. */
 type BumpWithinCapResult =
   | { ok: true; usage: UsageRow }
@@ -4390,170 +3613,6 @@ async function _recordUsageEventIfWithinCap(
   };
 }
 
-async function reserveQuotaAndMaybeRespond(
-  quota: { planLimits: PlanLimits; blocked: boolean },
-  supabase: SupabaseClient,
-  workspaceId: string,
-  day: string,
-  deltas: {
-    writesDelta: number;
-    readsDelta: number;
-    embedsDelta: number;
-    embedTokensDelta: number;
-    extractionCallsDelta: number;
-  },
-  rateHeaders: Record<string, string> | undefined,
-  env: Env,
-  jsonResponse: (data: unknown, status?: number, extraHeaders?: Record<string, string>) => Response,
-  meta?: { route?: string; requestId?: string },
-): Promise<{ response: Response | null; reservationId: string | null }> {
-  if (quota.blocked) return { response: null, reservationId: null };
-  const requestId = meta?.requestId?.trim() || crypto.randomUUID();
-  const caps = {
-    writes: quota.planLimits.writes_per_day,
-    reads: quota.planLimits.reads_per_day,
-    embeds: Math.floor(quota.planLimits.embed_tokens_per_day / 200),
-    embed_tokens: quota.planLimits.embed_tokens_per_day,
-    extraction_calls: quota.planLimits.extraction_calls_per_day,
-    gen_tokens: Math.max(0, quota.planLimits.included_gen_tokens ?? 0),
-    storage_bytes: Math.floor(Math.max(0, quota.planLimits.included_storage_gb ?? 0) * 1_000_000_000),
-  };
-  const estimatedCostInr = estimateRequestCostInr(
-    {
-      writesDelta: deltas.writesDelta,
-      readsDelta: deltas.readsDelta,
-      embedTokensDelta: deltas.embedTokensDelta,
-      extractionCallsDelta: deltas.extractionCallsDelta,
-    },
-    env,
-  );
-  const internalCredits = computeInternalCredits({
-    writes: deltas.writesDelta,
-    reads: deltas.readsDelta,
-    embed_tokens: deltas.embedTokensDelta,
-    extraction_calls: deltas.extractionCallsDelta,
-  });
-  const { data, error } = await supabase.rpc("reserve_usage_if_within_cap", {
-    p_workspace_id: workspaceId,
-    p_day: day,
-    p_request_id: requestId,
-    p_route: meta?.route ?? "unknown",
-    p_writes_delta: deltas.writesDelta,
-    p_reads_delta: deltas.readsDelta,
-    p_embeds_delta: deltas.embedsDelta,
-    p_embed_tokens_delta: deltas.embedTokensDelta,
-    p_extraction_calls_delta: deltas.extractionCallsDelta,
-    p_estimated_cost_inr: estimatedCostInr,
-    p_internal_credits_total: internalCredits.total,
-    p_writes_cap: caps.writes,
-    p_reads_cap: caps.reads,
-    p_embeds_cap: caps.embeds,
-    p_embed_tokens_cap: caps.embed_tokens,
-    p_extraction_calls_cap: caps.extraction_calls,
-    p_gen_tokens_cap: caps.gen_tokens,
-    p_storage_bytes_cap: caps.storage_bytes,
-    p_cost_per_minute_cap_inr: Number(env.WORKSPACE_COST_PER_MINUTE_CAP_INR ?? 0),
-  });
-  if (error) {
-    if ((error.message ?? "").includes("REQUEST_ID_CONFLICT")) {
-      throw createHttpError(409, "IDEMPOTENCY_CONFLICT", "request_id reused with different payload or route");
-    }
-    throw createHttpError(500, "DB_ERROR", `Failed to reserve usage budget: ${error.message}`);
-  }
-  const rows = Array.isArray(data) ? data : data ? [data] : [];
-  const row = rows[0] as {
-    reservation_id?: string | null;
-    exceeded?: boolean;
-    limit_name?: string | null;
-    used_value?: number | null;
-    cap_value?: number | null;
-  } | undefined;
-  if (!row) {
-    throw createHttpError(500, "DB_ERROR", "reserve_usage_if_within_cap returned no row");
-  }
-  if (row.exceeded === true && row.limit_name) {
-    if (row.limit_name === "cost_per_minute") {
-      return {
-        response: jsonResponse(
-          {
-            error: {
-              code: "rate_limited",
-              limit: row.limit_name,
-              used: Number(row.used_value ?? 0),
-              cap: Number(row.cap_value ?? 0),
-              message: "Workspace burst spend limit exceeded",
-            },
-          },
-          429,
-          { ...(rateHeaders ?? {}), "retry-after": "60" },
-        ),
-        reservationId: null,
-      };
-    }
-    return {
-      response: planLimitExceededResponse(
-        row.limit_name,
-        Number(row.used_value ?? 0),
-        Number(row.cap_value ?? 0),
-        rateHeaders,
-        jsonResponse,
-        env,
-      ),
-      reservationId: null,
-    };
-  }
-  const reservationId = typeof row.reservation_id === "string" && row.reservation_id.trim().length > 0
-    ? row.reservation_id
-    : null;
-  void (async () => {
-    try {
-      await supabase.rpc("process_usage_reservation_refunds", { p_limit: 25 });
-    } catch {
-      /* best effort */
-    }
-  })();
-  if (Math.random() < 0.01) {
-    void (async () => {
-      try {
-        await supabase.rpc("reconcile_usage_aggregates", {
-          p_workspace_id: workspaceId,
-          p_day: day,
-          p_limit: 1,
-        });
-      } catch {
-        /* best effort */
-      }
-    })();
-  }
-  return { response: null, reservationId };
-}
-
-async function markUsageReservationCommitted(
-  supabase: SupabaseClient,
-  reservationId: string,
-): Promise<void> {
-  try {
-    await supabase.rpc("commit_usage_reservation", { p_reservation_id: reservationId });
-  } catch {
-    /* best effort */
-  }
-}
-
-async function markUsageReservationRefundPending(
-  supabase: SupabaseClient,
-  reservationId: string,
-  errorMessage: string,
-): Promise<void> {
-  try {
-    await supabase.rpc("mark_usage_reservation_refund_pending", {
-      p_reservation_id: reservationId,
-      p_error_message: errorMessage.slice(0, 500),
-    });
-  } catch {
-    /* best effort */
-  }
-}
-
 export async function deleteMemoryCascade(
   supabase: SupabaseClient,
   workspaceId: string,
@@ -4581,7 +3640,7 @@ export async function deleteMemoryCascade(
 const defaultMemoryHandlerDeps: MemoryHandlerDeps = {
   jsonResponse: simpleJsonResponse,
   safeParseJson,
-  chunkText,
+  chunkText: chunkTextWithProfile,
   embedText,
   todayUtc,
   vectorToPgvectorString,
@@ -4621,6 +3680,26 @@ const defaultSearchHandlerDeps: SearchHandlerDeps = {
 
 const searchHandlersDefault = createSearchHandlers(defaultSearchHandlerDeps, defaultSearchHandlerDeps);
 const contextHandlersDefault = createContextHandlers(defaultSearchHandlerDeps, defaultSearchHandlerDeps);
+const defaultEvalHandlerDeps: EvalHandlerDeps = {
+  jsonResponse: simpleJsonResponse,
+  resolveQuotaForWorkspace,
+  rateLimitWorkspace,
+  reserveQuotaAndMaybeRespond,
+  markUsageReservationCommitted,
+  markUsageReservationRefundPending,
+  todayUtc,
+  estimateEmbedTokens,
+  performSearch,
+};
+const evalHandlersDefault = createEvalHandlers(defaultEvalHandlerDeps, defaultEvalHandlerDeps);
+
+const defaultPruningHandlerDeps = {
+  jsonResponse: simpleJsonResponse,
+  resolveQuotaForWorkspace,
+  rateLimitWorkspace,
+};
+const pruningHandlersDefault = createPruningHandlers(defaultPruningHandlerDeps, defaultPruningHandlerDeps);
+const explainHandlersDefault = createExplainHandlers(defaultSearchHandlerDeps, defaultSearchHandlerDeps);
 
 /** Full deps for usage handler when called directly (e.g. from tests). */
 const defaultUsageHandlerDeps: UsageHandlerDeps = {
@@ -4631,6 +3710,13 @@ const defaultUsageHandlerDeps: UsageHandlerDeps = {
   resolveQuotaForWorkspace,
 };
 const usageHandlersDefault = createUsageHandlers(defaultUsageHandlerDeps, defaultUsageHandlerDeps);
+
+const defaultAuditLogHandlerDeps: AuditLogHandlerDeps = {
+  jsonResponse: simpleJsonResponse,
+  resolveQuotaForWorkspace,
+  rateLimitWorkspace,
+};
+const auditLogHandlersDefault = createAuditLogHandlers(defaultAuditLogHandlerDeps, defaultAuditLogHandlerDeps);
 
 const defaultDashboardOverviewDeps = {
   jsonResponse: simpleJsonResponse,
@@ -4748,8 +3834,21 @@ export const handleListMemories = memoryHandlersDefault.handleListMemories;
 export const handleGetMemory = memoryHandlersDefault.handleGetMemory;
 export const handleDeleteMemory = memoryHandlersDefault.handleDeleteMemory;
 export const handleSearch = searchHandlersDefault.handleSearch;
+export const handleListSearchHistory = searchHandlersDefault.handleListSearchHistory;
+export const handleReplaySearch = searchHandlersDefault.handleReplaySearch;
+export const handleContextFeedback = searchHandlersDefault.handleContextFeedback;
+export const handlePruningMetrics = pruningHandlersDefault.handlePruningMetrics;
+export const handleExplainAnswer = explainHandlersDefault.handleExplainAnswer;
+export const handleCreateEvalSet = evalHandlersDefault.handleCreateEvalSet;
+export const handleListEvalSets = evalHandlersDefault.handleListEvalSets;
+export const handleDeleteEvalSet = evalHandlersDefault.handleDeleteEvalSet;
+export const handleCreateEvalItem = evalHandlersDefault.handleCreateEvalItem;
+export const handleListEvalItems = evalHandlersDefault.handleListEvalItems;
+export const handleDeleteEvalItem = evalHandlersDefault.handleDeleteEvalItem;
+export const handleRunEvalSet = evalHandlersDefault.handleRunEvalSet;
 export const handleContext = contextHandlersDefault.handleContext;
 export const handleUsageToday = usageHandlersDefault.handleUsageToday;
+export const handleListAuditLog = auditLogHandlersDefault.handleListAuditLog;
 export const handleDashboardOverviewStats = dashboardOverviewHandlersDefault.handleDashboardOverviewStats;
 export const handleBillingStatus = billingHandlersDefault.handleBillingStatus;
 export const handleBillingCheckout = billingHandlersDefault.handleBillingCheckout;
@@ -4828,379 +3927,7 @@ function resolveBillingWebhooksEnabled(env: Env): boolean {
   return true;
 }
 
-function resolvePayUEventId(payload: PayUWebhookPayload): string {
-  const paymentId = asNonEmptyString(payload.mihpayid);
-  if (paymentId) return paymentId;
-  const txnId = asNonEmptyString(payload.txnid) ?? "unknown_txn";
-  const status = asNonEmptyString(payload.status) ?? "unknown_status";
-  const created = resolvePayUEventCreated(payload);
-  return `${txnId}:${status}:${created}`;
-}
-
-function resolvePayUEventType(payload: PayUWebhookPayload): string {
-  return `payment.${normalizePayUStatus(payload.status)}`;
-}
-
-function resolvePayUEventCreated(payload: PayUWebhookPayload): number {
-  const source = payload.addedon ?? (payload as { created?: unknown }).created;
-  return parsePayUEventCreated(source);
-}
-
-type PayUWebhookEventRow = {
-  event_id: string;
-  status?: string | null;
-  event_created?: number | null;
-  processed_at?: string | null;
-  workspace_id?: string | null;
-  txn_id?: string | null;
-  payment_id?: string | null;
-  payu_status?: string | null;
-  defer_reason?: string | null;
-  request_id?: string | null;
-  last_error?: string | null;
-};
-
-type PayUReconcileWebhookResult = {
-  outcome: "processed" | "replayed" | "ignored_stale" | "deferred";
-  payuEventId: string;
-  eventType: string;
-  eventCreated: number;
-  workspaceId?: string | null;
-  txnId?: string | null;
-  paymentId?: string | null;
-  replayStatus?: string | null;
-  deferReason?: string | null;
-};
-
-function shouldApplyPayUEvent(
-  lastEventCreatedRaw: unknown,
-  lastEventIdRaw: unknown,
-  incomingEventCreated: number,
-  incomingEventId: string,
-): boolean {
-  const lastEventCreated = Number(lastEventCreatedRaw);
-  if (!Number.isFinite(lastEventCreated) || lastEventCreated <= 0) return true;
-  if (incomingEventCreated > lastEventCreated) return true;
-  if (incomingEventCreated < lastEventCreated) return false;
-  const lastEventId = typeof lastEventIdRaw === "string" ? lastEventIdRaw : "";
-  if (!lastEventId) return true;
-  return incomingEventId.localeCompare(lastEventId) > 0;
-}
-
-async function claimPayUWebhookEvent(
-  supabase: SupabaseClient,
-  eventId: string,
-  eventType: string,
-  eventCreated: number,
-  payload: PayUWebhookPayload,
-  requestId = "",
-): Promise<{ replayed: boolean; replayStatus?: string | null }> {
-  const txnId = asNonEmptyString(payload.txnid);
-  if (!txnId) throw createHttpError(400, "BAD_REQUEST", "PayU payload missing txnid");
-  const paymentId = asNonEmptyString(payload.mihpayid);
-  const payuStatus = normalizePayUStatus(payload.status);
-
-  const inserted = await supabase
-    .from("payu_webhook_events")
-    .insert({
-      event_id: eventId,
-      event_type: eventType,
-      event_created: eventCreated,
-      txn_id: txnId,
-      payment_id: paymentId,
-      payu_status: payuStatus,
-      status: "processing",
-      request_id: requestId || null,
-      payload,
-      processed_at: null,
-      last_error: null,
-    })
-    .select("event_id,status")
-    .maybeSingle();
-  if (!inserted.error) return { replayed: false };
-  if (inserted.error.code !== "23505") {
-    throw createHttpError(500, "DB_ERROR", inserted.error.message ?? "Failed to register webhook idempotency key");
-  }
-
-  const existing = await supabase
-    .from("payu_webhook_events")
-    .select("event_id,status")
-    .eq("event_id", eventId)
-    .maybeSingle();
-  if (existing.error) {
-    throw createHttpError(500, "DB_ERROR", existing.error.message ?? "Failed to read webhook idempotency row");
-  }
-  const existingStatus = ((existing.data as PayUWebhookEventRow | null)?.status ?? "processed").toLowerCase();
-  if (existingStatus === "failed" || existingStatus === "deferred") {
-    const retry = await supabase
-      .from("payu_webhook_events")
-      .update({
-        status: "processing",
-        request_id: requestId || null,
-        event_type: eventType,
-        event_created: eventCreated,
-        txn_id: txnId,
-        payment_id: paymentId,
-        payu_status: payuStatus,
-        payload,
-        processed_at: null,
-        last_error: null,
-        defer_reason: null,
-      })
-      .eq("event_id", eventId);
-    if (retry.error) {
-      throw createHttpError(500, "DB_ERROR", retry.error.message ?? "Failed to reopen failed webhook event");
-    }
-    return { replayed: false };
-  }
-  return { replayed: true, replayStatus: existingStatus };
-}
-
-async function finalizePayUWebhookEvent(
-  supabase: SupabaseClient,
-  eventId: string,
-  status: "processed" | "ignored_stale" | "deferred",
-  fields: {
-    workspaceId?: string | null;
-    txnId?: string | null;
-    paymentId?: string | null;
-    payuStatus?: string | null;
-    requestId?: string;
-    deferReason?: string | null;
-  },
-): Promise<void> {
-  const finalize = await supabase
-    .from("payu_webhook_events")
-    .update({
-      status,
-      processed_at: status === "deferred" ? null : new Date().toISOString(),
-      workspace_id: fields.workspaceId ?? null,
-      txn_id: fields.txnId ?? null,
-      payment_id: fields.paymentId ?? null,
-      payu_status: fields.payuStatus ?? null,
-      request_id: fields.requestId || null,
-      defer_reason: status === "deferred" ? fields.deferReason ?? "deferred" : null,
-      last_error: status === "deferred" ? fields.deferReason ?? "Webhook deferred" : null,
-    })
-    .eq("event_id", eventId);
-  if (finalize.error) {
-    throw createHttpError(500, "DB_ERROR", finalize.error.message ?? "Failed to finalize webhook event");
-  }
-}
-
-async function failPayUWebhookEvent(
-  supabase: SupabaseClient,
-  eventId: string,
-  err: unknown,
-): Promise<void> {
-  const message = redact((err as Error)?.message, "message");
-  const fail = await supabase
-    .from("payu_webhook_events")
-    .update({
-      status: "failed",
-      last_error: typeof message === "string" ? message : "Webhook processing failed",
-      processed_at: null,
-      defer_reason: null,
-    })
-    .eq("event_id", eventId);
-  if (fail.error) {
-    logger.error({
-      event: "webhook_event_mark_failed_error",
-      payu_event_id: eventId,
-      error_message: fail.error.message,
-      err: fail.error,
-    });
-  }
-}
-
-async function findWorkspaceForPayUEvent(
-  supabase: SupabaseClient,
-  workspaceHint: string | null,
-  txnId: string | null,
-): Promise<string | null> {
-  if (workspaceHint) {
-    const byHint = await supabase.from("workspaces").select("id").eq("id", workspaceHint).maybeSingle();
-    if (byHint.data?.id) return byHint.data.id as string;
-  }
-  if (txnId) {
-    const byTxn = await supabase.from("workspaces").select("id").eq("payu_txn_id", txnId).maybeSingle();
-    if (byTxn.data?.id) return byTxn.data.id as string;
-  }
-  return null;
-}
-
-async function reconcilePayUWebhook(
-  payload: PayUWebhookPayload,
-  supabase: SupabaseClient,
-  env: Env,
-  requestId = "",
-  forcedEventId?: string,
-): Promise<PayUReconcileWebhookResult> {
-  const eventId = forcedEventId ?? resolvePayUEventId(payload);
-  const eventType = resolvePayUEventType(payload);
-  const eventCreated = resolvePayUEventCreated(payload);
-  const claim = await claimPayUWebhookEvent(supabase, eventId, eventType, eventCreated, payload, requestId);
-  if (claim.replayed) {
-    return {
-      outcome: "replayed",
-      payuEventId: eventId,
-      eventType,
-      eventCreated,
-      replayStatus: claim.replayStatus ?? null,
-    };
-  }
-
-  const txnId = asNonEmptyString(payload.txnid);
-  if (!txnId) throw createHttpError(400, "BAD_REQUEST", "PayU payload missing txnid");
-
-  const txn = await fetchPayUTransactionByTxnId(supabase, txnId);
-  let paymentId = asNonEmptyString(payload.mihpayid);
-  let payuStatus = normalizePayUStatus(payload.status);
-  let workspaceId = txn?.workspace_id ?? null;
-  let deferReason: string | null = null;
-  let outcome: "processed" | "ignored_stale" | "deferred" = "processed";
-
-  try {
-    if (!txn) {
-      deferReason = "transaction_not_found";
-      outcome = "deferred";
-    } else {
-      const verified = await verifyPayUTransactionViaApi(env, txn);
-      payuStatus = verified.status;
-      paymentId = verified.paymentId ?? paymentId;
-      workspaceId = txn.workspace_id;
-
-      const amountMatches = verified.amount === formatAmountStrict(txn.amount);
-      const currencyMatches = normalizeCurrency(verified.currency) === normalizeCurrency(txn.currency);
-      const txnMatches = verified.txnId === txn.txn_id;
-      const verifiedSuccess = verified.ok && verified.status === "success" && amountMatches && currencyMatches && txnMatches;
-
-      if (!verifiedSuccess) {
-        const failureState: PayUTransactionStatus =
-          verified.status === "pending"
-            ? "pending"
-            : verified.status === "canceled"
-              ? "canceled"
-              : "verify_failed";
-        const txnState = await transitionPayUTransactionStatus(supabase, txn.txn_id, failureState, {
-          paymentId,
-          verifyStatus: verified.statusRaw,
-          verifyPayload: verified.payload,
-          lastError: txnMatches && amountMatches && currencyMatches
-            ? "verify_status_not_success"
-            : "verify_payload_mismatch",
-          requestId: requestId || null,
-        });
-        payuStatus = payUStatusFromTxnStatus(txnState);
-      } else {
-        const verifiedState = await transitionPayUTransactionStatus(supabase, txn.txn_id, "verified", {
-          paymentId,
-          verifyStatus: verified.statusRaw,
-          verifyPayload: verified.payload,
-          lastError: null,
-          requestId: requestId || null,
-        });
-        const successState = await transitionPayUTransactionStatus(supabase, txn.txn_id, "success", {
-          paymentId,
-          verifyStatus: verified.statusRaw,
-          verifyPayload: verified.payload,
-          lastError: null,
-          requestId: requestId || null,
-        });
-        payuStatus = payUStatusFromTxnStatus(successState);
-        if (verifiedState === "verified" && successState === "success") {
-          await upsertWorkspaceEntitlementFromTransaction(supabase, txn, verified);
-        }
-      }
-
-      const workspaceHint = workspaceId;
-      workspaceId = await findWorkspaceForPayUEvent(supabase, workspaceHint, txnId);
-      if (!workspaceId) {
-        deferReason = "workspace_not_found";
-        outcome = "deferred";
-      } else {
-        const currentRow = await supabase
-          .from("workspaces")
-          .select("plan_status,payu_last_event_created,payu_last_event_id")
-          .eq("id", workspaceId)
-          .maybeSingle();
-        if (currentRow.error) {
-          throw createHttpError(500, "DB_ERROR", currentRow.error.message ?? "Failed to read billing cursor");
-        }
-        const current = currentRow.data as
-          | {
-            plan_status?: string;
-            payu_last_event_created?: number | null;
-            payu_last_event_id?: string | null;
-          }
-          | null;
-        const shouldApply = shouldApplyPayUEvent(current?.payu_last_event_created, current?.payu_last_event_id, eventCreated, eventId);
-        if (!shouldApply) {
-          outcome = "ignored_stale";
-        } else {
-          const planCode = resolveEntitlementPlanCode(txn.plan_code);
-          const effectivePlanCode = payuStatus === "success" ? authPlanFromEntitlement(planCode) : "launch";
-          const planStatus = payuStatus === "success" ? "active" : planStatusFromPayUStatus(payuStatus);
-          const oldStatus = normalizePlanStatus(current?.plan_status);
-          const workspacePlanForDb: AuthContext["plan"] = "pro";
-          const updatePayload = {
-            billing_provider: "payu",
-            payu_txn_id: txnId,
-            payu_payment_id: paymentId,
-            payu_last_status: payuStatus,
-            payu_last_plan: workspacePlanForDb,
-            payu_last_event_id: eventId,
-            payu_last_event_created: eventCreated,
-            plan: workspacePlanForDb,
-            plan_status: planStatus,
-            current_period_end: paymentPeriodEndFromStatus(payuStatus),
-            cancel_at_period_end: false,
-            updated_at: new Date().toISOString(),
-          };
-          const updated = await supabase.from("workspaces").update(updatePayload).eq("id", workspaceId);
-          if (updated.error) {
-            throw createHttpError(500, "DB_ERROR", updated.error.message ?? "Failed to update PayU billing state");
-          }
-          if ((planStatus === "active" || planStatus === "trialing") && !(oldStatus === "active" || oldStatus === "trialing")) {
-            void emitProductEvent(
-              supabase,
-              "upgrade_activated",
-              {
-                workspaceId,
-                requestId,
-                route: "/v1/billing/webhook",
-                method: "POST",
-                status: 200,
-                effectivePlan: effectivePlanCode,
-                planStatus,
-              },
-            );
-          }
-        }
-      }
-    }
-
-    await finalizePayUWebhookEvent(
-      supabase,
-      eventId,
-      outcome,
-      { workspaceId, txnId, paymentId, payuStatus, requestId, deferReason },
-    );
-  } catch (err) {
-    await failPayUWebhookEvent(supabase, eventId, err);
-    throw err;
-  }
-
-  return {
-    outcome,
-    payuEventId: eventId,
-    eventType,
-    eventCreated,
-    workspaceId,
-    txnId,
-    paymentId,
-    deferReason,
-  };
-}
-
-
+export { buildPayURequestHashInput, buildPayUResponseReverseHashInput, computeSha512Hex } from "./billing/payuHash.js";
+export type { PayURequestHashFields } from "./billing/payuHash.js";
+export { normalizeSearchPayload, normalizeMemoryListParams } from "./search/normalizeRequest.js";
+export type { NormalizedSearchParams, MetadataFilter } from "./search/normalizeRequest.js";

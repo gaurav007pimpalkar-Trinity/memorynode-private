@@ -79,6 +79,18 @@ const MemoryInsertSchema = z
       .record(z.string(), metadataValue)
       .optional()
       .openapi({ example: { project: "alpha", priority: 1 } }),
+    chunk_profile: z
+      .enum(["balanced", "dense", "document"])
+      .optional()
+      .openapi({ description: "Chunking preset for long text before embedding." }),
+    extract: z
+      .boolean()
+      .default(true)
+      .optional()
+      .openapi({
+        description:
+          "When true (default), may run lightweight LLM extraction to child memories when plan and budget allow. Set false to store only the parent memory.",
+      }),
   })
   .openapi("MemoryInsertPayload");
 
@@ -86,6 +98,34 @@ const MemoryInsertResponse = z
   .object({
     memory_id: z.string().openapi({ example: "mem_abc123" }),
     chunks: z.number().int().openapi({ example: 3 }),
+    extraction: z
+      .object({
+        status: z.enum(["run", "degraded", "skipped"]),
+        reason: z
+          .enum([
+            "user_disabled",
+            "low_importance",
+            "plan_limit",
+            "entitlement_degraded",
+            "budget_limit",
+            "extraction_error",
+            "none",
+          ])
+          .optional(),
+        triggered: z.boolean(),
+        children_created: z.number().int(),
+        skipped: z.boolean(),
+        error: z.string().optional(),
+      })
+      .openapi({ description: "Extraction outcome for this write (always present)." }),
+    safety: z
+      .object({
+        pii_hints: z.array(z.enum(["email", "phone"])),
+      })
+      .optional()
+      .openapi({
+        description: 'Present when request included header x-safety-pii-scan: "1" and hints were found.',
+      }),
   })
   .openapi("MemoryInsertResponse");
 
@@ -180,19 +220,78 @@ const ImportResponse = z
   .openapi("ImportResponse");
 
 // ── Usage schemas ───────────────────────────────────────────────────────────
+const UsageCapAlertSchema = z
+  .object({
+    resource: z.enum([
+      "writes",
+      "reads",
+      "embeds",
+      "embed_tokens",
+      "extraction_calls",
+      "gen_tokens",
+      "storage",
+    ]),
+    severity: z.enum(["warning", "critical"]),
+    used: z.number(),
+    cap: z.number(),
+    ratio: z.number(),
+  })
+  .openapi("UsageCapAlert");
+
 const UsageResponse = z
   .object({
+    day: z.string().optional().openapi({ example: "2026-04-18" }),
     plan: z.string().openapi({ example: "launch" }),
     writes: z.number().int(),
     reads: z.number().int(),
     embeds: z.number().int(),
-    caps: z.object({
-      writes: z.number().int(),
-      reads: z.number().int(),
-      embeds: z.number().int(),
+    limits: z
+      .object({
+        writes: z.number().int(),
+        reads: z.number().int(),
+        embeds: z.number().int(),
+      })
+      .optional(),
+    caps: z
+      .object({
+        writes: z.number().int(),
+        reads: z.number().int(),
+        embeds: z.number().int(),
+      })
+      .optional()
+      .openapi({ deprecated: true, description: "Legacy alias; prefer limits." }),
+    cap_alerts: z.array(UsageCapAlertSchema).optional(),
+    operational_mode: z.enum(["normal", "degraded", "sleep"]).optional(),
+    grace_soft_downgrade: z.boolean().optional().openapi({
+      description:
+        "True when entitlement is in billing grace: daily limits floored toward Launch while plan reflects the paid tier.",
     }),
   })
   .openapi("UsageResponse");
+
+const AuditLogEntrySchema = z
+  .object({
+    id: z.string(),
+    route: z.string(),
+    method: z.string(),
+    status: z.number().int(),
+    bytes_in: z.number().int(),
+    bytes_out: z.number().int(),
+    latency_ms: z.number().int(),
+    ip_hash: z.string(),
+    api_key_id: z.string().nullable(),
+    created_at: z.string(),
+  })
+  .openapi("AuditLogEntry");
+
+const AuditLogListResponse = z
+  .object({
+    entries: z.array(AuditLogEntrySchema),
+    page: z.number().int().min(1),
+    limit: z.number().int().min(1),
+    has_more: z.boolean(),
+  })
+  .openapi("AuditLogListResponse");
 
 const DashboardOverviewResponse = z
   .object({
@@ -348,6 +447,15 @@ registry.registerPath({
   tags: ["Memories"],
   security: [{ [bearerAuth.name]: [] }],
   request: {
+    headers: z.object({
+      "x-safety-pii-scan": z
+        .enum(["1"])
+        .optional()
+        .openapi({
+          description:
+            'When set to "1", response may include safety.pii_hints (heuristic email/phone hints only; not a DLP scan).',
+        }),
+    }),
     body: {
       required: true,
       content: {
@@ -482,6 +590,28 @@ registry.registerPath({
       content: { "application/json": { schema: UsageResponse } },
     },
     401: errorRef("Unauthorized"),
+  },
+});
+
+registry.registerPath({
+  method: "get",
+  path: "/v1/audit/log",
+  summary: "Tenant-scoped API request audit trail (paginated)",
+  tags: ["Usage"],
+  security: [{ [bearerAuth.name]: [] }],
+  request: {
+    query: z.object({
+      page: z.coerce.number().int().min(1).optional().openapi({ example: 1 }),
+      limit: z.coerce.number().int().min(1).max(200).optional().openapi({ example: 50 }),
+    }),
+  },
+  responses: {
+    200: {
+      description: "Audit log page",
+      content: { "application/json": { schema: AuditLogListResponse } },
+    },
+    401: errorRef("Unauthorized"),
+    402: errorRef("Upgrade required"),
   },
 });
 

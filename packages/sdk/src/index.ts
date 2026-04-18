@@ -3,21 +3,36 @@ import type {
   AddMemoryResponse,
   ApiError,
   ContextResponse,
+  ContextFeedbackRequest,
+  ContextFeedbackResponse,
   CreateApiKeyResponse,
   CreateWorkspaceResponse,
   DeleteMemoryResponse,
+  DeleteEvalItemResponse,
+  DeleteEvalSetResponse,
+  EvalRunResponse,
   ImportRequest,
   ImportResponse,
   GetMemoryResponse,
   HealthResponse,
   ListApiKeysResponse,
+  ListEvalItemsResponse,
+  ListEvalSetsResponse,
+  SearchHistoryResponse,
   ListMemoriesResponse,
+  ReplaySearchResponse,
   RevokeApiKeyResponse,
   SearchRequest,
   SearchResponse,
   UsageTodayResponse,
+  AuditLogListResponse,
+  CreateEvalSetResponse,
+  CreateEvalItemResponse,
+  ExplainAnswerRequest,
+  ExplainAnswerResponse,
+  PruningMetricsResponse,
 } from "@memorynodeai/shared";
-import type { MemoryType, SearchMode } from "@memorynodeai/shared";
+import type { MemoryType, SearchMode, RetrievalProfile } from "@memorynodeai/shared";
 
 /** Re-export for consumers who want to type API errors without importing from @memorynodeai/shared. */
 export type { ApiError };
@@ -56,6 +71,7 @@ export interface SearchOptions {
   searchMode?: SearchMode;
   /** Minimum relevance score (0–1). Results below are dropped. */
   minScore?: number;
+  retrievalProfile?: RetrievalProfile;
 }
 
 export interface ListMemoriesOptions {
@@ -63,12 +79,37 @@ export interface ListMemoriesOptions {
   pageSize?: number;
   namespace?: string;
   userId?: string;
-  /** Filter by memory type: fact, preference, event, or note. */
+  /** Filter by memory type: fact, preference, event, note, or task. */
   memoryType?: MemoryType;
   metadata?: Record<string, string | number | boolean>;
   startTime?: string;
   endTime?: string;
 }
+
+export interface ReplaySearchOptions {
+  queryId: string;
+}
+
+export interface CreateEvalSetOptions {
+  name: string;
+}
+
+export interface CreateEvalItemOptions {
+  evalSetId: string;
+  query: string;
+  expectedMemoryIds: string[];
+}
+
+export interface RunEvalSetOptions {
+  evalSetId: string;
+  userId: string;
+  namespace?: string;
+  topK?: number;
+  searchMode?: SearchMode;
+  minScore?: number;
+}
+
+export interface ContextFeedbackOptions extends ContextFeedbackRequest {}
 
 const DEFAULT_BASE_URL = "http://127.0.0.1:8787";
 
@@ -131,7 +172,12 @@ export class MemoryNodeClient {
     const m = method.toUpperCase();
     if (m === "GET" || m === "DELETE") return true;
     if (m !== "POST") return false;
-    return path === "/v1/search" || path === "/v1/context" || path.startsWith("/v1/search?");
+    return path === "/v1/search" ||
+      path === "/v1/context" ||
+      path === "/v1/evals/run" ||
+      path === "/v1/context/feedback" ||
+      path === "/v1/explain/answer" ||
+      path.startsWith("/v1/search?");
   }
 
   // -------- Admin helpers (require adminToken per call) --------
@@ -168,6 +214,13 @@ export class MemoryNodeClient {
     return this.request<UsageTodayResponse>("/v1/usage/today", { method: "GET" });
   }
 
+  async listAuditLog(options?: { page?: number; limit?: number }): Promise<AuditLogListResponse> {
+    const page = options?.page ?? 1;
+    const limit = options?.limit ?? 50;
+    const q = new URLSearchParams({ page: String(page), limit: String(limit) });
+    return this.request<AuditLogListResponse>(`/v1/audit/log?${q.toString()}`, { method: "GET" });
+  }
+
   async health(): Promise<HealthResponse> {
     return this.request<HealthResponse>("/healthz", { method: "GET" });
   }
@@ -180,6 +233,8 @@ export class MemoryNodeClient {
       metadata: input.metadata,
     };
     if (input.memory_type) body.memory_type = input.memory_type;
+    if (input.importance !== undefined) body.importance = input.importance;
+    if (input.chunk_profile) body.chunk_profile = input.chunk_profile;
     if (input.extract === true) body.extract = true;
     return this.request<AddMemoryResponse>("/v1/memories", { method: "POST", body });
   }
@@ -189,6 +244,81 @@ export class MemoryNodeClient {
       method: "POST",
       body: this.toWireSearch(input),
     });
+  }
+
+  async listSearchHistory(limit = 20): Promise<SearchHistoryResponse> {
+    const safeLimit = Number.isFinite(limit) ? Math.min(Math.max(Math.floor(limit), 1), 100) : 20;
+    return this.request<SearchHistoryResponse>(`/v1/search/history?limit=${safeLimit}`, { method: "GET" });
+  }
+
+  async replaySearch(input: ReplaySearchOptions): Promise<ReplaySearchResponse> {
+    return this.request<ReplaySearchResponse>("/v1/search/replay", {
+      method: "POST",
+      body: { query_id: input.queryId },
+    });
+  }
+
+  async listEvalSets(): Promise<ListEvalSetsResponse> {
+    return this.request<ListEvalSetsResponse>("/v1/evals/sets", { method: "GET" });
+  }
+
+  async createEvalSet(input: CreateEvalSetOptions): Promise<CreateEvalSetResponse> {
+    return this.request<CreateEvalSetResponse>("/v1/evals/sets", {
+      method: "POST",
+      body: { name: input.name },
+    });
+  }
+
+  async deleteEvalSet(evalSetId: string): Promise<DeleteEvalSetResponse> {
+    return this.request<DeleteEvalSetResponse>(`/v1/evals/sets/${encodeURIComponent(evalSetId)}`, { method: "DELETE" });
+  }
+
+  async listEvalItems(evalSetId: string): Promise<ListEvalItemsResponse> {
+    return this.request<ListEvalItemsResponse>(`/v1/evals/items?eval_set_id=${encodeURIComponent(evalSetId)}`, { method: "GET" });
+  }
+
+  async createEvalItem(input: CreateEvalItemOptions): Promise<CreateEvalItemResponse> {
+    return this.request<CreateEvalItemResponse>("/v1/evals/items", {
+      method: "POST",
+      body: {
+        eval_set_id: input.evalSetId,
+        query: input.query,
+        expected_memory_ids: input.expectedMemoryIds,
+      },
+    });
+  }
+
+  async deleteEvalItem(evalItemId: string): Promise<DeleteEvalItemResponse> {
+    return this.request<DeleteEvalItemResponse>(`/v1/evals/items/${encodeURIComponent(evalItemId)}`, { method: "DELETE" });
+  }
+
+  async runEvalSet(input: RunEvalSetOptions): Promise<EvalRunResponse> {
+    return this.request<EvalRunResponse>("/v1/evals/run", {
+      method: "POST",
+      body: {
+        eval_set_id: input.evalSetId,
+        user_id: input.userId,
+        namespace: input.namespace,
+        top_k: input.topK,
+        search_mode: input.searchMode,
+        min_score: input.minScore,
+      },
+    });
+  }
+
+  async sendContextFeedback(input: ContextFeedbackOptions): Promise<ContextFeedbackResponse> {
+    return this.request<ContextFeedbackResponse>("/v1/context/feedback", {
+      method: "POST",
+      body: input,
+    });
+  }
+
+  async getPruningMetrics(): Promise<PruningMetricsResponse> {
+    return this.request<PruningMetricsResponse>("/v1/pruning/metrics", { method: "GET" });
+  }
+
+  async explainAnswer(input: ExplainAnswerRequest): Promise<ExplainAnswerResponse> {
+    return this.request<ExplainAnswerResponse>("/v1/explain/answer", { method: "POST", body: input });
   }
 
   async context(input: SearchOptions): Promise<ContextResponse> {
@@ -327,6 +457,7 @@ export class MemoryNodeClient {
       page_size: input.pageSize,
       search_mode: input.searchMode,
       min_score: input.minScore,
+      retrieval_profile: input.retrievalProfile,
       filters: hasFilters
         ? {
             metadata: input.metadata,

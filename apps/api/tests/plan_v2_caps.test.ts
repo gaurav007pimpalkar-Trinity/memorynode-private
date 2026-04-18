@@ -248,7 +248,7 @@ function makeSupabasePlanV2(options: {
 }
 
 describe("Plan v2: extraction cap enforcement", () => {
-  it("returns 402 daily_cap_exceeded when extract=true and plan has extraction_calls_per_day 0", async () => {
+  it("returns 200 and skips extraction when plan has extraction_calls_per_day 0 (no 402)", async () => {
     const supabase = makeSupabasePlanV2({ planCode: "free" });
     const res = await handleCreateMemory(
       new Request("http://localhost/v1/memories", {
@@ -260,11 +260,11 @@ describe("Plan v2: extraction cap enforcement", () => {
       supabase,
       {},
     );
-    expect(res.status).toBe(402);
+    expect(res.status).toBe(200);
     const json = await res.json();
-    expect(json.error?.code).toBe("daily_cap_exceeded");
-    expect(json.error?.limit).toBe("extraction_calls");
-    expect(json.error?.cap).toBe(0);
+    expect(json.memory_id).toBeDefined();
+    expect(json.extraction?.status).toBe("skipped");
+    expect(json.extraction?.reason).toBe("plan_limit");
   });
 });
 
@@ -512,5 +512,48 @@ describe("Plan v2: error shape", () => {
     expect(typeof json.error.limit).toBe("string");
     expect(typeof json.error.used).toBe("number");
     expect(typeof json.error.cap).toBe("number");
+  });
+});
+
+describe("Plan v2: opt-in PII hints on ingest", () => {
+  it("includes safety.pii_hints when x-safety-pii-scan is 1 and email-like text is present", async () => {
+    const supabase = makeSupabasePlanV2({ planCode: "launch" });
+    const res = await handleCreateMemory(
+      new Request("http://localhost/v1/memories", {
+        method: "POST",
+        headers: {
+          authorization: "Bearer mn_live_test",
+          "content-type": "application/json",
+          "x-safety-pii-scan": "1",
+        },
+        body: JSON.stringify({ user_id: "u1", text: "contact support@example.com for help" }),
+      }),
+      makeEnv() as Record<string, unknown>,
+      supabase,
+      {},
+    );
+    expect(res.status).toBe(200);
+    const json = await res.json();
+    expect(json.safety?.pii_hints).toContain("email");
+  });
+
+  it("omits safety when PII scan header is absent", async () => {
+    const supabase = makeSupabasePlanV2({ planCode: "launch" });
+    const res = await handleCreateMemory(
+      new Request("http://localhost/v1/memories", {
+        method: "POST",
+        headers: {
+          authorization: "Bearer mn_live_test",
+          "content-type": "application/json",
+        },
+        body: JSON.stringify({ user_id: "u1", text: "contact support@example.com for help" }),
+      }),
+      makeEnv() as Record<string, unknown>,
+      supabase,
+      {},
+    );
+    expect(res.status).toBe(200);
+    const json = await res.json();
+    expect(json.safety).toBeUndefined();
   });
 });

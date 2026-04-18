@@ -63,7 +63,30 @@ export interface RouterHandlers {
     requestId: string,
     deps: HandlerDeps,
   ) => Promise<Response>;
+  handleListSearchHistory: (
+    request: Request,
+    env: Env,
+    supabase: SupabaseClient,
+    auditCtx: AuditCtx,
+    deps: HandlerDeps,
+  ) => Promise<Response>;
+  handleReplaySearch: (
+    request: Request,
+    env: Env,
+    supabase: SupabaseClient,
+    auditCtx: AuditCtx,
+    requestId: string,
+    deps: HandlerDeps,
+  ) => Promise<Response>;
   handleContext: (
+    request: Request,
+    env: Env,
+    supabase: SupabaseClient,
+    auditCtx: AuditCtx,
+    requestId: string,
+    deps: HandlerDeps,
+  ) => Promise<Response>;
+  handleContextFeedback: (
     request: Request,
     env: Env,
     supabase: SupabaseClient,
@@ -75,6 +98,14 @@ export interface RouterHandlers {
     request: Request,
     env: Env,
     supabase: SupabaseClient,
+    auditCtx: AuditCtx,
+    deps: HandlerDeps,
+  ) => Promise<Response>;
+  handleListAuditLog: (
+    request: Request,
+    env: Env,
+    supabase: SupabaseClient,
+    url: URL,
     auditCtx: AuditCtx,
     deps: HandlerDeps,
   ) => Promise<Response>;
@@ -189,6 +220,74 @@ export interface RouterHandlers {
     requestId: string,
     deps: HandlerDeps,
   ) => Promise<Response>;
+  handleCreateEvalSet: (
+    request: Request,
+    env: Env,
+    supabase: SupabaseClient,
+    auditCtx: AuditCtx,
+    deps: HandlerDeps,
+  ) => Promise<Response>;
+  handleListEvalSets: (
+    request: Request,
+    env: Env,
+    supabase: SupabaseClient,
+    auditCtx: AuditCtx,
+    deps: HandlerDeps,
+  ) => Promise<Response>;
+  handleDeleteEvalSet: (
+    request: Request,
+    env: Env,
+    supabase: SupabaseClient,
+    evalSetId: string,
+    auditCtx: AuditCtx,
+    deps: HandlerDeps,
+  ) => Promise<Response>;
+  handleCreateEvalItem: (
+    request: Request,
+    env: Env,
+    supabase: SupabaseClient,
+    auditCtx: AuditCtx,
+    deps: HandlerDeps,
+  ) => Promise<Response>;
+  handleListEvalItems: (
+    request: Request,
+    env: Env,
+    supabase: SupabaseClient,
+    url: URL,
+    auditCtx: AuditCtx,
+    deps: HandlerDeps,
+  ) => Promise<Response>;
+  handleDeleteEvalItem: (
+    request: Request,
+    env: Env,
+    supabase: SupabaseClient,
+    evalItemId: string,
+    auditCtx: AuditCtx,
+    deps: HandlerDeps,
+  ) => Promise<Response>;
+  handleRunEvalSet: (
+    request: Request,
+    env: Env,
+    supabase: SupabaseClient,
+    auditCtx: AuditCtx,
+    requestId: string,
+    deps: HandlerDeps,
+  ) => Promise<Response>;
+  handlePruningMetrics: (
+    request: Request,
+    env: Env,
+    supabase: SupabaseClient,
+    auditCtx: AuditCtx,
+    deps: HandlerDeps,
+  ) => Promise<Response>;
+  handleExplainAnswer: (
+    request: Request,
+    env: Env,
+    supabase: SupabaseClient,
+    auditCtx: AuditCtx,
+    requestId: string,
+    deps: HandlerDeps,
+  ) => Promise<Response>;
 }
 
 /** Injected per-request deps (e.g. bound jsonResponse). Passed to every handler. */
@@ -242,6 +341,14 @@ export async function route(
     }
   }
 
+  if (request.method === "GET" && url.pathname === "/v1/search/history") {
+    return handlers.handleListSearchHistory(request, env, supabase, auditCtx, handlerDeps);
+  }
+
+  if (request.method === "POST" && url.pathname === "/v1/search/replay") {
+    return handlers.handleReplaySearch(request, env, supabase, auditCtx, requestId, handlerDeps);
+  }
+
   if (request.method === "POST" && url.pathname === "/v1/search") {
     return handlers.handleSearch(request, env, supabase, auditCtx, requestId, handlerDeps);
   }
@@ -250,8 +357,24 @@ export async function route(
     return handlers.handleContext(request, env, supabase, auditCtx, requestId, handlerDeps);
   }
 
+  if (request.method === "POST" && url.pathname === "/v1/context/feedback") {
+    return handlers.handleContextFeedback(request, env, supabase, auditCtx, requestId, handlerDeps);
+  }
+
+  if (request.method === "GET" && url.pathname === "/v1/pruning/metrics") {
+    return handlers.handlePruningMetrics(request, env, supabase, auditCtx, handlerDeps);
+  }
+
+  if (request.method === "POST" && url.pathname === "/v1/explain/answer") {
+    return handlers.handleExplainAnswer(request, env, supabase, auditCtx, requestId, handlerDeps);
+  }
+
   if (request.method === "GET" && url.pathname === "/v1/usage/today") {
     return handlers.handleUsageToday(request, env, supabase, auditCtx, handlerDeps);
+  }
+
+  if (request.method === "GET" && url.pathname === "/v1/audit/log") {
+    return handlers.handleListAuditLog(request, env, supabase, url, auditCtx, handlerDeps);
   }
 
   if (request.method === "GET" && url.pathname === "/v1/dashboard/overview-stats") {
@@ -316,6 +439,54 @@ export async function route(
 
   if (request.method === "POST" && url.pathname === "/v1/import") {
     return handlers.handleImport(request, env, supabase, auditCtx, requestId, handlerDeps);
+  }
+
+  if (request.method === "GET" && url.pathname === "/v1/evals/sets") {
+    return handlers.handleListEvalSets(request, env, supabase, auditCtx, handlerDeps);
+  }
+
+  if (request.method === "POST" && url.pathname === "/v1/evals/sets") {
+    return handlers.handleCreateEvalSet(request, env, supabase, auditCtx, handlerDeps);
+  }
+
+  const evalSetIdMatch = url.pathname.match(/^\/v1\/evals\/sets\/([^/]+)$/);
+  if (evalSetIdMatch) {
+    const evalSetId = decodeURIComponent(evalSetIdMatch[1]).trim();
+    if (evalSetId.startsWith("=") || !UUID_RE.test(evalSetId)) {
+      return jsonResponse(
+        { error: { code: "BAD_REQUEST", message: "eval_set_id must be a valid UUID" } },
+        400,
+      );
+    }
+    if (request.method === "DELETE") {
+      return handlers.handleDeleteEvalSet(request, env, supabase, evalSetId, auditCtx, handlerDeps);
+    }
+  }
+
+  if (request.method === "GET" && url.pathname === "/v1/evals/items") {
+    return handlers.handleListEvalItems(request, env, supabase, url, auditCtx, handlerDeps);
+  }
+
+  if (request.method === "POST" && url.pathname === "/v1/evals/items") {
+    return handlers.handleCreateEvalItem(request, env, supabase, auditCtx, handlerDeps);
+  }
+
+  const evalItemIdMatch = url.pathname.match(/^\/v1\/evals\/items\/([^/]+)$/);
+  if (evalItemIdMatch) {
+    const evalItemId = decodeURIComponent(evalItemIdMatch[1]).trim();
+    if (evalItemId.startsWith("=") || !UUID_RE.test(evalItemId)) {
+      return jsonResponse(
+        { error: { code: "BAD_REQUEST", message: "eval_item_id must be a valid UUID" } },
+        400,
+      );
+    }
+    if (request.method === "DELETE") {
+      return handlers.handleDeleteEvalItem(request, env, supabase, evalItemId, auditCtx, handlerDeps);
+    }
+  }
+
+  if (request.method === "POST" && url.pathname === "/v1/evals/run") {
+    return handlers.handleRunEvalSet(request, env, supabase, auditCtx, requestId, handlerDeps);
   }
 
   return null;

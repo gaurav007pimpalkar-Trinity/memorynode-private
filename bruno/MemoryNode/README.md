@@ -13,6 +13,8 @@ Git-friendly API collection for beta onboarding and support reproduction.
    - `workspace_id`
    - `user_id`
    - `namespace`
+   - `query_id` (from Search History response)
+   - `eval_set_id` (from List/Create Eval Set response)
 
 ## Run order
 
@@ -23,6 +25,12 @@ Git-friendly API collection for beta onboarding and support reproduction.
 5. `Ingest Memory`
 6. `Search`
 7. `Context`
+8. `Search History`
+9. `Replay Search`
+10. `List Eval Sets`
+11. `Create Eval Set`
+12. `Run Eval Set`
+13. `Context Feedback`
 
 Optional:
 - `Export`

@@ -26,13 +26,13 @@ Body:
 | namespace | No | Scope (e.g. app or environment). Use the same when you search. |
 | metadata | No | Optional key-value pairs. |
 | memory_type | No | Optional tag: `fact`, `preference`, `event`, or `note`. |
-| extract | No | If `true`, runs lightweight LLM extraction to create child memories (facts/preferences/events). |
+| extract | No | Defaults to **`true`**. When allowed by plan/budget, runs lightweight LLM extraction to child memories. Set **`false`** to store only the parent memory. |
 
 Example: `{"user_id":"user-123","namespace":"myapp","text":"User loves coffee"}`
 
 With typing and extraction: `{"user_id":"user-123","text":"I'm vegetarian and visited Paris last week","memory_type":"note","extract":true}`
 
-Response: `{"memory_id":"...", "chunks": ...}`. When `extract` was used, response also includes `extraction: { triggered, children_created, skipped, error? }`.
+Response: `{"memory_id":"...", "chunks": ...}` and always includes **`extraction`**: `{ "status": "run" | "degraded" | "skipped", "reason"?, "triggered", "children_created", "skipped", "error"? }` (extraction never fails the write; skipped reasons include `plan_limit`, `budget_limit`, `low_importance`, etc.). Response headers may include `x-extraction-status` and `x-extraction-reason`.
 
 ---
 
@@ -50,7 +50,7 @@ Response: `{"memory_id":"...", "chunks": ...}`. When `extract` was used, respons
 
 Body: `user_id`, `query`, and optional `namespace`, `top_k`, `page`, `page_size`, `explain`. Use the same `user_id` and `namespace` as when you stored.
 
-Optional Phase 6 fields:
+Optional fields:
 
 | Field | Description |
 |-------|-------------|
@@ -108,4 +108,4 @@ Responses use: `{"error": {"code": "...", "message": "..."}, "request_id": "..."
 
 ## SDK
 
-The TypeScript SDK exposes the same operations: `addMemory`, `search`, `context`, `listMemories`, `getMemory`, `deleteMemory`, `importMemories`, `getUsageToday`. Use your API key when you create the client. It supports Phase 6 options: `memory_type` and `extract` on add; `search_mode`, `min_score`, and filter `memory_type` / `filter_mode` on search and context; `memoryType` query param on list.
+The TypeScript SDK exposes the same operations: `addMemory`, `search`, `context`, `listMemories`, `getMemory`, `deleteMemory`, `importMemories`, `getUsageToday`. Use your API key when you create the client. It supports `memory_type` and `extract` on add; `search_mode`, `min_score`, and filter `memory_type` / `filter_mode` on search and context; `memoryType` query param on list. See [docs/build/sdk-usage.md](../build/sdk-usage.md).

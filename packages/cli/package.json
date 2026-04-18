@@ -1,0 +1,16 @@
+{
+  "name": "@memorynodeai/cli",
+  "version": "0.1.0",
+  "private": true,
+  "license": "MIT",
+  "type": "module",
+  "bin": {
+    "mn": "./bin/mn.mjs"
+  },
+  "scripts": {
+    "lint": "eslint bin scripts",
+    "typecheck": "node --check bin/mn.mjs && node --check scripts/probe-hosted.mjs",
+    "test": "node -e \"console.log('cli: no unit tests')\"",
+    "build": "node -e \"console.log('cli: no dist build')\""
+  }
+}

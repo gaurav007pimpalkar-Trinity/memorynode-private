@@ -345,6 +345,11 @@ button.ghost {
   gap: 10px;
 }
 
+.usage-cap-alert-list {
+  margin: 0.5rem 0 0;
+  padding-left: 1.1rem;
+}
+
 details > summary {
   cursor: pointer;
 }

@@ -1,0 +1,25 @@
+meta {
+  name: Context Feedback
+  type: http
+  seq: 13
+}
+
+post {
+  url: {{base_url}}/v1/context/feedback
+  body: json
+  auth: none
+}
+
+headers {
+  content-type: application/json
+  Authorization: Bearer {{api_key}}
+}
+
+body:json {
+  {
+    "trace_id": "trace-demo-001",
+    "query_id": "{{query_id}}",
+    "chunk_ids_used": [],
+    "chunk_ids_unused": []
+  }
+}
