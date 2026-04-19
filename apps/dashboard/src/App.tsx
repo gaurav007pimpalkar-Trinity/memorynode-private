@@ -1326,7 +1326,6 @@ function AssistantMemoryView(): JSX.Element {
   const [recallQuery, setRecallQuery] = useState("How should I respond to this user?");
   const [busy, setBusy] = useState(false);
   const [message, setMessage] = useState<string | null>(null);
-  const [lastMemory, setLastMemory] = useState<MemoryRow | null>(null);
   const [contextText, setContextText] = useState("");
   const [lastInteractionAt, setLastInteractionAt] = useState<string | null>(null);
   const [memoryList, setMemoryList] = useState<MemoryRow[]>([]);
@@ -1343,7 +1342,6 @@ function AssistantMemoryView(): JSX.Element {
     const res = await apiGet<{ memories?: MemoryRow[] }>(`/v1/memories?${params.toString()}`);
     const rows = Array.isArray(res.memories) ? res.memories : [];
     setMemoryList(rows);
-    setLastMemory(rows[0] ?? null);
   }, []);
 
   useEffect(() => {
