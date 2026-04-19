@@ -4,7 +4,7 @@ info:
   version: 1.0.0
   description: MemoryNode — reliable per-user memory for customer-facing AI (support bots, SMB chat, SaaS copilots).
     Store, search, and prompt-ready context over HTTPS; hybrid retrieval is server-managed. This spec is auto-generated
-    from Zod schemas in apps/api/src/contracts/ and documents the stable public REST surface.
+    from Zod schemas in apps/api/src/contracts/.
 servers:
   - url: https://api.memorynode.ai
     description: Production
@@ -1279,65 +1279,6 @@ paths:
                 $ref: "#/components/schemas/ErrorResponse"
         "402":
           description: Upgrade required for import
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/ErrorResponse"
-  /v1/connectors/settings:
-    get:
-      summary: List connector capture settings for workspace
-      tags:
-        - Connectors
-      security:
-        - BearerAuth: []
-      responses:
-        "200":
-          description: Connector settings list
-          content:
-            application/json:
-              schema:
-                type: object
-                properties:
-                  settings:
-                    type: array
-                    items:
-                      type: object
-                      additionalProperties: true
-        "401":
-          description: Unauthorized
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/ErrorResponse"
-    patch:
-      summary: Update connector capture settings for workspace
-      tags:
-        - Connectors
-      security:
-        - BearerAuth: []
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              type: object
-              additionalProperties: true
-      responses:
-        "200":
-          description: Updated connector setting
-          content:
-            application/json:
-              schema:
-                type: object
-                additionalProperties: true
-        "400":
-          description: Validation error
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/ErrorResponse"
-        "401":
-          description: Unauthorized
           content:
             application/json:
               schema:
