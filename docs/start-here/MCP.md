@@ -24,5 +24,11 @@ Set environment variables your MCP host reads (names may vary; check your editor
 
 Full protocol details and tool list: [MCP_SERVER.md](../MCP_SERVER.md) (includes **hosted** MCP at `https://mcp.memorynode.ai/mcp`) · Package readme: [packages/mcp-server/README.md](../../packages/mcp-server/README.md).
 
-**Need more control?** → [Build mode](../build/README.md).
+## What happens automatically
 
+- Canonical tools are `memory`, `recall`, `context`, and `whoAmI`.
+- Context is bounded with fixed schema and deterministic truncation.
+- Recall/memory calls are guarded by policy limits (session/key/scope caps, loop protection, replay checks for writes).
+- Denials are explicit and structured (for example `RATE_LIMITED`, `LOOP_DETECTED`, `COST_BUDGET_EXCEEDED`).
+
+**Need more control?** → [Build mode](../build/README.md).

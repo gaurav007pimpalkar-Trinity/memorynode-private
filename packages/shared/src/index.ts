@@ -448,3 +448,24 @@ export { computeUsageCapAlerts, computeOperationalMode } from "./capAlerts.js";
 
 export type { PiiHintKind } from "./piiHints.js";
 export { detectPiiHints } from "./piiHints.js";
+
+export type {
+  McpActionId,
+  PolicyDecisionStatus,
+  McpErrorCode,
+  PolicyScope,
+  PolicyInput,
+  CostBudget,
+  CostEstimate,
+  PolicyHooks,
+  PolicyMetricsSnapshot,
+  PolicyDecision,
+  PolicyDeniedError,
+} from "./mcpPolicy.js";
+export { MCP_POLICY_VERSION, McpPolicyEngine, policyDeniedError, estimateCost } from "./mcpPolicy.js";
+export type { DeprecationPhase, AliasDecision } from "./mcpAliasDeprecation.js";
+export { normalizeDeprecationPhase, resolveAliasDecision } from "./mcpAliasDeprecation.js";
+export type { RecallStrength } from "./mcpContextSignals.js";
+export { deriveContextSignals } from "./mcpContextSignals.js";
+export type { AttackType, AttackFailure, AttackSimulationConfig, AttackSimulationReport } from "./mcpAttackSimulator.js";
+export { runAttackSimulation } from "./mcpAttackSimulator.js";

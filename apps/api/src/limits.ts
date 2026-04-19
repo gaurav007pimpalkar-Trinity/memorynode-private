@@ -19,6 +19,11 @@ export const MAX_TEXT_CHARS = 50_000;
 export const MAX_QUERY_CHARS = 2_000;
 export const DEFAULT_TOPK = 8;
 export const MAX_TOPK = 20;
+export const MCP_RECALL_TOPK_MAX = 10;
+export const MCP_CONTEXT_BUDGET_CHARS = 2500;
+export const MCP_FORGET_SCORE_GAP_MIN = 0.12;
+export const MCP_LOOP_SIMILARITY_THRESHOLD = 0.92;
+export const MCP_NOVELTY_THRESHOLD = 0.95;
 
 export const RATE_LIMIT_WINDOW_MS = 60_000;
 export const RATE_LIMIT_MAX = RATE_LIMIT_RPM_DEFAULT;

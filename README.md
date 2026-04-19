@@ -72,6 +72,8 @@ pnpm add @memorynodeai/mcp-server
 
 **Short setup:** [docs/start-here/MCP.md](docs/start-here/MCP.md) · **Package readme:** [packages/mcp-server/README.md](packages/mcp-server/README.md)
 
+MCP now exposes canonical tools `memory`, `recall`, `context`, and `whoAmI` with policy-enforced limits and deterministic refusal envelopes. Legacy tool names remain available as deprecated aliases for migration.
+
 ---
 
 ## Examples
@@ -96,15 +98,15 @@ Only if you chose **Self-host** above or you contribute to this repo:
 
 **Repository layout (contributors):**
 
-| Path | Description |
-|------|-------------|
-| `apps/api` | HTTP API (Worker) |
-| `apps/dashboard` | Web console |
-| `packages/sdk` | TypeScript SDK |
-| `packages/mcp-server` | MCP server |
-| `packages/shared` | Shared types |
-| `docs/start-here` | Mode 1 — quickstart |
-| `docs/build` | Mode 2 — advanced usage |
-| `docs/self-host` | Mode 3 — local / private deploy |
+| Path                  | Description                     |
+| --------------------- | ------------------------------- |
+| `apps/api`            | HTTP API (Worker)               |
+| `apps/dashboard`      | Web console                     |
+| `packages/sdk`        | TypeScript SDK                  |
+| `packages/mcp-server` | MCP server                      |
+| `packages/shared`     | Shared types                    |
+| `docs/start-here`     | Mode 1 — quickstart             |
+| `docs/build`          | Mode 2 — advanced usage         |
+| `docs/self-host`      | Mode 3 — local / private deploy |
 
 Internal runbooks: [docs/internal/README.md](docs/internal/README.md).

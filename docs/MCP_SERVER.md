@@ -3,14 +3,35 @@
 MemoryNode exposes MCP in two ways:
 
 1. **stdio package** (`@memorynodeai/mcp-server`) — local process for editors; forwards to REST with env vars.
-2. **Hosted Streamable HTTP** on the API worker — recommended URL **`https://mcp.memorynode.ai/mcp`** (dedicated host; routes in `apps/api/wrangler.toml`). Same MCP is also available at **`https://api.memorynode.ai/v1/mcp`**. Uses your **workspace API key** (`Authorization: Bearer …` or `x-api-key`). Optional headers: **`x-mn-user-id`** (default `default`), **`x-mn-project`** (default `mcp`, maps to MemoryNode `namespace`). Tooling calls REST on **`api.memorynode.ai`** automatically when the MCP request hits `mcp.memorynode.ai` (override with Worker var **`MEMORYNODE_REST_ORIGIN`** if needed). MemoryNode-branded tools/resources/prompts: **`memory`**, **`recall`**, **`whoAmI`**; resources **`memorynode://profile`**, **`memorynode://projects`**; prompt **`context`**. No Supabase in the MCP layer—only REST.
+2. **Hosted Streamable HTTP** on the API worker — recommended URL **`https://mcp.memorynode.ai/mcp`** (dedicated host; routes in `apps/api/wrangler.toml`). Same MCP is also available at **`https://api.memorynode.ai/v1/mcp`**. Uses your **workspace API key** (`Authorization: Bearer …` or `x-api-key`). Optional headers: **`x-mn-user-id`** (default `default`), **`x-mn-project`** (default `mcp`, maps to MemoryNode `namespace`). Tooling calls REST on **`api.memorynode.ai`** automatically when the MCP request hits `mcp.memorynode.ai` (override with Worker var **`MEMORYNODE_REST_ORIGIN`** if needed). Canonical tools are **`memory`**, **`recall`**, **`context`**, **`whoAmI`**. Alias tools (`memory_search`, `memory_insert`, `memory_context`) are maintained for migration with deprecated metadata. No Supabase in the MCP layer—only REST.
 
-## What the stdio package does
+## Canonical MCP tool contracts
 
-- **Tool `memory_search`** — Semantic + recency-aware search. Input: `query` (required), `limit` (optional, default 5, max 20). Calls `POST /v1/search`.
-- **Tool `memory_context`** — Prompt-ready context. Calls `POST /v1/context`.
-- **Tool `memory_insert`** — Store a memory. Input: `content` (required, max 10k chars), `metadata` (optional, stringified max 5KB). Calls `POST /v1/memories`.
-- **Resource `memory://search?q=...`** — Read-only search. Parse `q`, call same `/v1/search`, return markdown results. Missing `q` → invalid_request.
+- **Tool `memory`** — durable write with policy guardrails.
+  - Input: `action` (`save`), `content`, optional `metadata`, required replay fields (`nonce`, `timestampMs`) for write actions.
+  - Output: `status`, `decision`, `data` with `policy_version`.
+- **Tool `recall`** — bounded retrieval.
+  - Input: `query`, optional `top_k` (default 5, max 10), optional `includeProfile`.
+  - Output: `status` (`ok`/`low_confidence`/`degraded`), `results`, `meta`.
+- **Tool `context`** — fixed-schema context pipeline.
+  - Input: `query`, optional `top_k`, optional `profile`.
+  - Output: `context.profileFacts`, `context.relevantHistory`, `context.guidance`, `meta` with budget/truncation details.
+- **Tool `whoAmI`** — scope/session identity and policy version.
+
+All tool denials use a uniform refusal envelope:
+
+```json
+{
+  "status": "denied",
+  "error": {
+    "code": "RATE_LIMITED",
+    "message": "Request denied by policy.",
+    "policy_version": "2026-04-19.1",
+    "action_id": "recall",
+    "scope_hash": "..."
+  }
+}
+```
 
 All ranking and workspace isolation stay server-side; the MCP adapter only forwards requests with your API key.
 
@@ -60,6 +81,17 @@ Per-tool **`containerTag`** overrides the namespace for that call (same idea as 
 
 Authentication is **API key only** on this path (no OAuth on the MCP URL yet).
 
+## Guardrails and defaults
+
+- Policy contract version: **`2026-04-19.1`** (`x-mcp-policy-version` header on hosted responses).
+- Session window defaults: total calls `<= 40/10m`, read calls `<= 12/10m`, writes `<= 6/10m`.
+- API key window defaults: reads `<= 300/h`, writes `<= 60/h`.
+- Scope window defaults (`workspace,user,namespace`): writes `<= 20/h`, forgets `<= 10/h`.
+- Loop detection: lexical prefilter + semantic confirm, threshold `>= 3` similar queries in `120s`.
+- Context budget: fixed cap `2500` chars with deterministic section truncation.
+- Mutating actions require replay protection (`nonce`, `timestampMs`).
+- Hosted forget flow: low-confidence/ambiguous requests return `needs_confirmation` with tokenized confirm path.
+
 ### When to use REST vs MCP
 
 - **REST** (or the **TypeScript SDK**) — your **app backend**, edge functions, or jobs that already speak HTTP. Best when you control retries, auth, and per-tenant routing in your own code.
@@ -69,11 +101,9 @@ For product positioning and ICP, see [external/POSITIONING.md](./external/POSITI
 
 ## Required env vars
 
-| Variable | Description |
-|----------|-------------|
-| `MEMORYNODE_API_KEY` | API key (Bearer). Required. |
-| `MEMORYNODE_BASE_URL` | Base URL (e.g. `https://api.memorynode.ai`). No trailing slash. Required. |
-| `MEMORYNODE_USER_ID` | Default user id for search/insert. Optional; default `default`. |
+- `MEMORYNODE_API_KEY`: API key (Bearer). Required.
+- `MEMORYNODE_BASE_URL`: Base URL (e.g. `https://api.memorynode.ai`). No trailing slash. Required.
+- `MEMORYNODE_USER_ID`: Default user id for search/insert. Optional; default `default`.
 
 If `MEMORYNODE_API_KEY` or `MEMORYNODE_BASE_URL` is missing, the server exits at startup with a clear error.
 
@@ -101,17 +131,17 @@ MEMORYNODE_BASE_URL=https://api.memorynode.ai
 MEMORYNODE_USER_ID=default
 ```
 
-## Example tool call (memory_search)
+## Example tool call (recall)
 
 Client sends a tool call, e.g.:
 
 ```json
-{ "name": "memory_search", "arguments": { "query": "user preferences", "limit": 5 } }
+{ "name": "recall", "arguments": { "query": "user preferences", "top_k": 5 } }
 ```
 
-Server calls `POST {MEMORYNODE_BASE_URL}/v1/search` with `Authorization: Bearer MEMORYNODE_API_KEY` and body `{ "user_id": "<MEMORYNODE_USER_ID>", "query": "user preferences", "top_k": 5 }`, then returns formatted text:
+Server calls `POST {MEMORYNODE_BASE_URL}/v1/search` with `Authorization: Bearer MEMORYNODE_API_KEY` and body `{ "user_id": "<MEMORYNODE_USER_ID>", "query": "user preferences", "top_k": 5 }`, then returns structured + text output with confidence metadata.
 
-```
+```text
 Result 1
 Score: 0.82
 Content: ...
@@ -149,15 +179,15 @@ Use the path to the built `dist/index.js` and ensure `MEMORYNODE_API_KEY` and `M
 
 ## Error mapping (REST → MCP)
 
-| REST status | MCP error |
-|-------------|-----------|
-| 400        | invalid_request |
-| 401        | unauthorized   |
-| 403        | forbidden      |
-| 500        | internal_error |
+| REST status | MCP error       |
+| ----------- | --------------- |
+| 400         | invalid_request |
+| 401         | unauthorized    |
+| 403         | forbidden       |
+| 500         | internal_error  |
 
-## Constraints (Phase 3)
+## Constraints
 
-- **stdio package:** no episode logging, analytics, rate limiting, retries, or background workers in the package; no extra config beyond env vars.
+- **stdio package:** keeps a lightweight local in-memory policy layer for deterministic limits; no external stateful policy service.
 - **Hosted `/mcp` or `/v1/mcp`:** sessions are **in-memory per isolate** (lost on cold start); use the stdio package if you need a fully local MCP process.
 - Backend API contracts unchanged; adapters call the same public REST routes.

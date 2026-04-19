@@ -1,0 +1,116 @@
+// Vitest Snapshot v1, https://vitest.dev/guide/snapshot.html
+
+exports[`policyDeniedError schema > uses single error envelope for all canonical codes 1`] = `
+[
+  {
+    "error": {
+      "code": "rate_limit_exceeded",
+      "details": {
+        "action_id": "recall",
+        "policy_version": "2026-04-19.1",
+        "scope_hash": "9aa2d618",
+      },
+      "message": "rate_limit_exceeded message",
+    },
+  },
+  {
+    "error": {
+      "code": "loop_detected",
+      "details": {
+        "action_id": "recall",
+        "policy_version": "2026-04-19.1",
+        "scope_hash": "9aa2d618",
+      },
+      "message": "loop_detected message",
+    },
+  },
+  {
+    "error": {
+      "code": "loop_detected_drift",
+      "details": {
+        "action_id": "recall",
+        "policy_version": "2026-04-19.1",
+        "scope_hash": "9aa2d618",
+      },
+      "message": "loop_detected_drift message",
+    },
+  },
+  {
+    "error": {
+      "code": "cost_exceeded",
+      "details": {
+        "action_id": "recall",
+        "policy_version": "2026-04-19.1",
+        "scope_hash": "9aa2d618",
+      },
+      "message": "cost_exceeded message",
+    },
+  },
+  {
+    "error": {
+      "code": "cost_exceeded_session",
+      "details": {
+        "action_id": "recall",
+        "policy_version": "2026-04-19.1",
+        "scope_hash": "9aa2d618",
+      },
+      "message": "cost_exceeded_session message",
+    },
+  },
+  {
+    "error": {
+      "code": "weak_signal",
+      "details": {
+        "action_id": "recall",
+        "policy_version": "2026-04-19.1",
+        "scope_hash": "9aa2d618",
+      },
+      "message": "weak_signal message",
+    },
+  },
+  {
+    "error": {
+      "code": "unauthorized_scope",
+      "details": {
+        "action_id": "recall",
+        "policy_version": "2026-04-19.1",
+        "scope_hash": "9aa2d618",
+      },
+      "message": "unauthorized_scope message",
+    },
+  },
+  {
+    "error": {
+      "code": "session_expired",
+      "details": {
+        "action_id": "recall",
+        "policy_version": "2026-04-19.1",
+        "scope_hash": "9aa2d618",
+      },
+      "message": "session_expired message",
+    },
+  },
+  {
+    "error": {
+      "code": "confirmation_required",
+      "details": {
+        "action_id": "recall",
+        "policy_version": "2026-04-19.1",
+        "scope_hash": "9aa2d618",
+      },
+      "message": "confirmation_required message",
+    },
+  },
+  {
+    "error": {
+      "code": "replay_detected",
+      "details": {
+        "action_id": "recall",
+        "policy_version": "2026-04-19.1",
+        "scope_hash": "9aa2d618",
+      },
+      "message": "replay_detected message",
+    },
+  },
+]
+`;

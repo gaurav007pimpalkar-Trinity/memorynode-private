@@ -105,6 +105,9 @@ importers:
 
   packages/mcp-server:
     dependencies:
+      '@memorynodeai/shared':
+        specifier: workspace:*
+        version: link:../shared
       '@modelcontextprotocol/sdk':
         specifier: ^1.27.1
         version: 1.27.1(@cfworker/json-schema@4.1.1)(zod@3.25.76)
