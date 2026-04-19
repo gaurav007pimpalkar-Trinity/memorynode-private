@@ -146,4 +146,6 @@ Example interpretation (using each result’s `scores`):
 
 **Need more control?** → [Build mode](../build/README.md)
 
+Public endpoint boundary for Phase 1: [../external/API_SURFACE_PHASE1.md](../external/API_SURFACE_PHASE1.md)
+
 Full product boundaries: [../external/POSITIONING.md](../external/POSITIONING.md).

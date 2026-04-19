@@ -9,6 +9,11 @@ import { DeveloperNextSteps } from "./DeveloperNextSteps";
 
 type Tab =
   | "overview"
+  | "continuity"
+  | "assistant_home"
+  | "assistant_connections"
+  | "assistant_memory"
+  | "assistant_settings"
   | "memories"
   | "usage"
   | "import"
@@ -18,37 +23,114 @@ type Tab =
   | "team"
   | "billing";
 
-const tabsRequiringWorkspace: Tab[] = ["memories", "usage", "import", "api_keys", "connectors", "team", "billing"];
+const tabsRequiringWorkspace: Tab[] = [
+  "continuity",
+  "assistant_home",
+  "assistant_connections",
+  "assistant_memory",
+  "assistant_settings",
+  "memories",
+  "usage",
+  "import",
+  "api_keys",
+  "connectors",
+  "team",
+  "billing",
+];
 
 type SidebarNavEntry = { tab: Tab; label: string; showLock?: boolean };
 
 type SidebarGroup = { section: string; entries: SidebarNavEntry[] };
 
-const SIDEBAR_GROUPS: SidebarGroup[] = [
+type ConsoleSurface = "developer" | "saas" | "assistant";
+
+const SURFACE_PREF_KEY = "mn_console_surface";
+
+const DEVELOPER_SIDEBAR_GROUPS: SidebarGroup[] = [
   {
     section: "Build",
     entries: [
       { tab: "overview", label: "Overview" },
-      { tab: "memories", label: "Memories" },
-      { tab: "usage", label: "Usage" },
-      { tab: "import", label: "Import (Paid)" },
-      { tab: "api_keys", label: "API Access" },
-      { tab: "mcp", label: "MCP" },
+      { tab: "memories", label: "Memory Browser" },
+      { tab: "import", label: "Import" },
+      { tab: "api_keys", label: "API Keys" },
+      { tab: "mcp", label: "MCP Setup" },
       { tab: "connectors", label: "Connectors" },
+      { tab: "usage", label: "Usage" },
     ],
   },
   {
     section: "Account",
+    entries: [{ tab: "team", label: "Workspaces" }],
+  },
+];
+
+const SAAS_SIDEBAR_GROUPS: SidebarGroup[] = [
+  {
+    section: "Operate",
     entries: [
-      { tab: "team", label: "Team" },
+      { tab: "overview", label: "Overview" },
+      { tab: "continuity", label: "Continuity" },
+      { tab: "usage", label: "Usage" },
+      { tab: "team", label: "Workspaces" },
       { tab: "billing", label: "Billing" },
     ],
   },
 ];
 
-const SIDEBAR_COMMANDS: Array<{ tab: Tab; label: string; section: string }> = SIDEBAR_GROUPS.flatMap((g) =>
-  g.entries.map((e) => ({ tab: e.tab, label: e.label, section: g.section })),
-);
+const ASSISTANT_SIDEBAR_GROUPS: SidebarGroup[] = [
+  {
+    section: "Assistant Workspace",
+    entries: [{ tab: "assistant_memory", label: "Assistant" }],
+  },
+];
+
+function loadSurfacePreference(): ConsoleSurface {
+  if (typeof window === "undefined") return "developer";
+  const raw = window.localStorage.getItem(SURFACE_PREF_KEY);
+  if (raw === "assistant") return "assistant";
+  return raw === "saas" ? "saas" : "developer";
+}
+
+function persistSurfacePreference(surface: ConsoleSurface): void {
+  if (typeof window === "undefined") return;
+  window.localStorage.setItem(SURFACE_PREF_KEY, surface);
+}
+
+const SIDEBAR_GROUPS_BY_SURFACE: Record<ConsoleSurface, SidebarGroup[]> = {
+  developer: DEVELOPER_SIDEBAR_GROUPS,
+  saas: SAAS_SIDEBAR_GROUPS,
+  assistant: ASSISTANT_SIDEBAR_GROUPS,
+};
+
+function defaultTabForSurface(surface: ConsoleSurface): Tab {
+  const groups = SIDEBAR_GROUPS_BY_SURFACE[surface];
+  return groups[0]?.entries[0]?.tab ?? "overview";
+}
+
+function nextAvailableTab(current: Tab, surface: ConsoleSurface): Tab {
+  const groups = SIDEBAR_GROUPS_BY_SURFACE[surface];
+  const allTabs = groups.flatMap((group) => group.entries.map((entry) => entry.tab));
+  return allTabs.includes(current) ? current : defaultTabForSurface(surface);
+}
+
+const SURFACE_DESCRIPTIONS: Record<ConsoleSurface, string> = {
+  developer: "API setup, memory debugging, and integration controls.",
+  saas: "Run the user-memory continuity demo and verify returning users are remembered.",
+  assistant: "No-code assistant flow to connect tools, remember context, and recall it later.",
+};
+
+const SIDEBAR_SURFACE_TITLES: Record<ConsoleSurface, string> = {
+  developer: "Developer Console",
+  saas: "SaaS Memory Console",
+  assistant: "Assistant Workspace",
+};
+
+const SIDEBAR_SURFACE_SHORT: Record<ConsoleSurface, string> = {
+  developer: "Developer",
+  saas: "SaaS",
+  assistant: "Assistant",
+};
 
 function seatCapForPlan(planCode: string | null | undefined): number {
   const normalized = (planCode ?? "launch").toLowerCase();
@@ -182,6 +264,7 @@ export function App(): JSX.Element {
   const [paletteQuery, setPaletteQuery] = useState("");
   const [paletteOpen, setPaletteOpen] = useState(false);
   const [paletteIndex, setPaletteIndex] = useState(0);
+  const [surface, setSurface] = useState<ConsoleSurface>(() => loadSurfacePreference());
   const workspaceBootstrapAttemptedRef = useRef(false);
 
   const missingEnv = useMemo(() => {
@@ -391,14 +474,43 @@ export function App(): JSX.Element {
     setWorkspaceSaving(false);
   };
 
+  useEffect(() => {
+    persistSurfacePreference(surface);
+    setTab((prev) => nextAvailableTab(prev, surface));
+  }, [surface]);
+
+  const sidebarGroups = useMemo(() => SIDEBAR_GROUPS_BY_SURFACE[surface], [surface]);
+  const sidebarCommands = useMemo(
+    () =>
+      sidebarGroups.flatMap((g) =>
+        g.entries.map((e) => ({ tab: e.tab, label: e.label, section: g.section })),
+      ),
+    [sidebarGroups],
+  );
+
   const onboardingSteps = useMemo(
-    () => [
-      { key: "workspace", label: "Pick your workspace", done: workspaceReady },
-      { key: "workspace-bind", label: "Connect this browser", done: Boolean(workspaceClaim?.trim() || workspaceId.trim()) },
-      { key: "api-key", label: "Create your first API key", done: firstApiKeyCreated },
-      { key: "team", label: "Invite a teammate (optional)", done: false },
-    ],
-    [workspaceReady, workspaceClaim, workspaceId, firstApiKeyCreated],
+    () =>
+      surface === "developer"
+        ? [
+            { key: "workspace", label: "Pick your workspace", done: workspaceReady },
+            { key: "workspace-bind", label: "Connect this browser", done: Boolean(workspaceClaim?.trim() || workspaceId.trim()) },
+            { key: "api-key", label: "Create your first API key", done: firstApiKeyCreated },
+            { key: "team", label: "Invite a teammate (optional)", done: false },
+          ]
+        : surface === "assistant"
+          ? [
+              { key: "workspace", label: "Pick your workspace", done: workspaceReady },
+              { key: "workspace-bind", label: "Connect this browser", done: Boolean(workspaceClaim?.trim() || workspaceId.trim()) },
+              { key: "remember", label: "Remember something for a user", done: workspaceReady },
+              { key: "recall", label: "Ask what the assistant knows", done: workspaceReady },
+            ]
+        : [
+            { key: "workspace", label: "Pick your workspace", done: workspaceReady },
+            { key: "workspace-bind", label: "Connect this browser", done: Boolean(workspaceClaim?.trim() || workspaceId.trim()) },
+            { key: "usage", label: "Verify usage metrics", done: workspaceReady && sessionReady },
+            { key: "billing", label: "Confirm plan and billing", done: planBadge !== "FREE" },
+          ],
+    [surface, workspaceReady, workspaceClaim, workspaceId, firstApiKeyCreated, sessionReady, planBadge],
   );
   const completedSteps = onboardingSteps.filter((step) => step.done).length;
 
@@ -413,14 +525,14 @@ export function App(): JSX.Element {
 
   const paletteMatches = useMemo(() => {
     const q = paletteQuery.trim().toLowerCase();
-    if (!q) return SIDEBAR_COMMANDS;
-    return SIDEBAR_COMMANDS.filter(
+    if (!q) return sidebarCommands;
+    return sidebarCommands.filter(
       (c) =>
         c.label.toLowerCase().includes(q) ||
         c.section.toLowerCase().includes(q) ||
         `${c.section} ${c.label}`.toLowerCase().includes(q),
     );
-  }, [paletteQuery]);
+  }, [paletteQuery, sidebarCommands]);
 
   useEffect(() => {
     setPaletteIndex((i) => {
@@ -512,6 +624,33 @@ export function App(): JSX.Element {
           </span>
           <span className="console-brand-text">MemoryNode</span>
         </div>
+        <div className="panel card">
+          <div className="muted small">{SIDEBAR_SURFACE_TITLES[surface]}</div>
+          <div className="row mt-sm">
+            <button
+              type="button"
+              className={surface === "developer" ? "" : "ghost"}
+              onClick={() => setSurface("developer")}
+            >
+              Developer
+            </button>
+            <button
+              type="button"
+              className={surface === "saas" ? "" : "ghost"}
+              onClick={() => setSurface("saas")}
+            >
+              SaaS
+            </button>
+            <button
+              type="button"
+              className={surface === "assistant" ? "" : "ghost"}
+              onClick={() => setSurface("assistant")}
+            >
+              Assistant
+            </button>
+          </div>
+          <div className="muted small mt-sm">{SURFACE_DESCRIPTIONS[surface]}</div>
+        </div>
         <div className={`console-search-wrap${paletteOpen ? " console-search-wrap--open" : ""}`}>
           <input
             ref={consoleSearchRef}
@@ -590,7 +729,7 @@ export function App(): JSX.Element {
           )}
         </div>
         <nav className="console-sidebar-nav">
-          {SIDEBAR_GROUPS.map((g) => (
+          {sidebarGroups.map((g) => (
             <div key={g.section} className="console-nav-section">
               <div className="console-nav-section-label">{g.section}</div>
               <div className="console-nav-section-items">
@@ -644,9 +783,8 @@ export function App(): JSX.Element {
               <span className="console-plan-badge">{planBadge}</span>
             </div>
             <div className="console-header-sub muted small">
-              {workspaceReady
-                ? "Workspace connected"
-                : "Finish setup below to unlock all sections"}
+              <strong>{SIDEBAR_SURFACE_SHORT[surface]} surface.</strong>{" "}
+              {workspaceReady ? "Workspace connected." : "Finish setup below to unlock all sections."}
             </div>
           </div>
           <div className="console-header-actions">
@@ -749,12 +887,15 @@ export function App(): JSX.Element {
                   workspaceReady={workspaceReady}
                   sessionReady={sessionReady}
                   hasApiKey={firstApiKeyCreated}
+                  surface={surface}
                   onQuickSetup={() => {
                     setOnboardingCollapsed(false);
-                    selectTab("team");
+                    selectTab(surface === "developer" ? "api_keys" : surface === "saas" ? "team" : "assistant_memory");
                   }}
                 />
               )}
+              {tab === "continuity" && <SaasContinuityView workspaceId={effectiveWorkspaceId} />}
+              {tab === "assistant_memory" && <AssistantMemoryView />}
               {tab === "memories" && <MemoryBrowserView userId={session.user.id} workspaceId={effectiveWorkspaceId} onSearchCompleted={() => {}} />}
               {tab === "usage" && <RequestsView workspaceId={effectiveWorkspaceId} />}
               {tab === "import" && <ImportView isPaid={planBadge !== "FREE"} />}
@@ -813,7 +954,17 @@ function AuthLanding() {
               Sign in to manage workspaces, API keys, and billing — so your support bots, chat apps, and copilots remember users without running vector search yourself.
             </p>
             <AuthPanel />
-            <p className="auth-terms muted small">By continuing, you agree to our Terms and Privacy Policy.</p>
+            <p className="auth-terms muted small">
+              By continuing, you agree to our{" "}
+              <a href="https://memorynode.ai/terms" target="_blank" rel="noopener noreferrer">
+                Terms
+              </a>{" "}
+              and{" "}
+              <a href="https://memorynode.ai/privacy" target="_blank" rel="noopener noreferrer">
+                Privacy Policy
+              </a>
+              .
+            </p>
           </div>
         </div>
       </section>
@@ -852,11 +1003,13 @@ function OverviewView({
   workspaceReady,
   sessionReady,
   hasApiKey,
+  surface,
   onQuickSetup,
 }: {
   workspaceReady: boolean;
   sessionReady: boolean;
   hasApiKey: boolean;
+  surface: ConsoleSurface;
   onQuickSetup: () => void;
 }): JSX.Element {
   const [range, setRange] = useState<"1d" | "7d" | "30d" | "all">("all");
@@ -893,15 +1046,15 @@ function OverviewView({
   const dash = "—";
   const cards = [
     {
-      label: "Documents",
+      label: "Memories",
       value: !workspaceReady || !sessionReady ? dash : loading ? "…" : fmt(stats?.documents ?? 0),
     },
     {
-      label: "Memories",
+      label: "Indexed Chunks",
       value: !workspaceReady || !sessionReady ? dash : loading ? "…" : fmt(stats?.memories ?? 0),
     },
     {
-      label: "Search Requests",
+      label: "Read Operations",
       value: !workspaceReady || !sessionReady ? dash : loading ? "…" : fmt(stats?.search_requests ?? 0),
     },
     {
@@ -940,14 +1093,22 @@ function OverviewView({
           {error}
         </div>
       )}
-      {workspaceReady && sessionReady ? <DeveloperNextSteps hasApiKey={hasApiKey} /> : null}
+      {surface === "developer" && workspaceReady && sessionReady ? <DeveloperNextSteps hasApiKey={hasApiKey} /> : null}
       {workspaceReady && sessionReady && stats && !loading && stats.memories === 0 && stats.search_requests === 0 ? (
         <div className="overview-empty-api-hint muted small" role="status">
-          No API memories or searches in this range yet. Follow <strong>Next: ship memory</strong> above or open{" "}
-          <a href="https://docs.memorynode.ai/quickstart" target="_blank" rel="noopener noreferrer">
-            Quickstart
-          </a>
-          .
+          {surface === "developer" ? (
+            <>
+              No memory writes or reads in this range yet. Follow <strong>Next: ship memory</strong> above or open{" "}
+              <a href="https://docs.memorynode.ai/quickstart" target="_blank" rel="noopener noreferrer">
+                Quickstart
+              </a>
+              .
+            </>
+          ) : (
+            <>
+              No continuity activity in this range yet. Connect a workspace data source in <strong>Continuity</strong> and verify reads/writes from live traffic.
+            </>
+          )}
         </div>
       ) : null}
       <div className="overview-cards overview-cards--hero">
@@ -984,8 +1145,8 @@ function OverviewView({
               <path d="M8 5v14l11-7-11-7z" fill="currentColor" stroke="none" />
             </svg>
           </span>
-          <span className="explore-tile-title">Live demo</span>
-          <span className="explore-tile-desc muted small">See MemoryNode in action in the quickstart.</span>
+          <span className="explore-tile-title">Quickstart</span>
+          <span className="explore-tile-desc muted small">See MemoryNode in action with a copy-paste guide.</span>
         </a>
         <a
           className="explore-tile"
@@ -1019,21 +1180,361 @@ function OverviewView({
   );
 }
 
+function SaasContinuityView({ workspaceId }: { workspaceId: string }): JSX.Element {
+  const [userId, setUserId] = useState("user_123");
+  const [memoryText, setMemoryText] = useState("User prefers dark mode");
+  const [busy, setBusy] = useState(false);
+  const [message, setMessage] = useState<string | null>(null);
+  const [savedMemory, setSavedMemory] = useState<MemoryRow | null>(null);
+  const [retrievedContext, setRetrievedContext] = useState<string>("");
+  const [lastInteractionAt, setLastInteractionAt] = useState<string | null>(null);
+  const [withoutMemoryResponse, setWithoutMemoryResponse] = useState(
+    "Here are UI suggestions you can apply for this user.",
+  );
+  const [withMemoryResponse, setWithMemoryResponse] = useState("");
+
+  const loadLastMemory = useCallback(async (targetUserId: string) => {
+    const params = new URLSearchParams({
+      user_id: targetUserId,
+      namespace: "saas-demo",
+      page: "1",
+      page_size: "1",
+    });
+    const res = await apiGet<{ memories?: MemoryRow[] }>(`/v1/memories?${params.toString()}`);
+    const latest = Array.isArray(res.memories) && res.memories.length > 0 ? res.memories[0] : null;
+    setSavedMemory(latest);
+  }, []);
+
+  useEffect(() => {
+    if (!workspaceId?.trim()) return;
+    void loadLastMemory(userId.trim());
+  }, [workspaceId, userId, loadLastMemory]);
+
+  const runContinuityDemo = async () => {
+    const normalizedUserId = userId.trim();
+    const normalizedMemory = memoryText.trim();
+    if (!normalizedUserId || !normalizedMemory) {
+      setMessage("Enter both user_id and memory text.");
+      return;
+    }
+    setBusy(true);
+    setMessage(null);
+    setRetrievedContext("");
+    setLastInteractionAt(null);
+    setWithMemoryResponse("");
+    try {
+      await apiPost<{ memory_id: string; stored: boolean }>("/v1/memories", {
+        user_id: normalizedUserId,
+        namespace: "saas-demo",
+        text: normalizedMemory,
+      });
+
+      const context = await apiPost<{ context_text?: string }>("/v1/context", {
+        user_id: normalizedUserId,
+        namespace: "saas-demo",
+        query: "What do we know about this user's preferences?",
+      });
+      const contextText = typeof context.context_text === "string" ? context.context_text : "";
+      setRetrievedContext(contextText);
+      setWithoutMemoryResponse("Here are UI suggestions you can apply for this user.");
+      setWithMemoryResponse(
+        contextText.trim().length > 0
+          ? `Since this user context says "${normalizedMemory}", here are UI suggestions optimized for that preference.`
+          : "No stored preference was found in context for this user.",
+      );
+      await loadLastMemory(normalizedUserId);
+      const nowIso = new Date().toISOString();
+      setLastInteractionAt(nowIso);
+      setMessage("Continuity demo completed. Returning user context loaded.");
+    } catch (err: unknown) {
+      setMessage(userFacingErrorMessage(err));
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const remembered = Boolean(savedMemory && retrievedContext.trim().length > 0);
+
+  if (!workspaceId?.trim()) {
+    return (
+      <Panel title="Continuity">
+        <div className="badge">Set your workspace first to run the continuity demo.</div>
+      </Panel>
+    );
+  }
+
+  return (
+    <Panel title="Continuity">
+      {message && <div className="badge">{message}</div>}
+      <h3>Test User Memory Continuity</h3>
+      <div className="muted small">Save memory for one user, simulate return, and confirm this user is remembered.</div>
+      <label className="field">
+        <span>User ID</span>
+        <input value={userId} onChange={(e) => setUserId(e.target.value)} placeholder="user_123" />
+      </label>
+      <label className="field">
+        <span>Memory to store</span>
+        <input value={memoryText} onChange={(e) => setMemoryText(e.target.value)} placeholder="User prefers dark mode" />
+      </label>
+      <button disabled={busy || !userId.trim() || !memoryText.trim()} onClick={() => void runContinuityDemo()}>
+        {busy ? "Running demo..." : "Run continuity demo"}
+      </button>
+
+      <div className="stack mt-lg">
+        <h3>Per-user visibility</h3>
+        <div className="card">
+          <div className="muted small">Last memory for {userId.trim() || "user"}</div>
+          <div>{savedMemory?.text ?? "No memory stored yet."}</div>
+          <div className="muted small">
+            Stored at: {savedMemory?.created_at ? new Date(savedMemory.created_at).toLocaleString() : "n/a"}
+          </div>
+        </div>
+        <div className="card">
+          <div className="muted small">Retrieved context (returning user simulation)</div>
+          <div>{retrievedContext || "No context retrieved yet."}</div>
+          <div className="muted small">
+            Last interaction: {lastInteractionAt ? new Date(lastInteractionAt).toLocaleString() : "n/a"}
+          </div>
+        </div>
+      </div>
+
+      <div className="stack mt-lg">
+        <h3>Before vs After Response</h3>
+        <div className="card">
+          <div className="muted small">Without memory</div>
+          <div>{withoutMemoryResponse}</div>
+        </div>
+        <div className="card">
+          <div className="muted small">With memory</div>
+          <div>{withMemoryResponse || "Run the continuity demo to generate context-enhanced response."}</div>
+          {withMemoryResponse ? (
+            <div className="muted small mt-sm">Context improved using stored memory.</div>
+          ) : null}
+        </div>
+      </div>
+
+      <div className={remembered ? "badge" : "muted small"}>
+        {remembered ? "This user was remembered." : "Run the demo to prove user memory continuity."}
+      </div>
+    </Panel>
+  );
+}
+
+function AssistantMemoryView(): JSX.Element {
+  const [userId, setUserId] = useState("user_123");
+  const [rememberText, setRememberText] = useState("User likes concise answers.");
+  const [recallQuery, setRecallQuery] = useState("How should I respond to this user?");
+  const [busy, setBusy] = useState(false);
+  const [message, setMessage] = useState<string | null>(null);
+  const [lastMemory, setLastMemory] = useState<MemoryRow | null>(null);
+  const [contextText, setContextText] = useState("");
+  const [lastInteractionAt, setLastInteractionAt] = useState<string | null>(null);
+  const [memoryList, setMemoryList] = useState<MemoryRow[]>([]);
+  const [editingMemoryId, setEditingMemoryId] = useState<string | null>(null);
+  const [editedText, setEditedText] = useState("");
+
+  const loadMemories = useCallback(async (targetUserId: string) => {
+    const params = new URLSearchParams({
+      user_id: targetUserId,
+      namespace: "assistant-demo",
+      page: "1",
+      page_size: "5",
+    });
+    const res = await apiGet<{ memories?: MemoryRow[] }>(`/v1/memories?${params.toString()}`);
+    const rows = Array.isArray(res.memories) ? res.memories : [];
+    setMemoryList(rows);
+    setLastMemory(rows[0] ?? null);
+  }, []);
+
+  useEffect(() => {
+    void loadMemories(userId.trim());
+  }, [userId, loadMemories]);
+
+  const remember = async () => {
+    const targetUserId = userId.trim();
+    const text = rememberText.trim();
+    if (!targetUserId || !text) {
+      setMessage("Enter user_id and memory text first.");
+      return;
+    }
+    setBusy(true);
+    setMessage(null);
+    try {
+      await apiPost("/v1/memories", {
+        user_id: targetUserId,
+        namespace: "assistant-demo",
+        text,
+      });
+      await loadMemories(targetUserId);
+      setLastInteractionAt(new Date().toISOString());
+      setMessage("Memory saved.");
+    } catch (err: unknown) {
+      setMessage(userFacingErrorMessage(err));
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const recall = async () => {
+    const targetUserId = userId.trim();
+    if (!targetUserId || !recallQuery.trim()) {
+      setMessage("Enter user_id and recall query first.");
+      return;
+    }
+    setBusy(true);
+    setMessage(null);
+    try {
+      const res = await apiPost<{ context_text?: string }>("/v1/context", {
+        user_id: targetUserId,
+        namespace: "assistant-demo",
+        query: recallQuery.trim(),
+      });
+      setContextText(res.context_text ?? "");
+      setLastInteractionAt(new Date().toISOString());
+      await loadMemories(targetUserId);
+      setMessage("Recall completed.");
+    } catch (err: unknown) {
+      setMessage(userFacingErrorMessage(err));
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const deleteMemory = async (memoryId: string) => {
+    setBusy(true);
+    setMessage(null);
+    try {
+      await apiDelete(`/v1/memories/${encodeURIComponent(memoryId)}`);
+      await loadMemories(userId.trim());
+      setMessage("Memory deleted.");
+    } catch (err: unknown) {
+      setMessage(userFacingErrorMessage(err));
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const saveEdit = async (memory: MemoryRow) => {
+    if (!editedText.trim()) {
+      setMessage("Edited text cannot be empty.");
+      return;
+    }
+    setBusy(true);
+    setMessage(null);
+    try {
+      await apiDelete(`/v1/memories/${encodeURIComponent(memory.id)}`);
+      await apiPost("/v1/memories", {
+        user_id: memory.user_id,
+        namespace: memory.namespace,
+        text: editedText.trim(),
+      });
+      await loadMemories(userId.trim());
+      setEditingMemoryId(null);
+      setEditedText("");
+      setMessage("Memory updated.");
+    } catch (err: unknown) {
+      setMessage(userFacingErrorMessage(err));
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <Panel title="Memory Assistant">
+      {message && <div className="badge">{message}</div>}
+      <h3>Remember something</h3>
+      <label className="field">
+        <span>User ID</span>
+        <input value={userId} onChange={(e) => setUserId(e.target.value)} placeholder="user_123" />
+      </label>
+      <label className="field">
+        <span>What should I remember?</span>
+        <input value={rememberText} onChange={(e) => setRememberText(e.target.value)} placeholder="User likes concise answers." />
+      </label>
+      <button disabled={busy} onClick={() => void remember()}>
+        {busy ? "Saving..." : "Remember something"}
+      </button>
+
+      <h3 className="mt-lg">Ask / Recall</h3>
+      <label className="field mt-lg">
+        <span>Ask something about this user</span>
+        <input value={recallQuery} onChange={(e) => setRecallQuery(e.target.value)} placeholder="How should I respond to this user?" />
+      </label>
+      <button className="ghost" disabled={busy} onClick={() => void recall()}>
+        {busy ? "Thinking..." : "What do you know about me?"}
+      </button>
+
+      <div className="card mt-lg">
+        <div className="muted small">Assistant response</div>
+        <div>{contextText || "Ask a question to see what the assistant remembers."}</div>
+      </div>
+      <div className="stack mt-lg">
+        <h3>Recent memories</h3>
+        {memoryList.length === 0 ? <div className="muted small">No memories for this user yet.</div> : null}
+        {memoryList.map((memory) => (
+          <div key={memory.id} className="card">
+            {editingMemoryId === memory.id ? (
+              <div className="stack">
+                <textarea
+                  rows={3}
+                  aria-label="Edit memory text"
+                  placeholder="Update remembered text"
+                  value={editedText}
+                  onChange={(e) => setEditedText(e.target.value)}
+                />
+                <div className="row">
+                  <button disabled={busy} onClick={() => void saveEdit(memory)}>Save edit</button>
+                  <button className="ghost" onClick={() => { setEditingMemoryId(null); setEditedText(""); }}>Cancel</button>
+                </div>
+              </div>
+            ) : (
+              <div className="row-space">
+                <div>
+                  <div>{memory.text}</div>
+                  <div className="muted small">{new Date(memory.created_at).toLocaleString()}</div>
+                  <div className="muted small">
+                    Last interaction: {lastInteractionAt ? new Date(lastInteractionAt).toLocaleString() : "n/a"}
+                  </div>
+                </div>
+                <details className="console-advanced-details">
+                  <summary className="muted small">More options</summary>
+                  <div className="row mt-sm">
+                    <button
+                      className="ghost"
+                      onClick={() => {
+                        setEditingMemoryId(memory.id);
+                        setEditedText(memory.text);
+                      }}
+                    >
+                      Update this
+                    </button>
+                    <button className="ghost" disabled={busy} onClick={() => void deleteMemory(memory.id)}>
+                      Forget this
+                    </button>
+                  </div>
+                </details>
+              </div>
+            )}
+          </div>
+        ))}
+      </div>
+    </Panel>
+  );
+}
+
 function RequestsView({ workspaceId }: { workspaceId: string }) {
   return (
     <Panel title="Usage">
       {workspaceId ? (
         <UsageView workspaceId={workspaceId} embedded />
       ) : (
-        <EmptyState title="No requests yet" subtitle="API requests will appear here once you start making calls." />
+        <EmptyState title="No usage yet" subtitle="Usage events appear here once your app starts making API calls." />
       )}
     </Panel>
   );
 }
 
 function ImportView({ isPaid }: { isPaid: boolean }) {
-  const [url, setUrl] = useState("");
-  const [tag, setTag] = useState("");
   const [artifactBase64, setArtifactBase64] = useState("");
   const [mode, setMode] = useState<"upsert" | "skip_existing" | "error_on_conflict" | "replace_ids" | "replace_all">("upsert");
   const [busy, setBusy] = useState(false);
@@ -1064,18 +1565,9 @@ function ImportView({ isPaid }: { isPaid: boolean }) {
           Import is available on paid plans only. Upgrade in Billing to unlock it.
         </div>
       )}
-      <div className="dropzone muted small">Drop files here or click to browse (TXT, PDF, PNG, JPG, MP4)</div>
-      <label className="field">
-        <span>Add URL</span>
-        <div className="row">
-          <input value={url} onChange={(e) => setUrl(e.target.value)} placeholder="https://example.com/article" />
-          <button className="ghost" disabled={!url.trim() || !isPaid}>Add</button>
-        </div>
-      </label>
-      <label className="field">
-        <span>Container Tag (optional)</span>
-        <input value={tag} onChange={(e) => setTag(e.target.value)} placeholder="Search or create tags..." />
-      </label>
+      <div className="muted small">
+        Import currently accepts a prepared base64 artifact payload and mode. File drop and URL import are not available in this console.
+      </div>
       <label className="field">
         <span>Artifact (base64)</span>
         <textarea value={artifactBase64} onChange={(e) => setArtifactBase64(e.target.value)} rows={6} />
@@ -1227,17 +1719,15 @@ function McpView() {
 }
 
 function BillingConsoleView({ workspaceId }: { workspaceId: string }) {
-  const [billTab, setBillTab] = useState<"plans" | "usage" | "invoices">("plans");
+  const [billTab, setBillTab] = useState<"plans" | "usage">("plans");
   return (
     <Panel title="Billing">
       <nav className="tabs">
         <button className={billTab === "plans" ? "tab active" : "tab"} onClick={() => setBillTab("plans")}>Plans</button>
         <button className={billTab === "usage" ? "tab active" : "tab"} onClick={() => setBillTab("usage")}>Usage</button>
-        <button className={billTab === "invoices" ? "tab active" : "tab"} onClick={() => setBillTab("invoices")}>Invoices</button>
       </nav>
       {billTab === "plans" && <PlansView workspaceId={workspaceId} />}
       {billTab === "usage" && <UsageView workspaceId={workspaceId} embedded />}
-      {billTab === "invoices" && <InvoicesView />}
     </Panel>
   );
 }
@@ -1297,10 +1787,6 @@ ${Object.entries(res.fields).map(([k, v]) => `<input type="hidden" name="${k}" v
       </div>
     </div>
   );
-}
-
-function InvoicesView() {
-  return <EmptyState title="No invoices yet" subtitle="Invoices appear here once you have an active paid subscription." />;
 }
 
 function MagicLinkIcon() {
@@ -1502,7 +1988,7 @@ function WorkspacesView({
   };
 
   return (
-    <Panel title="Workspace & Team">
+    <Panel title="Workspaces">
       <p className="muted small">
         Create a workspace or pick one you already belong to.
       </p>
@@ -1624,9 +2110,9 @@ function ApiKeysView({
   };
 
   return (
-    <Panel title="API Access">
+    <Panel title="API Keys">
       {!workspaceId && <div className="muted small">Connect a workspace to load keys.</div>}
-      <div className="muted small">Create an access key for your app. You can revoke keys anytime.</div>
+      <div className="muted small">Create an API key for your app. You can revoke keys anytime.</div>
       <div className="row">
         <input
           value={newName}
@@ -1634,7 +2120,7 @@ function ApiKeysView({
           placeholder="Key name (for example, production-app)"
         />
         <button disabled={!workspaceId || !newName.trim() || creating} onClick={createKey}>
-          {creating ? "Creating…" : "Create access key"}
+          {creating ? "Creating…" : "Create API key"}
         </button>
       </div>
       {loading && <div>Loading…</div>}
@@ -1779,7 +2265,7 @@ function MemoryBrowserView({
     return (
       <Panel title="Memory Browser">
         <div className="badge">Set your workspace first to search and open memories.</div>
-        <div className="muted small">Tip: Choose a workspace in the Workspaces tab, then click Set Workspace.</div>
+        <div className="muted small">Tip: Choose a workspace in the Workspaces section, then click Use this workspace.</div>
       </Panel>
     );
   }
@@ -2557,138 +3043,6 @@ function UsageView({ workspaceId, embedded = false }: { workspaceId: string; emb
     </>
   );
   return embedded ? content : <Panel title="Usage">{content}</Panel>;
-}
-
-function BillingView({ workspaceId }: { workspaceId: string }) {
-  const [status, setStatus] = useState<{
-    plan: string;
-    plan_status: string;
-    effective_plan: string;
-    current_period_end: string | null;
-    cancel_at_period_end: boolean;
-  } | null>(null);
-  const [loading, setLoading] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-  const [banner, setBanner] = useState<string | null>(() => {
-    const qs = new URLSearchParams(window.location.search);
-    const flag = qs.get("status");
-    if (flag === "success") return "Payment successful. Refreshing status…";
-    if (flag === "canceled") return "Checkout canceled";
-    return null;
-  });
-
-  if (!workspaceId?.trim()) {
-    return (
-      <div className="stack mt-lg">
-        <div className="badge">Set your workspace first to load billing status and checkout options.</div>
-      </div>
-    );
-  }
-
-  const load = async () => {
-    setLoading(true);
-    setError(null);
-    try {
-      const res = await apiGet<{
-        plan: string;
-        plan_status: string;
-        effective_plan: string;
-        current_period_end: string | null;
-        cancel_at_period_end: boolean;
-      }>("/v1/billing/status");
-      setStatus(res);
-      setBanner(null);
-    } catch (err) {
-      setError(userFacingErrorMessage(err));
-    } finally {
-      setLoading(false);
-    }
-  };
-
-  const openCheckout = async () => {
-    setError(null);
-    try {
-      const res = await apiPost<{
-        url: string;
-        method?: string;
-        fields?: Record<string, string>;
-      }>("/v1/billing/checkout", {});
-
-      if ((res.method ?? "GET").toUpperCase() === "POST" && res.fields && Object.keys(res.fields).length > 0) {
-        const target = window.open("", "_blank", "noopener");
-        if (!target) {
-          setError("Popup blocked by browser. Allow popups and try again.");
-          return;
-        }
-        const html = `<!doctype html><html><body><form id="payu-form" method="POST" action="${res.url}">
-${Object.entries(res.fields)
-    .map(([k, v]) => `<input type="hidden" name="${k}" value="${String(v).replace(/"/g, "&quot;")}" />`)
-    .join("\n")}
-</form><script>document.getElementById("payu-form").submit();</script></body></html>`;
-        target.document.write(html);
-        target.document.close();
-      } else {
-        window.open(res.url, "_blank", "noopener");
-      }
-    } catch (err) {
-      setError(userFacingErrorMessage(err));
-    }
-  };
-
-  useEffect(() => {
-    void load();
-  }, []);
-
-  const renewal =
-    status?.current_period_end != null
-      ? new Date(status.current_period_end).toLocaleString()
-      : "not set";
-
-  return (
-    <div className="stack mt-lg">
-      {banner && <div className="badge">{banner}</div>}
-      {error && <div className="badge">{error}</div>}
-      <div className="row-space">
-        <div>
-          <div className="muted small">Plan</div>
-          <div className="badge">{status?.effective_plan ?? status?.plan ?? "launch"}</div>
-        </div>
-        <div>
-          <div className="muted small">Status</div>
-          <div>{status?.plan_status ?? "unknown"}</div>
-        </div>
-        <div>
-          <div className="muted small">Renews</div>
-          <div>{renewal}</div>
-        </div>
-      </div>
-      <div className="row">
-        <button onClick={openCheckout} disabled={loading}>
-          Upgrade plan (PayU)
-        </button>
-        <button className="ghost" onClick={load} disabled={loading}>
-          Refresh
-        </button>
-      </div>
-    </div>
-  );
-}
-
-function _SettingsView({ session, workspaceId }: { session: Session; workspaceId: string }) {
-  return (
-    <Panel title="Settings">
-      <div className="muted small">User ID: {session.user.id}</div>
-      <div className="muted small">Role: {session.user.role}</div>
-      <div className="muted small">Issued: {new Date(session.user.created_at).toLocaleString()}</div>
-      <details>
-        <summary className="muted small">Developer details</summary>
-        <div className="muted small mt-sm">
-          Claims: <code>{JSON.stringify(session.user.user_metadata)}</code>
-        </div>
-      </details>
-      <BillingView workspaceId={workspaceId} />
-    </Panel>
-  );
 }
 
 function MembersView({ workspaceId, currentUserId }: { workspaceId: string; currentUserId: string }) {

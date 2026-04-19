@@ -46,8 +46,8 @@ Use the **anon** (not service-role) key so browser traffic is RLS-enforced. Foun
 
 ## Usage tab
 
-- Set your Worker API key once in the **API key** panel (top of the dashboard). It’s stored locally only.
-- Data is fetched from Worker API `/v1/usage/today`; shows counts and plan limits with friendly errors (401 invalid key, 402 over cap, 429 rate limited).
+- Usage is workspace-scoped and loaded through dashboard session auth.
+- Data is fetched from Worker API `/v1/usage/today`; shows reads/writes/embed consumption and plan limits with friendly errors.
 
 ## Import tab (paid)
 
@@ -59,7 +59,6 @@ Use the **anon** (not service-role) key so browser traffic is RLS-enforced. Foun
 - Uses Worker API endpoints:
   - `GET /v1/billing/status` (shows plan, plan_status, effective_plan, renewal/cancel flags)
   - `POST /v1/billing/checkout` (opens PayU checkout)
-  - `POST /v1/billing/portal` (returns `410 Gone`; legacy Stripe portal removed)
 - Buttons:
   - **Upgrade to Pro (PayU)** → opens checkout in a new tab.
 - Query params `?status=success|canceled` render a small banner after returning from checkout.

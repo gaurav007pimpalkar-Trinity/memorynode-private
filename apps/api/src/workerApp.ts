@@ -488,6 +488,7 @@ const KNOWN_PATH_ALLOWED_METHODS: Array<{ test: (path: string) => boolean; allow
   { test: (p) => p === "/v1/import", allow: "POST" },
   { test: (p) => p === "/v1/connectors/settings", allow: "GET, PATCH" },
   { test: (p) => p === "/v1/admin/billing/health", allow: "GET" },
+  { test: (p) => p === "/v1/admin/founder/phase1", allow: "GET" },
   { test: (p) => p === "/admin/webhooks/reprocess", allow: "POST" },
   { test: (p) => p === "/admin/usage/reconcile", allow: "POST" },
   { test: (p) => p === "/admin/sessions/cleanup", allow: "POST" },

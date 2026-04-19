@@ -22,7 +22,7 @@ Follow this path depending on what you need:
 
 ### New developer? Start here:
 
-1. **`docs/start-here/README.md`** — Mode 1: hosted API, key + three calls in minutes
+1. **`docs/start-here/README.md`** — Mode 1: hosted API, key + four calls in minutes
 1. **`docs/external/POSITIONING.md`** — who it is for and what we explicitly are not
 1. **`docs/build/README.md`** — Mode 2: advanced usage (filters, SDK, OpenAPI)
 1. **`docs/external/RECIPE_*.md`** — support, SaaS copilot, SMB chatbot copy-paste paths

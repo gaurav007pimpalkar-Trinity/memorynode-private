@@ -26,6 +26,9 @@ User-facing documentation for MemoryNode.
 - [POSITIONING.md](./POSITIONING.md) — product promise & ICP
 - [QUICKSTART.md](./QUICKSTART.md) — short pointer to start-here + legacy anchors
 - [API_USAGE.md](./API_USAGE.md) — full request/field reference
+- [SAAS_MEMORY_CONSOLE.md](./SAAS_MEMORY_CONSOLE.md) — SaaS-layer onboarding and continuity controls
+- [ASSISTANT_WORKSPACE.md](./ASSISTANT_WORKSPACE.md) — no-code assistant memory flow
+- [API_SURFACE_PHASE1.md](./API_SURFACE_PHASE1.md) — public vs hidden endpoint boundary for Phase 1
 - [openapi.yaml](./openapi.yaml) — OpenAPI spec (generated; run `pnpm openapi:gen`)
 - Recipes: [RECIPE_SUPPORT_AGENT.md](./RECIPE_SUPPORT_AGENT.md), [RECIPE_SAAS_COPILOT.md](./RECIPE_SAAS_COPILOT.md), [RECIPE_SMB_CHATBOT.md](./RECIPE_SMB_CHATBOT.md)
 - [TRUST.md](./TRUST.md)
