@@ -39,6 +39,22 @@ import type { MemoryType, SearchMode, RetrievalProfile } from "@memorynodeai/sha
 export type { ApiError };
 
 const DEFAULT_TIMEOUT_MS = 60_000;
+type OwnerType = "user" | "team" | "app";
+type OwnerScopedSearchRequest = SearchRequest & {
+  owner_id?: string;
+  owner_type?: OwnerType;
+  entity_id?: string;
+  entity_type?: OwnerType;
+};
+type AddMemoryInput = Omit<AddMemoryRequest, "userId"> & {
+  userId?: string;
+  ownerId?: string;
+  ownerType?: OwnerType;
+  /** @deprecated use ownerId */
+  entityId?: string;
+  /** @deprecated use ownerType */
+  entityType?: OwnerType | "agent";
+};
 
 export interface MemoryNodeClientOptions {
   baseUrl?: string;
@@ -55,7 +71,13 @@ export interface MemoryNodeClientOptions {
 
 // SDK-facing options (camelCase). Wire format stays snake_case per shared types.
 export interface SearchOptions {
-  userId: string;
+  userId?: string;
+  ownerId?: string;
+  ownerType?: OwnerType;
+  /** @deprecated use ownerId */
+  entityId?: string;
+  /** @deprecated use ownerType */
+  entityType?: OwnerType | "agent";
   namespace?: string;
   query: string;
   topK?: number;
@@ -82,6 +104,12 @@ export interface ListMemoriesOptions {
   pageSize?: number;
   namespace?: string;
   userId?: string;
+  ownerId?: string;
+  ownerType?: OwnerType;
+  /** @deprecated use ownerId */
+  entityId?: string;
+  /** @deprecated use ownerType */
+  entityType?: OwnerType | "agent";
   /** Filter by memory type: fact, preference, event, note, or task. */
   memoryType?: MemoryType;
   metadata?: Record<string, string | number | boolean>;
@@ -105,7 +133,13 @@ export interface CreateEvalItemOptions {
 
 export interface RunEvalSetOptions {
   evalSetId: string;
-  userId: string;
+  userId?: string;
+  ownerId?: string;
+  ownerType?: OwnerType;
+  /** @deprecated use ownerId */
+  entityId?: string;
+  /** @deprecated use ownerType */
+  entityType?: OwnerType | "agent";
   namespace?: string;
   topK?: number;
   searchMode?: SearchMode;
@@ -115,7 +149,13 @@ export interface RunEvalSetOptions {
 export interface ContextFeedbackOptions extends ContextFeedbackRequest {}
 
 export interface ContextExplainOptions {
-  userId: string;
+  userId?: string;
+  ownerId?: string;
+  ownerType?: OwnerType;
+  /** @deprecated use ownerId */
+  entityId?: string;
+  /** @deprecated use ownerType */
+  entityType?: OwnerType | "agent";
   query: string;
   namespace?: string;
   topK?: number;
@@ -240,9 +280,20 @@ export class MemoryNodeClient {
     return this.request<HealthResponse>("/healthz", { method: "GET" });
   }
 
-  async addMemory(input: AddMemoryRequest): Promise<AddMemoryResponse> {
+  async addMemory(input: AddMemoryInput): Promise<AddMemoryResponse> {
+    const { userId, ownerId, ownerType } = this.resolveOwnerIdentity(
+      input.userId,
+      input.ownerId,
+      input.ownerType,
+      input.entityId,
+      input.entityType,
+    );
     const body: Record<string, unknown> = {
-      user_id: input.userId,
+      user_id: userId,
+      owner_id: ownerId,
+      owner_type: ownerType,
+      entity_id: ownerId,
+      entity_type: ownerType,
       namespace: input.namespace,
       text: input.text,
       metadata: input.metadata,
@@ -308,11 +359,22 @@ export class MemoryNodeClient {
   }
 
   async runEvalSet(input: RunEvalSetOptions): Promise<EvalRunResponse> {
+    const { userId, ownerId, ownerType } = this.resolveOwnerIdentity(
+      input.userId,
+      input.ownerId,
+      input.ownerType,
+      input.entityId,
+      input.entityType,
+    );
     return this.request<EvalRunResponse>("/v1/evals/run", {
       method: "POST",
       body: {
         eval_set_id: input.evalSetId,
-        user_id: input.userId,
+        user_id: userId,
+        owner_id: ownerId,
+        owner_type: ownerType,
+        entity_id: ownerId,
+        entity_type: ownerType,
         namespace: input.namespace,
         top_k: input.topK,
         search_mode: input.searchMode,
@@ -344,10 +406,21 @@ export class MemoryNodeClient {
   }
 
   async contextExplain(input: ContextExplainOptions): Promise<ContextExplainResponse> {
+    const { userId, ownerId, ownerType } = this.resolveOwnerIdentity(
+      input.userId,
+      input.ownerId,
+      input.ownerType,
+      input.entityId,
+      input.entityType,
+    );
     const q = new URLSearchParams({
-      user_id: input.userId,
+      user_id: userId,
       query: input.query,
     });
+    q.set("owner_id", ownerId);
+    q.set("owner_type", ownerType);
+    q.set("entity_id", ownerId);
+    q.set("entity_type", ownerType);
     if (input.namespace) q.set("namespace", input.namespace);
     if (input.topK !== undefined) q.set("top_k", String(input.topK));
     if (input.page !== undefined) q.set("page", String(input.page));
@@ -366,6 +439,16 @@ export class MemoryNodeClient {
     if (pageSize) url.searchParams.set("page_size", String(pageSize));
     if (options.namespace) url.searchParams.set("namespace", options.namespace);
     if (options.userId) url.searchParams.set("user_id", options.userId);
+    const ownerId = options.ownerId ?? options.entityId;
+    const ownerType = this.normalizeOwnerType(options.ownerType ?? options.entityType);
+    if (ownerId) {
+      url.searchParams.set("owner_id", ownerId);
+      url.searchParams.set("entity_id", ownerId);
+    }
+    if (ownerType) {
+      url.searchParams.set("owner_type", ownerType);
+      url.searchParams.set("entity_type", ownerType);
+    }
     if (options.memoryType) url.searchParams.set("memory_type", options.memoryType);
     if (options.startTime) url.searchParams.set("start_time", options.startTime);
     if (options.endTime) url.searchParams.set("end_time", options.endTime);
@@ -471,7 +554,53 @@ export class MemoryNodeClient {
     return new MemoryNodeApiError(code, message, status);
   }
 
-  private toWireSearch(input: SearchOptions): SearchRequest {
+  private normalizeOwnerType(value: OwnerType | "agent" | undefined): OwnerType | undefined {
+    if (!value) return undefined;
+    return value === "agent" ? "app" : value;
+  }
+
+  private resolveOwnerIdentity(
+    userId: string | undefined,
+    ownerId: string | undefined,
+    ownerType: OwnerType | undefined,
+    entityId: string | undefined,
+    entityType: OwnerType | "agent" | undefined,
+  ): { userId: string; ownerId: string; ownerType: OwnerType } {
+    const normalizedUserId = userId?.trim() ?? "";
+    const normalizedOwnerId = ownerId?.trim() ?? "";
+    const normalizedEntityId = entityId?.trim() ?? "";
+    const ids = [normalizedUserId, normalizedOwnerId, normalizedEntityId].filter(Boolean);
+    if (ids.length === 0) {
+      throw new MemoryNodeApiError(
+        "MISSING_OWNER_ID",
+        "Provide userId, ownerId, or entityId for owner-scoped requests.",
+        undefined,
+      );
+    }
+    const resolvedId = ids[0] ?? "";
+    if (ids.some((id) => id !== resolvedId)) {
+      throw new MemoryNodeApiError(
+        "INVALID_OWNER_ID",
+        "userId, ownerId, and entityId must match when provided together.",
+        undefined,
+      );
+    }
+    const normalizedOwnerType = this.normalizeOwnerType(ownerType ?? entityType) ?? "user";
+    return {
+      userId: resolvedId,
+      ownerId: resolvedId,
+      ownerType: normalizedOwnerType,
+    };
+  }
+
+  private toWireSearch(input: SearchOptions): OwnerScopedSearchRequest {
+    const { userId, ownerId, ownerType } = this.resolveOwnerIdentity(
+      input.userId,
+      input.ownerId,
+      input.ownerType,
+      input.entityId,
+      input.entityType,
+    );
     const hasFilters =
       input.metadata ||
       input.startTime ||
@@ -479,7 +608,11 @@ export class MemoryNodeClient {
       input.memoryType !== undefined ||
       input.filterMode;
     return {
-      user_id: input.userId,
+      user_id: userId,
+      owner_id: ownerId,
+      owner_type: ownerType,
+      entity_id: ownerId,
+      entity_type: ownerType,
       namespace: input.namespace,
       query: input.query,
       top_k: input.topK,

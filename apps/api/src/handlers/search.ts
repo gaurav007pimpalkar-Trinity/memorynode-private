@@ -88,6 +88,23 @@ export interface SearchHandlerDeps extends HandlerDeps {
   effectivePlan: (plan: AuthContext["plan"], status?: AuthContext["planStatus"]) => AuthContext["plan"];
 }
 
+function normalizeOwnerType(input: unknown): "user" | "team" | "app" {
+  if (input === "team") return "team";
+  if (input === "app" || input === "agent") return "app";
+  return "user";
+}
+
+function resolveHistoryOwner(params: Record<string, unknown>): { ownerId: string; ownerType: "user" | "team" | "app" } {
+  const ownerId =
+    typeof params.owner_id === "string"
+      ? params.owner_id
+      : (typeof params.user_id === "string"
+        ? params.user_id
+        : (typeof params.entity_id === "string" ? params.entity_id : "default"));
+  const ownerType = normalizeOwnerType(params.owner_type ?? params.entity_type);
+  return { ownerId, ownerType };
+}
+
 export function createSearchHandlers(
   requestDeps: SearchHandlerDeps,
   defaultDeps: SearchHandlerDeps,
@@ -276,6 +293,8 @@ export function createSearchHandlers(
             query: parseResult.data.query,
             params: {
               user_id: parseResult.data.user_id,
+              owner_id: parseResult.data.owner_id,
+              owner_type: parseResult.data.owner_type,
               namespace: parseResult.data.namespace,
               top_k: parseResult.data.top_k,
               page: parseResult.data.page,
@@ -440,8 +459,11 @@ export function createSearchHandlers(
         ["balanced", "recall", "precision"].includes(params.retrieval_profile)
           ? (params.retrieval_profile as SearchPayload["retrieval_profile"])
           : undefined;
+      const { ownerId, ownerType } = resolveHistoryOwner(params);
       const payload: SearchPayload = {
-        user_id: typeof params.user_id === "string" ? params.user_id : "default",
+        user_id: ownerId,
+        owner_id: ownerId,
+        owner_type: ownerType,
         query: String(row.query ?? ""),
         namespace: typeof params.namespace === "string" ? params.namespace : undefined,
         top_k: typeof params.top_k === "number" ? params.top_k : undefined,

@@ -5,6 +5,18 @@
 
 export { parseWithSchema, type ParseResult } from "./validate.js";
 export {
+  OWNER_TYPES,
+  OwnerTypeSchema,
+  OwnerTypeInputSchema,
+  type OwnerType,
+  normalizeOwnerIdentity,
+  type OwnerIdentity,
+  type OwnerIdentityInput,
+  ENTITY_TYPES,
+  EntityTypeSchema,
+  type EntityType,
+} from "./entity.js";
+export {
   MemoryInsertSchema,
   type MemoryInsertPayload,
   type ChunkProfile,

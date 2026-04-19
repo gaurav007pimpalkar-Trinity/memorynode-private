@@ -4,6 +4,7 @@
 
 import { createHttpError } from "../http.js";
 import { DEFAULT_TOPK, MAX_QUERY_CHARS, MAX_TOPK } from "../limits.js";
+import { normalizeOwnerIdentity } from "../contracts/entity.js";
 import { MEMORY_TYPES } from "../contracts/search.js";
 import type { SearchPayload } from "../contracts/search.js";
 import type { MemoryListParams } from "../handlers/memories.js";
@@ -16,6 +17,8 @@ const DEFAULT_LIST_PAGE_SIZE = 20;
 
 export interface NormalizedSearchParams {
   user_id: string;
+  owner_id: string;
+  owner_type: "user" | "team" | "app";
   namespace: string;
   query: string;
   top_k: number;
@@ -63,10 +66,15 @@ function cleanMetadataFilter(raw?: Record<string, unknown> | MetadataFilter): Me
 }
 
 export function normalizeSearchPayload(payload: SearchPayload): NormalizedSearchParams {
-  const { user_id, query } = payload;
-  if (!user_id || !query) {
-    throw createHttpError(400, "BAD_REQUEST", "user_id and query are required");
+  let owner: ReturnType<typeof normalizeOwnerIdentity>;
+  try {
+    owner = normalizeOwnerIdentity(payload, "owner_id (or user_id/entity_id)");
+  } catch (err) {
+    throw createHttpError(400, "BAD_REQUEST", err instanceof Error ? err.message : String(err));
   }
+  const user_id = owner.user_id;
+  const query = payload.query;
+  if (!query) throw createHttpError(400, "BAD_REQUEST", "query is required");
   if (query.length > MAX_QUERY_CHARS) {
     throw createHttpError(400, "BAD_REQUEST", `query exceeds ${MAX_QUERY_CHARS} chars`);
   }
@@ -106,6 +114,8 @@ export function normalizeSearchPayload(payload: SearchPayload): NormalizedSearch
 
   return {
     user_id,
+    owner_id: owner.owner_id,
+    owner_type: owner.owner_type,
     query,
     namespace,
     top_k,
@@ -133,7 +143,27 @@ export function normalizeMemoryListParams(url: URL): MemoryListParams {
     MAX_PAGE_SIZE,
   );
   const namespace = url.searchParams.get("namespace") ?? undefined;
-  const user_id = url.searchParams.get("user_id") ?? undefined;
+  const rawUserId = url.searchParams.get("user_id") ?? undefined;
+  const rawOwnerId = url.searchParams.get("owner_id") ?? undefined;
+  const rawEntityId = url.searchParams.get("entity_id") ?? undefined;
+  const rawOwnerType = url.searchParams.get("owner_type") ?? undefined;
+  const rawEntityType = url.searchParams.get("entity_type") ?? undefined;
+  const user_id = rawUserId ?? rawOwnerId ?? rawEntityId;
+  const candidateIds = [rawUserId, rawOwnerId, rawEntityId].filter((v): v is string => Boolean(v && v.trim()));
+  const resolvedCandidateId = candidateIds[0] ?? "";
+  if (candidateIds.some((id) => id !== resolvedCandidateId)) {
+    throw createHttpError(400, "BAD_REQUEST", "user_id, owner_id, and entity_id must match when provided together");
+  }
+  let owner_type: "user" | "team" | "app" | undefined;
+  const normalizedOwnerType = rawOwnerType?.trim().toLowerCase();
+  const normalizedEntityType = rawEntityType?.trim().toLowerCase();
+  const typeCandidate = normalizedOwnerType ?? normalizedEntityType;
+  if (typeCandidate) {
+    if (typeCandidate !== "user" && typeCandidate !== "team" && typeCandidate !== "app" && typeCandidate !== "agent") {
+      throw createHttpError(400, "BAD_REQUEST", "owner_type must be one of: user, team, app");
+    }
+    owner_type = (typeCandidate === "agent" ? "app" : typeCandidate) as "user" | "team" | "app";
+  }
 
   let metadata: MetadataFilter | undefined;
   const metadataRaw = url.searchParams.get("metadata");
@@ -167,6 +197,8 @@ export function normalizeMemoryListParams(url: URL): MemoryListParams {
     page_size,
     namespace: namespace || undefined,
     user_id: user_id || undefined,
+    owner_id: user_id || undefined,
+    owner_type,
     memory_type,
     filters: { metadata, start_time, end_time },
   };

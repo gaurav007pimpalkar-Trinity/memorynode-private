@@ -36,7 +36,17 @@
 
 ---
 
-**Who it is for:** support bots, busy in-app assistants, and B2B SaaS copilots. **What we are not:** [docs/external/POSITIONING.md](docs/external/POSITIONING.md)
+**Who it is for:** individual builders, teams, and AI agents/apps that need reliable memory. **What we are not:** [docs/external/POSITIONING.md](docs/external/POSITIONING.md)
+
+---
+
+## Who Can Own Memory?
+
+- Individual users
+- Teams
+- Apps / AI systems
+
+Workspaces organize access, people, and billing. Memories belong to an owner.
 
 ---
 

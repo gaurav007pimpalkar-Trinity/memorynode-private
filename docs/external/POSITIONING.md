@@ -10,9 +10,12 @@ This file is the **canonical product narrative** for MemoryNode. Other READMEs a
 
 Primary:
 
+- **Individual builders** — ship personal assistants, side projects, or solo products that need durable memory without building a custom RAG stack.
+- **Teams / organizations** — centralize product memory for support, success, and internal copilots.
+- **AI agents / applications** — use MemoryNode as a hosted memory layer for structured recall across sessions.
 - **Support and success copilots** — bots that must remember ticket context, prior promises, and account facts.
 - **SMB and messaging-channel bots** — high-volume chat where repeating questions erodes trust.
-- **B2B SaaS copilots** — in-app assistants scoped per account or per end-user (`user_id` + `namespace`).
+- **B2B SaaS copilots** — in-app assistants scoped per account or per owner (`owner_id` + `namespace`).
 
 Secondary:
 
@@ -25,7 +28,14 @@ Secondary:
 - **Long-lived memories** you define (text and optional metadata), chunked and embedded server-side, retrieved with **hybrid search** and **prompt-ready context** (`POST /v1/context`).
 - **Deterministic ranking system:** types (e.g. fact, preference), dedupe hooks, recency-aware ranking, and importance/retrieval signals — not “dumb storage with a vector bolt-on.”
 - **Core debugging visibility:** explainability (`GET /v1/context/explain`), query history, and replay so teams can see **which chunks scored how** and stop guessing when context is wrong.
-- **Tenant boundary:** everything hangs off a **workspace** (your API key). Inside it, you partition by **`user_id`** and optional **`namespace`** strings **you** choose.
+- **Tenant boundary:** workspaces organize access and billing. They do not own memories.
+- **Ownership model:** every memory has an owner (`owner_id` + `owner_type`) where `owner_type` is `user`, `team`, or `app`. Legacy `user_id` and `entity_*` aliases remain supported.
+
+## Who can own memory?
+
+- Individual users
+- Teams
+- Apps / AI systems
 
 ## Explicit non-goals
 

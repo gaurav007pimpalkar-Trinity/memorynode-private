@@ -401,6 +401,8 @@ export function createEvalHandlers(
               gate.auth,
               {
                 user_id: parseResult.data.user_id,
+                owner_id: parseResult.data.owner_id,
+                owner_type: parseResult.data.owner_type,
                 query: item.query,
                 namespace: parseResult.data.namespace,
                 top_k: topK,

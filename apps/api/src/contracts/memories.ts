@@ -5,6 +5,7 @@
 import { z } from "zod";
 import { MAX_TEXT_CHARS } from "../limits.js";
 import { MEMORY_TYPES } from "./search.js";
+import { OwnerTypeInputSchema } from "./entity.js";
 
 /** Chunking preset for POST /v1/memories (paragraph-aware splitter in worker). */
 export const CHUNK_PROFILES = ["balanced", "dense", "document"] as const;
@@ -22,7 +23,13 @@ export function chunkParamsForProfile(profile: ChunkProfile | undefined): { chun
 }
 
 export const MemoryInsertSchema = z.object({
-  user_id: z.string().min(1, "user_id is required"),
+  user_id: z.string().min(1).optional(),
+  owner_id: z.string().min(1).optional(),
+  owner_type: OwnerTypeInputSchema.optional(),
+  /** @deprecated use owner_id */
+  entity_id: z.string().min(1).optional(),
+  /** @deprecated use owner_type */
+  entity_type: OwnerTypeInputSchema.optional(),
   namespace: z.string().optional(),
   text: z.string().min(1, "text is required").max(MAX_TEXT_CHARS, `text exceeds ${MAX_TEXT_CHARS} chars`),
   metadata: z.record(z.string(), z.union([z.string(), z.number(), z.boolean(), z.null()])).optional(),
@@ -37,6 +44,35 @@ export const MemoryInsertSchema = z.object({
    * Set to false to store only the parent memory without extraction.
    */
   extract: z.boolean().default(true),
+}).superRefine((value, ctx) => {
+  const userId = value.user_id?.trim() ?? "";
+  const ownerId = value.owner_id?.trim() ?? "";
+  const entityId = value.entity_id?.trim() ?? "";
+  const ids = [userId, ownerId, entityId].filter(Boolean);
+  if (ids.length === 0) {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      message: "user_id, owner_id, or entity_id is required",
+      path: ["user_id"],
+    });
+  }
+  const resolved = ids[0] ?? "";
+  if (ids.some((id) => id !== resolved)) {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      message: "user_id, owner_id, and entity_id must match when provided together",
+      path: ["owner_id"],
+    });
+  }
+}).transform((value) => {
+  const resolvedId = (value.user_id?.trim() || value.owner_id?.trim() || value.entity_id?.trim()) as string;
+  const ownerType = (value.owner_type ?? value.entity_type ?? "user") as "user" | "team" | "app";
+  return {
+    ...value,
+    user_id: resolvedId,
+    owner_id: resolvedId,
+    owner_type: ownerType,
+  };
 });
 
 export type MemoryInsertPayload = z.infer<typeof MemoryInsertSchema>;

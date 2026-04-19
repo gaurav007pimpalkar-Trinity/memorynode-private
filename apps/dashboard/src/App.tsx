@@ -20,7 +20,7 @@ type Tab =
   | "api_keys"
   | "mcp"
   | "connectors"
-  | "team"
+  | "workspaces"
   | "billing";
 
 const tabsRequiringWorkspace: Tab[] = [
@@ -34,7 +34,7 @@ const tabsRequiringWorkspace: Tab[] = [
   "import",
   "api_keys",
   "connectors",
-  "team",
+  "workspaces",
   "billing",
 ];
 
@@ -61,7 +61,7 @@ const DEVELOPER_SIDEBAR_GROUPS: SidebarGroup[] = [
   },
   {
     section: "Account",
-    entries: [{ tab: "team", label: "Workspaces" }],
+    entries: [{ tab: "workspaces", label: "Workspaces" }],
   },
 ];
 
@@ -72,7 +72,7 @@ const SAAS_SIDEBAR_GROUPS: SidebarGroup[] = [
       { tab: "overview", label: "Overview" },
       { tab: "continuity", label: "Continuity" },
       { tab: "usage", label: "Usage" },
-      { tab: "team", label: "Workspaces" },
+      { tab: "workspaces", label: "Workspaces" },
       { tab: "billing", label: "Billing" },
     ],
   },
@@ -492,20 +492,20 @@ export function App(): JSX.Element {
     () =>
       surface === "developer"
         ? [
-            { key: "workspace", label: "Pick your workspace", done: workspaceReady },
+            { key: "workspace", label: "Choose your memory space", done: workspaceReady },
             { key: "workspace-bind", label: "Connect this browser", done: Boolean(workspaceClaim?.trim() || workspaceId.trim()) },
             { key: "api-key", label: "Create your first API key", done: firstApiKeyCreated },
-            { key: "team", label: "Invite a teammate (optional)", done: false },
+            { key: "team", label: "Invite collaborators (optional)", done: false },
           ]
         : surface === "assistant"
           ? [
-              { key: "workspace", label: "Pick your workspace", done: workspaceReady },
+              { key: "workspace", label: "Choose your memory space", done: workspaceReady },
               { key: "workspace-bind", label: "Connect this browser", done: Boolean(workspaceClaim?.trim() || workspaceId.trim()) },
               { key: "remember", label: "Remember something for a user", done: workspaceReady },
               { key: "recall", label: "Ask what the assistant knows", done: workspaceReady },
             ]
         : [
-            { key: "workspace", label: "Pick your workspace", done: workspaceReady },
+            { key: "workspace", label: "Choose your memory space", done: workspaceReady },
             { key: "workspace-bind", label: "Connect this browser", done: Boolean(workspaceClaim?.trim() || workspaceId.trim()) },
             { key: "usage", label: "Verify usage metrics", done: workspaceReady && sessionReady },
             { key: "billing", label: "Confirm plan and billing", done: planBadge !== "FREE" },
@@ -890,7 +890,7 @@ export function App(): JSX.Element {
                   surface={surface}
                   onQuickSetup={() => {
                     setOnboardingCollapsed(false);
-                    selectTab(surface === "developer" ? "api_keys" : surface === "saas" ? "team" : "assistant_memory");
+                    selectTab(surface === "developer" ? "api_keys" : surface === "saas" ? "workspaces" : "assistant_memory");
                   }}
                 />
               )}
@@ -909,7 +909,7 @@ export function App(): JSX.Element {
               )}
               {tab === "mcp" && <McpView />}
               {tab === "connectors" && <ConnectorSettingsView />}
-              {tab === "team" && (
+              {tab === "workspaces" && (
                 <WorkspacesView
                   workspaceId={workspaceClaim || workspaceId}
                   sessionUserId={session.user.id}

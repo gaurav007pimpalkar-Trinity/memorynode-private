@@ -30,9 +30,16 @@ export type RetrievalProfile = "balanced" | "recall" | "precision";
 
 /** Ingest chunking preset (paragraph-aware splitter on the worker). */
 export type ChunkProfile = "balanced" | "dense" | "document";
+export type OwnerType = "user" | "team" | "app";
 
 export interface AddMemoryRequest {
   userId: string;
+  ownerId?: string;
+  ownerType?: OwnerType;
+  /** @deprecated use ownerId */
+  entityId?: string;
+  /** @deprecated use ownerType */
+  entityType?: OwnerType | "agent";
   namespace?: string;
   text: string;
   metadata?: Record<string, unknown>;
@@ -69,6 +76,12 @@ export interface AddMemoryResponse {
 
 export interface SearchRequest {
   user_id: string;
+  owner_id?: string;
+  owner_type?: OwnerType;
+  /** @deprecated use owner_id */
+  entity_id?: string;
+  /** @deprecated use owner_type */
+  entity_type?: OwnerType;
   namespace?: string;
   query: string;
   top_k?: number;
@@ -251,6 +264,10 @@ export interface ContextExplainResult {
 export interface ContextExplainResponse {
   query: {
     user_id: string;
+    owner_id?: string;
+    owner_type?: OwnerType;
+    entity_id?: string;
+    entity_type?: OwnerType;
     namespace: string | null;
     query: string;
     top_k: number | null;
@@ -271,6 +288,8 @@ export interface ContextExplainResponse {
 export interface MemoryRecord {
   id: MemoryId;
   user_id: string;
+  owner_id?: string;
+  owner_type?: OwnerType;
   namespace: string;
   text: string;
   metadata: Record<string, unknown>;

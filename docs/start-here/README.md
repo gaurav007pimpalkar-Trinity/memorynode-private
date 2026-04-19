@@ -2,7 +2,7 @@
 
 **MemoryNode lets you store, retrieve, and explain why AI remembered something.**
 
-MemoryNode is a **hosted API** that remembers your users: you **save** what they told you, **search** it later, and ask for **ready-to-paste context** for your AI. You need a browser (to copy your API key) and any way to send HTTPS requests — nothing to install on your computer for this path.
+MemoryNode is a **hosted API** that remembers across owners: you **save** what was learned, **search** it later, and ask for **ready-to-paste context** for your AI. You need a browser (to copy your API key) and any way to send HTTPS requests — nothing to install on your computer for this path.
 
 ## Without memory vs with MemoryNode
 
@@ -14,7 +14,19 @@ MemoryNode is a **hosted API** that remembers your users: you **save** what they
 ## 1. Get an API key
 
 1. Open your MemoryNode console and sign in.  
-2. Create a workspace and an API key. Copy it once (it looks like `mn_live_...`).
+2. Create a memory space (workspace) and an API key. Copy it once (it looks like `mn_live_...`).
+
+Memory ownership is explicit. You can send:
+
+- `user_id` (backward-compatible default)
+- or `owner_id` + `owner_type` where `owner_type` is `user`, `team`, or `app`
+- `entity_id` + `entity_type` still works as a deprecated alias for compatibility
+
+## Who can own memory?
+
+- Individual users
+- Teams
+- Apps / AI systems
 
 **Base URL:** `https://api.memorynode.ai` (unless your team gave you another URL).
 

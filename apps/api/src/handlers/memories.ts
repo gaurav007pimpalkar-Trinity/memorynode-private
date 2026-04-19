@@ -49,6 +49,8 @@ export interface MemoryListParams {
   page_size: number;
   namespace?: string;
   user_id?: string;
+  owner_id?: string;
+  owner_type?: "user" | "team" | "app";
   memory_type?: string;
   filters: {
     metadata?: MetadataFilter;
@@ -317,7 +319,8 @@ async function extractAndStore(
   d: MemoryHandlerDeps,
   sourceMemoryId: string,
   workspaceId: string,
-  userId: string,
+  ownerId: string,
+  ownerType: "user" | "team" | "app",
   namespace: string,
   text: string,
   maxPersistItems: number,
@@ -341,7 +344,9 @@ async function extractAndStore(
         .from("memories")
         .insert({
           workspace_id: workspaceId,
-          user_id: userId,
+          user_id: ownerId,
+          owner_id: ownerId,
+          owner_type: ownerType,
           namespace,
           text: item.text,
           metadata: { _extracted: true, _source_memory_id: sourceMemoryId },
@@ -357,7 +362,9 @@ async function extractAndStore(
       const chunkRows = chunks.map((chunk, idx) => ({
         workspace_id: workspaceId,
         memory_id: childId,
-        user_id: userId,
+        user_id: ownerId,
+        owner_id: ownerId,
+        owner_type: ownerType,
         namespace,
         chunk_index: idx,
         chunk_text: chunk,
@@ -490,7 +497,9 @@ export function createMemoryHandlers(
         );
       }
 
-      const { user_id, text, metadata, namespace, memory_type, extract, importance, chunk_profile } = parseResult.data;
+      const { user_id, owner_id, owner_type, text, metadata, namespace, memory_type, extract, importance, chunk_profile } = parseResult.data;
+      const ownerId = owner_id ?? user_id;
+      const ownerType = owner_type ?? "user";
       const namespaceVal = namespace ?? DEFAULT_NAMESPACE;
       const strictAutosaveMode = metadata?.autosave_mode === "strict";
       const attachmentType = typeof metadata?.attachment_type === "string" ? metadata.attachment_type.toLowerCase() : null;
@@ -515,7 +524,7 @@ export function createMemoryHandlers(
           event: "memory_save_skipped_low_signal",
           request_id: requestId,
           workspace_id: auth.workspaceId,
-          user_id,
+          owner_id: ownerId,
           namespace: namespaceVal,
         });
         return jsonResponse(
@@ -536,7 +545,7 @@ export function createMemoryHandlers(
           .from("memories")
           .select("id,text,created_at")
           .eq("workspace_id", auth.workspaceId)
-          .eq("user_id", user_id)
+          .eq("user_id", ownerId)
           .eq("namespace", namespaceVal)
           .gte("created_at", dedupeCutoffIso)
           .order("created_at", { ascending: false })
@@ -551,7 +560,7 @@ export function createMemoryHandlers(
               request_id: requestId,
               workspace_id: auth.workspaceId,
               memory_id: duplicate.id,
-              user_id,
+              owner_id: ownerId,
               namespace: namespaceVal,
             });
             return jsonResponse(
@@ -684,7 +693,9 @@ export function createMemoryHandlers(
             .from("memories")
             .insert({
               workspace_id: auth.workspaceId,
-              user_id,
+              user_id: ownerId,
+              owner_id: ownerId,
+              owner_type: ownerType,
               namespace: namespaceVal,
               text,
               metadata: metadata ?? {},
@@ -830,7 +841,9 @@ export function createMemoryHandlers(
         .from("memories")
         .insert({
           workspace_id: auth.workspaceId,
-          user_id,
+          user_id: ownerId,
+          owner_id: ownerId,
+          owner_type: ownerType,
           namespace: namespaceVal,
           text,
           metadata: metadata ?? {},
@@ -865,7 +878,9 @@ export function createMemoryHandlers(
         const rows = chunks.map((chunk, idx) => ({
         workspace_id: auth.workspaceId,
         memory_id: memoryId,
-        user_id,
+        user_id: ownerId,
+        owner_id: ownerId,
+        owner_type: ownerType,
         namespace: namespaceVal,
         chunk_index: idx,
         chunk_text: chunk,
@@ -918,7 +933,8 @@ export function createMemoryHandlers(
               d,
               memoryId,
               auth.workspaceId,
-              user_id,
+              ownerId,
+              ownerType,
               namespaceVal,
               text,
               maxExtractReserve,

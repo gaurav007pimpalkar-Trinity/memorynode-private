@@ -11,7 +11,9 @@ import { createHttpError } from "../http.js";
 export type ContextExplainHandlerDeps = SearchHandlerDeps;
 
 const QuerySchema = z.object({
-  user_id: z.string().min(1),
+  user_id: z.string().min(1).optional(),
+  owner_id: z.string().min(1).optional(),
+  owner_type: z.enum(["user", "team", "app", "agent"]).optional(),
   query: z.string().min(1),
   namespace: z.string().optional(),
   top_k: z.number().int().min(1).max(20).optional(),
@@ -20,6 +22,35 @@ const QuerySchema = z.object({
   search_mode: z.enum(["hybrid", "vector", "keyword"]).optional(),
   min_score: z.number().min(0).max(1).optional(),
   retrieval_profile: z.enum(["balanced", "recall", "precision"]).optional(),
+}).superRefine((value, ctx) => {
+  const userId = value.user_id?.trim() ?? "";
+  const ownerId = value.owner_id?.trim() ?? "";
+  const ids = [userId, ownerId].filter(Boolean);
+  if (ids.length === 0) {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      message: "user_id or owner_id is required",
+      path: ["user_id"],
+    });
+  }
+  const resolved = ids[0] ?? "";
+  if (ids.some((id) => id !== resolved)) {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      message: "user_id and owner_id must match when provided together",
+      path: ["owner_id"],
+    });
+  }
+}).transform((value) => {
+  const resolvedId = (value.user_id?.trim() || value.owner_id?.trim()) as string;
+  const rawOwnerType = value.owner_type ?? "user";
+  const ownerType = rawOwnerType === "agent" ? "app" : rawOwnerType;
+  return {
+    ...value,
+    user_id: resolvedId,
+    owner_id: resolvedId,
+    owner_type: ownerType,
+  };
 });
 
 function toNumberOrUndefined(value: string | null): number | undefined {
@@ -94,6 +125,8 @@ export function createContextExplainHandlers(
       const url = new URL(request.url);
       const parse = QuerySchema.safeParse({
         user_id: url.searchParams.get("user_id"),
+        owner_id: url.searchParams.get("owner_id") ?? url.searchParams.get("entity_id"),
+        owner_type: url.searchParams.get("owner_type") ?? url.searchParams.get("entity_type") ?? undefined,
         query: url.searchParams.get("query"),
         namespace: url.searchParams.get("namespace") ?? undefined,
         top_k: toNumberOrUndefined(url.searchParams.get("top_k")),
@@ -237,6 +270,8 @@ export function createContextExplainHandlers(
         {
           query: {
             user_id: payload.user_id,
+            owner_id: payload.owner_id,
+            owner_type: payload.owner_type,
             namespace: payload.namespace ?? null,
             query: payload.query,
             top_k: payload.top_k ?? null,
