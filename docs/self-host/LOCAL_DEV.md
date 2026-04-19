@@ -30,7 +30,7 @@ MASTER_ADMIN_TOKEN=your_token node scripts/dev_bootstrap.mjs
 
 The migration list is checked in CI. Keep the line below updated when you add migrations under `infra/sql/`:
 
-<!-- Migration manifest (CI-checked): MIGRATIONS_TOTAL=58; MIGRATIONS_LATEST=056_search_query_retrieval_trace.sql -->
+<!-- Migration manifest (CI-checked): MIGRATIONS_TOTAL=59; MIGRATIONS_LATEST=057_mcp_rebuild_foundations.sql -->
 
 ## Where to read next
 
