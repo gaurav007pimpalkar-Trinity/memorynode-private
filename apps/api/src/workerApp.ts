@@ -3,6 +3,7 @@ import JSZip from "jszip";
 import {
   capsByPlanCode,
   exceedsCaps,
+  getRateLimitMax,
   getRouteRateLimitMax,
   type UsageSnapshot,
 } from "./limits.js";
@@ -128,6 +129,7 @@ import {
   estimateRequestCostInr,
 } from "./usage/quotaReservation.js";
 import { resolveQuotaForWorkspace } from "./usage/quotaResolution.js";
+import { handleHostedMcpRequest, isHostedMcpPath } from "./mcpHosted.js";
 import type { SearchPayload } from "./contracts/search.js";
 import type { MetadataFilter } from "./search/normalizeRequest.js";
 import { normalizeSearchPayload, normalizeMemoryListParams } from "./search/normalizeRequest.js";
@@ -429,6 +431,7 @@ function enforceRuntimeConfigGuards(env: Env): void {
 function resolveBodyLimit(method: string, path: string, env: Env): number {
   const base = Number(env.MAX_BODY_BYTES ?? DEFAULT_MAX_BODY_BYTES);
   if (method === "POST" && path === "/v1/memories") return Math.min(base, MEMORIES_MAX_BODY_BYTES);
+  if (method === "POST" && (path === "/v1/mcp" || path === "/mcp")) return Math.min(base, 262_144);
   if (
     method === "POST" &&
     (path === "/v1/search" ||
@@ -452,6 +455,7 @@ const KNOWN_PATH_ALLOWED_METHODS: Array<{ test: (path: string) => boolean; allow
   { test: (p) => p === "/healthz", allow: "GET" },
   { test: (p) => p === "/ready" || p === "/ready/", allow: "GET" },
   { test: (p) => p === "/v1/health", allow: "GET" },
+  { test: (p) => p === "/v1/mcp" || p === "/mcp", allow: "GET, POST, DELETE" },
   { test: (p) => p === "/v1/memories", allow: "GET, POST" },
   { test: (p) => /^\/v1\/memories\/[^/]+$/.test(p), allow: "GET, DELETE" },
   { test: (p) => p === "/v1/search/history", allow: "GET" },
@@ -703,7 +707,7 @@ async function handleRequestImpl(request: Request, env: Env): Promise<Response> 
     const auditCtx: { workspaceId?: string; apiKeyId?: string } = {};
     let response: Response | null = null;
     try {
-      if (allowlist && !originAllowed) {
+      if (allowlist && !originAllowed && !isHostedMcpPath(pathname)) {
         response = jsonResponse({ error: { code: "CORS_DENY", message: "Origin not allowed" } }, 403);
         return response;
       }
@@ -754,6 +758,20 @@ async function handleRequestImpl(request: Request, env: Env): Promise<Response> 
         route: url.pathname,
         path_mode: isRlsFirstAccessMode(env) || isServiceRoleRequestPathDisabled(env) ? "scoped_rls" : "service_direct",
       });
+
+      if (isHostedMcpPath(pathname)) {
+        const mcpIpRate = await rateLimit(`mcp-ip:${ip}`, env, undefined, getRateLimitMax(env));
+        if (!mcpIpRate.allowed) {
+          response = jsonResponse(
+            { error: { code: "rate_limited", message: "Rate limit exceeded" } },
+            429,
+            mcpIpRate.headers,
+          );
+          return response;
+        }
+        response = await handleHostedMcpRequest(request, env, supabase, ctx, requestId, auditCtx);
+        return response;
+      }
 
       // Dashboard session (Phase 0.2): create session from Supabase token, or logout
       if (request.method === "POST" && url.pathname === "/v1/dashboard/session") {

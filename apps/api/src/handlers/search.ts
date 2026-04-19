@@ -4,6 +4,7 @@ import type { AuthContext } from "../auth.js";
 import {
   acquireWorkspaceConcurrencySlot,
   authenticate,
+  isTrustedInternal,
   rateLimit,
   releaseWorkspaceConcurrencySlot,
 } from "../auth.js";
@@ -148,24 +149,28 @@ export function createSearchHandlers(
           402,
         );
       }
-      const rate = await rateLimit(auth.keyHash, env, auth, getRouteRateLimitMax(env, "search", auth.keyCreatedAt));
-      if (!rate.allowed) {
-        return jsonResponse(
-          { error: { code: "rate_limited", message: "Rate limit exceeded" } },
-          429,
-          rate.headers,
-        );
+      const skipEdgeRl = isTrustedInternal(request, env);
+      let rateHeaders: Record<string, string> = {};
+      if (!skipEdgeRl) {
+        const rate = await rateLimit(auth.keyHash, env, auth, getRouteRateLimitMax(env, "search", auth.keyCreatedAt));
+        if (!rate.allowed) {
+          return jsonResponse(
+            { error: { code: "rate_limited", message: "Rate limit exceeded" } },
+            429,
+            rate.headers,
+          );
+        }
+        const wsRpm = quota.planLimits.workspace_rpm ?? 120;
+        const wsRate = await d.rateLimitWorkspace(auth.workspaceId, wsRpm, env);
+        if (!wsRate.allowed) {
+          return jsonResponse(
+            { error: { code: "rate_limited", message: "Workspace rate limit exceeded" } },
+            429,
+            { ...rate.headers, ...wsRate.headers },
+          );
+        }
+        rateHeaders = { ...rate.headers, ...wsRate.headers };
       }
-      const wsRpm = quota.planLimits.workspace_rpm ?? 120;
-      const wsRate = await d.rateLimitWorkspace(auth.workspaceId, wsRpm, env);
-      if (!wsRate.allowed) {
-        return jsonResponse(
-          { error: { code: "rate_limited", message: "Workspace rate limit exceeded" } },
-          429,
-          { ...rate.headers, ...wsRate.headers },
-        );
-      }
-      const rateHeaders = { ...rate.headers, ...wsRate.headers };
 
       const parseResult = await parseWithSchema(SearchPayloadSchema, request);
       if (!parseResult.ok) {
@@ -369,9 +374,13 @@ export function createSearchHandlers(
           402,
         );
       }
-      const rate = await rateLimit(auth.keyHash, env, auth, getRouteRateLimitMax(env, "search", auth.keyCreatedAt));
-      if (!rate.allowed) {
-        return jsonResponse({ error: { code: "rate_limited", message: "Rate limit exceeded" } }, 429, rate.headers);
+      let historyKeyHeaders: Record<string, string> = {};
+      if (!isTrustedInternal(request, env)) {
+        const rate = await rateLimit(auth.keyHash, env, auth, getRouteRateLimitMax(env, "search", auth.keyCreatedAt));
+        if (!rate.allowed) {
+          return jsonResponse({ error: { code: "rate_limited", message: "Rate limit exceeded" } }, 429, rate.headers);
+        }
+        historyKeyHeaders = rate.headers;
       }
       const url = new URL(request.url);
       const limit = Math.min(parseInt(url.searchParams.get("limit") ?? "20", 10) || 20, 100);
@@ -382,9 +391,9 @@ export function createSearchHandlers(
         .order("created_at", { ascending: false })
         .limit(limit);
       if (error) {
-        return jsonResponse({ error: { code: "DB_ERROR", message: error.message } }, 500, rate.headers);
+        return jsonResponse({ error: { code: "DB_ERROR", message: error.message } }, 500, historyKeyHeaders);
       }
-      return jsonResponse({ history: data ?? [] }, 200, rate.headers);
+      return jsonResponse({ history: data ?? [] }, 200, historyKeyHeaders);
     },
 
     // eslint-disable-next-line @typescript-eslint/no-unused-vars -- requestId reserved for future logging
@@ -394,19 +403,23 @@ export function createSearchHandlers(
       const { jsonResponse } = d;
       const auth = await authenticate(request, env, supabase, auditCtx);
       requireWorkspaceId(auth.workspaceId);
-      const rate = await rateLimit(auth.keyHash, env, auth, getRouteRateLimitMax(env, "search", auth.keyCreatedAt));
-      if (!rate.allowed) {
-        return jsonResponse({ error: { code: "rate_limited", message: "Rate limit exceeded" } }, 429, rate.headers);
+      let replayKeyHeaders: Record<string, string> = {};
+      if (!isTrustedInternal(request, env)) {
+        const rate = await rateLimit(auth.keyHash, env, auth, getRouteRateLimitMax(env, "search", auth.keyCreatedAt));
+        if (!rate.allowed) {
+          return jsonResponse({ error: { code: "rate_limited", message: "Rate limit exceeded" } }, 429, rate.headers);
+        }
+        replayKeyHeaders = rate.headers;
       }
       let body: { query_id?: string };
       try {
         body = (await request.json()) as { query_id?: string };
       } catch {
-        return jsonResponse({ error: { code: "BAD_REQUEST", message: "Invalid JSON body" } }, 400, rate.headers);
+        return jsonResponse({ error: { code: "BAD_REQUEST", message: "Invalid JSON body" } }, 400, replayKeyHeaders);
       }
       const queryId = body.query_id;
       if (!queryId || !UUID_RE.test(queryId)) {
-        return jsonResponse({ error: { code: "BAD_REQUEST", message: "query_id (UUID) is required" } }, 400, rate.headers);
+        return jsonResponse({ error: { code: "BAD_REQUEST", message: "query_id (UUID) is required" } }, 400, replayKeyHeaders);
       }
       const { data: row, error } = await supabase
         .from("search_query_history")
@@ -414,7 +427,7 @@ export function createSearchHandlers(
         .eq("id", queryId)
         .maybeSingle();
       if (error || !row || row.workspace_id !== auth.workspaceId) {
-        return jsonResponse({ error: { code: "NOT_FOUND", message: "Query not found" } }, 404, rate.headers);
+        return jsonResponse({ error: { code: "NOT_FOUND", message: "Query not found" } }, 404, replayKeyHeaders);
       }
       const params = (row.params ?? {}) as Record<string, unknown>;
       const replaySearchMode = typeof params.search_mode === "string" &&
@@ -459,16 +472,19 @@ export function createSearchHandlers(
           402,
         );
       }
-      const wsRpmReplay = quotaReplay.planLimits.workspace_rpm ?? 120;
-      const wsRateReplay = await d.rateLimitWorkspace(auth.workspaceId, wsRpmReplay, env);
-      if (!wsRateReplay.allowed) {
-        return jsonResponse(
-          { error: { code: "rate_limited", message: "Workspace rate limit exceeded" } },
-          429,
-          { ...rate.headers, ...wsRateReplay.headers },
-        );
+      let rateHeadersReplay = { ...replayKeyHeaders };
+      if (!isTrustedInternal(request, env)) {
+        const wsRpmReplay = quotaReplay.planLimits.workspace_rpm ?? 120;
+        const wsRateReplay = await d.rateLimitWorkspace(auth.workspaceId, wsRpmReplay, env);
+        if (!wsRateReplay.allowed) {
+          return jsonResponse(
+            { error: { code: "rate_limited", message: "Workspace rate limit exceeded" } },
+            429,
+            { ...replayKeyHeaders, ...wsRateReplay.headers },
+          );
+        }
+        rateHeadersReplay = { ...replayKeyHeaders, ...wsRateReplay.headers };
       }
-      const rateHeadersReplay = { ...rate.headers, ...wsRateReplay.headers };
       const todayReplay = d.todayUtc();
       const concurrency = await acquireWorkspaceConcurrencySlot(auth.workspaceId, env);
       if (!concurrency.allowed) {
@@ -540,9 +556,13 @@ export function createSearchHandlers(
       const { jsonResponse } = d;
       const auth = await authenticate(request, env, supabase, auditCtx);
       requireWorkspaceId(auth.workspaceId);
-      const rate = await rateLimit(auth.keyHash, env, auth, getRouteRateLimitMax(env, "search", auth.keyCreatedAt));
-      if (!rate.allowed) {
-        return jsonResponse({ error: { code: "rate_limited", message: "Rate limit exceeded" } }, 429, rate.headers);
+      let feedbackKeyHeaders: Record<string, string> = {};
+      if (!isTrustedInternal(request, env)) {
+        const rate = await rateLimit(auth.keyHash, env, auth, getRouteRateLimitMax(env, "search", auth.keyCreatedAt));
+        if (!rate.allowed) {
+          return jsonResponse({ error: { code: "rate_limited", message: "Rate limit exceeded" } }, 429, rate.headers);
+        }
+        feedbackKeyHeaders = rate.headers;
       }
       const bodyResult = await d.safeParseJson<{
         trace_id?: string;
@@ -552,11 +572,11 @@ export function createSearchHandlers(
         eval_set_id?: string;
       }>(request);
       if (!bodyResult.ok) {
-        return jsonResponse({ error: { code: "BAD_REQUEST", message: bodyResult.error } }, 400, rate.headers);
+        return jsonResponse({ error: { code: "BAD_REQUEST", message: bodyResult.error } }, 400, feedbackKeyHeaders);
       }
       const traceId = typeof bodyResult.data.trace_id === "string" ? bodyResult.data.trace_id.trim() : "";
       if (!traceId) {
-        return jsonResponse({ error: { code: "BAD_REQUEST", message: "trace_id is required" } }, 400, rate.headers);
+        return jsonResponse({ error: { code: "BAD_REQUEST", message: "trace_id is required" } }, 400, feedbackKeyHeaders);
       }
       const used = Array.isArray(bodyResult.data.chunk_ids_used)
         ? bodyResult.data.chunk_ids_used.filter((id) => typeof id === "string" && id.length > 0).slice(0, 200)
@@ -590,7 +610,7 @@ export function createSearchHandlers(
           unused_count: unused.length,
         },
       );
-      return jsonResponse({ accepted: true }, 202, rate.headers);
+      return jsonResponse({ accepted: true }, 202, feedbackKeyHeaders);
     },
   };
 }

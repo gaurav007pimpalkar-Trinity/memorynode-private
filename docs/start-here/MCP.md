@@ -22,7 +22,7 @@ Set environment variables your MCP host reads (names may vary; check your editor
 - **`MEMORYNODE_API_KEY`** — your server-side API key.
 - **`MEMORYNODE_BASE_URL`** — usually `https://api.memorynode.ai` (or your private gateway).
 
-Full protocol details and tool list: [MCP_SERVER.md](../MCP_SERVER.md) · Package readme: [packages/mcp-server/README.md](../../packages/mcp-server/README.md).
+Full protocol details and tool list: [MCP_SERVER.md](../MCP_SERVER.md) (includes **hosted** MCP at `https://mcp.memorynode.ai/mcp`) · Package readme: [packages/mcp-server/README.md](../../packages/mcp-server/README.md).
 
 **Need more control?** → [Build mode](../build/README.md).
 

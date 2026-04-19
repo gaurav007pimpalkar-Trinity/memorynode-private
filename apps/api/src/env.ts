@@ -66,6 +66,17 @@ export interface Env {
   PAYU_PRO_AMOUNT?: string;
   PAYU_PRODUCT_INFO?: string;
   PUBLIC_APP_URL?: string;
+  /**
+   * Base URL for REST calls from the MCP worker path (no trailing slash), e.g. https://api.memorynode.ai.
+   * When unset, requests to mcp.memorynode.ai default to https://api.memorynode.ai; other hosts use the request origin.
+   */
+  MEMORYNODE_REST_ORIGIN?: string;
+  /**
+   * Shared secret for hosted MCP internal `fetch` subrequests to `/v1/*`. REST handlers skip duplicate edge rate
+   * limits only when both `x-internal-mcp: true` and `x-internal-secret` match this value. Must be set in any
+   * deployment that uses hosted MCP; keep out of client code. Unguessable random string (e.g. 32+ bytes hex).
+   */
+  MCP_INTERNAL_SECRET?: string;
   PAYU_SUCCESS_PATH?: string;
   PAYU_CANCEL_PATH?: string;
   PAYU_VERIFY_URL?: string;

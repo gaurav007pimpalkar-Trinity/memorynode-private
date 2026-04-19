@@ -1,14 +1,64 @@
 # MemoryNode MCP Server
 
-Thin MCP (Model Context Protocol) adapter for MemoryNode. Exposes **search** and **insert** over stdio. No Supabase access, no business logic—calls existing REST APIs only.
+MemoryNode exposes MCP in two ways:
 
-## What it does
+1. **stdio package** (`@memorynodeai/mcp-server`) — local process for editors; forwards to REST with env vars.
+2. **Hosted Streamable HTTP** on the API worker — recommended URL **`https://mcp.memorynode.ai/mcp`** (dedicated host; routes in `apps/api/wrangler.toml`). Same MCP is also available at **`https://api.memorynode.ai/v1/mcp`**. Uses your **workspace API key** (`Authorization: Bearer …` or `x-api-key`). Optional headers: **`x-mn-user-id`** (default `default`), **`x-mn-project`** (default `mcp`, maps to MemoryNode `namespace`). Tooling calls REST on **`api.memorynode.ai`** automatically when the MCP request hits `mcp.memorynode.ai` (override with Worker var **`MEMORYNODE_REST_ORIGIN`** if needed). MemoryNode-branded tools/resources/prompts: **`memory`**, **`recall`**, **`whoAmI`**; resources **`memorynode://profile`**, **`memorynode://projects`**; prompt **`context`**. No Supabase in the MCP layer—only REST.
+
+## What the stdio package does
 
 - **Tool `memory_search`** — Semantic + recency-aware search. Input: `query` (required), `limit` (optional, default 5, max 20). Calls `POST /v1/search`.
+- **Tool `memory_context`** — Prompt-ready context. Calls `POST /v1/context`.
 - **Tool `memory_insert`** — Store a memory. Input: `content` (required, max 10k chars), `metadata` (optional, stringified max 5KB). Calls `POST /v1/memories`.
 - **Resource `memory://search?q=...`** — Read-only search. Parse `q`, call same `/v1/search`, return markdown results. Missing `q` → invalid_request.
 
-All ranking and workspace isolation stay server-side; the MCP server only forwards requests with your API key.
+All ranking and workspace isolation stay server-side; the MCP adapter only forwards requests with your API key.
+
+## Hosted MCP (Cursor, Claude, VS Code, etc.)
+
+**DNS:** create **`mcp.memorynode.ai`** in the `memorynode.ai` zone (proxied through Cloudflare). Deploy the API worker so the **`mcp.memorynode.ai/*`** route is active (see `wrangler.toml`).
+
+Add a **url** server in your client MCP config (example: Cursor `mcp.json`). Prefer the MCP subdomain:
+
+```json
+{
+  "mcpServers": {
+    "memorynode": {
+      "url": "https://mcp.memorynode.ai/mcp",
+      "headers": {
+        "Authorization": "Bearer mn_live_xxx"
+      }
+    }
+  }
+}
+```
+
+Same behavior on the API host (alternative URL):
+
+```json
+{ "mcpServers": { "memorynode": { "url": "https://api.memorynode.ai/v1/mcp", "headers": { "Authorization": "Bearer mn_live_xxx" } } } }
+```
+
+Optional project and user slice (same as setting `MEMORYNODE_USER_ID` / namespace on the stdio server):
+
+```json
+{
+  "mcpServers": {
+    "memorynode": {
+      "url": "https://mcp.memorynode.ai/mcp",
+      "headers": {
+        "Authorization": "Bearer mn_live_xxx",
+        "x-mn-user-id": "default",
+        "x-mn-project": "my-repo"
+      }
+    }
+  }
+}
+```
+
+Per-tool **`containerTag`** overrides the namespace for that call (same idea as a project tag). Sessions use **`mcp-session-id`** after `initialize` (Streamable HTTP); the worker keeps sessions in memory until idle expiry or `DELETE`.
+
+Authentication is **API key only** on this path (no OAuth on the MCP URL yet).
 
 ### When to use REST vs MCP
 
@@ -108,6 +158,6 @@ Use the path to the built `dist/index.js` and ensure `MEMORYNODE_API_KEY` and `M
 
 ## Constraints (Phase 3)
 
-- No episode logging, analytics, rate limiting, retries, or background workers.
-- No extra endpoints or config beyond env vars.
-- Backend API contracts unchanged; this is a thin adapter only.
+- **stdio package:** no episode logging, analytics, rate limiting, retries, or background workers in the package; no extra config beyond env vars.
+- **Hosted `/mcp` or `/v1/mcp`:** sessions are **in-memory per isolate** (lost on cold start); use the stdio package if you need a fully local MCP process.
+- Backend API contracts unchanged; adapters call the same public REST routes.

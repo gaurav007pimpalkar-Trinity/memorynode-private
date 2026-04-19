@@ -341,6 +341,20 @@ export async function authenticate(
   return ctx;
 }
 
+/**
+ * True when the request carries the hosted-MCP internal headers and the shared worker secret.
+ * REST routes use this to skip duplicate per-key / per-workspace edge limits for same-origin MCP `fetch` only.
+ * Clients cannot forge the bypass without `MCP_INTERNAL_SECRET`.
+ */
+export function isTrustedInternal(request: Request, env: Env): boolean {
+  const secret = env.MCP_INTERNAL_SECRET;
+  if (secret == null || secret === "") return false;
+  return (
+    request.headers.get("x-internal-mcp") === "true" &&
+    request.headers.get("x-internal-secret") === secret
+  );
+}
+
 export async function rateLimit(
   key: string,
   env: Env,

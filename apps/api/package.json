@@ -15,7 +15,9 @@
     "deploy:prod": "node scripts/deploy_prod_with_version.mjs"
   },
   "dependencies": {
+    "@cfworker/json-schema": "^4.1.1",
     "@memorynodeai/shared": "workspace:^",
+    "@modelcontextprotocol/sdk": "^1.27.1",
     "@supabase/supabase-js": "^2.45.2",
     "jszip": "^3.10.1",
     "zod": "^3.23.8"

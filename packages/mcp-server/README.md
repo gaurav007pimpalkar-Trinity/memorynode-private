@@ -2,7 +2,7 @@
 
 Thin **Model Context Protocol (MCP)** adapter for **MemoryNode** — expose **memory search** and **memory insert** to AI tools and editors (e.g. Cursor) over stdio. All retrieval and isolation stay on the MemoryNode API; this package only forwards HTTPS calls with your API key.
 
-**Full documentation:** [docs/MCP_SERVER.md](../../docs/MCP_SERVER.md) (install, env vars, tools, resources, Cursor config).
+**Full documentation:** [docs/MCP_SERVER.md](../../docs/MCP_SERVER.md) (install, env vars, tools, resources, Cursor config). **Hosted URL MCP** (no local `node`): **`https://mcp.memorynode.ai/mcp`** (or `https://api.memorynode.ai/v1/mcp`) with `Authorization: Bearer …` — see the “Hosted MCP” section in that doc.
 
 **Product positioning (ICP):** [docs/external/POSITIONING.md](../../docs/external/POSITIONING.md).
 

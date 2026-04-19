@@ -53,7 +53,8 @@ WORKSPACE_COST_PER_MINUTE_CAP_INR = "15"
 [env.production]
 name = "memorynode-api"
 routes = [
-  { pattern = "api.memorynode.ai/*", zone_name = "memorynode.ai" }
+  { pattern = "api.memorynode.ai/*", zone_name = "memorynode.ai" },
+  { pattern = "mcp.memorynode.ai/*", zone_name = "memorynode.ai" }
 ]
 [env.production.durable_objects]
 bindings = [

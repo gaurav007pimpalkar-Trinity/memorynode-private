@@ -16,6 +16,7 @@ import type { AuthContext } from "../auth.js";
 import {
   acquireWorkspaceConcurrencySlot,
   authenticate,
+  isTrustedInternal,
   rateLimit,
   rateLimitWorkspace,
   releaseWorkspaceConcurrencySlot,
@@ -422,24 +423,27 @@ export function createMemoryHandlers(
           402,
         );
       }
-      const rate = await rateLimit(auth.keyHash, env, auth);
-      if (!rate.allowed) {
-        return jsonResponse(
-          { error: { code: "rate_limited", message: "Rate limit exceeded" } },
-          429,
-          rate.headers,
-        );
+      let rateHeaders: Record<string, string> = {};
+      if (!isTrustedInternal(request, env)) {
+        const rate = await rateLimit(auth.keyHash, env, auth);
+        if (!rate.allowed) {
+          return jsonResponse(
+            { error: { code: "rate_limited", message: "Rate limit exceeded" } },
+            429,
+            rate.headers,
+          );
+        }
+        const wsRpm = quota.planLimits.workspace_rpm ?? 120;
+        const wsRate = await rateLimitWorkspace(auth.workspaceId, wsRpm, env);
+        if (!wsRate.allowed) {
+          return jsonResponse(
+            { error: { code: "rate_limited", message: "Workspace rate limit exceeded" } },
+            429,
+            { ...rate.headers, ...wsRate.headers },
+          );
+        }
+        rateHeaders = { ...rate.headers, ...wsRate.headers };
       }
-      const wsRpm = quota.planLimits.workspace_rpm ?? 120;
-      const wsRate = await rateLimitWorkspace(auth.workspaceId, wsRpm, env);
-      if (!wsRate.allowed) {
-        return jsonResponse(
-          { error: { code: "rate_limited", message: "Workspace rate limit exceeded" } },
-          429,
-          { ...rate.headers, ...wsRate.headers },
-        );
-      }
-      const rateHeaders = { ...rate.headers, ...wsRate.headers };
 
       const parseResult = await parseWithSchema(MemoryInsertSchema, request);
       if (!parseResult.ok) {
@@ -912,13 +916,17 @@ export function createMemoryHandlers(
       const d = (deps ?? defaultDeps) as MemoryHandlerDeps;
       const { jsonResponse } = d;
       const auth = await authenticate(request, env, supabase, auditCtx);
-      const rate = await rateLimit(auth.keyHash, env, auth);
-      if (!rate.allowed) {
-        return jsonResponse(
-          { error: { code: "rate_limited", message: "Rate limit exceeded" } },
-          429,
-          rate.headers,
-        );
+      let keyRateHeaders: Record<string, string> = {};
+      if (!isTrustedInternal(request, env)) {
+        const rate = await rateLimit(auth.keyHash, env, auth);
+        if (!rate.allowed) {
+          return jsonResponse(
+            { error: { code: "rate_limited", message: "Rate limit exceeded" } },
+            429,
+            rate.headers,
+          );
+        }
+        keyRateHeaders = rate.headers;
       }
       const quota = await d.resolveQuotaForWorkspace(auth, supabase);
       if (quota.blocked) {
@@ -937,16 +945,19 @@ export function createMemoryHandlers(
           402,
         );
       }
-      const wsRpm = quota.planLimits.workspace_rpm ?? 120;
-      const wsRate = await rateLimitWorkspace(auth.workspaceId, wsRpm, env);
-      if (!wsRate.allowed) {
-        return jsonResponse(
-          { error: { code: "rate_limited", message: "Workspace rate limit exceeded" } },
-          429,
-          { ...rate.headers, ...wsRate.headers },
-        );
+      let rateHeaders: Record<string, string> = {};
+      if (!isTrustedInternal(request, env)) {
+        const wsRpm = quota.planLimits.workspace_rpm ?? 120;
+        const wsRate = await rateLimitWorkspace(auth.workspaceId, wsRpm, env);
+        if (!wsRate.allowed) {
+          return jsonResponse(
+            { error: { code: "rate_limited", message: "Workspace rate limit exceeded" } },
+            429,
+            { ...keyRateHeaders, ...wsRate.headers },
+          );
+        }
+        rateHeaders = { ...keyRateHeaders, ...wsRate.headers };
       }
-      const rateHeaders = { ...rate.headers, ...wsRate.headers };
       const reserveList = await d.reserveQuotaAndMaybeRespond(
         quota,
         supabase,
@@ -1019,24 +1030,27 @@ export function createMemoryHandlers(
           402,
         );
       }
-      const rate = await rateLimit(auth.keyHash, env, auth);
-      if (!rate.allowed) {
-        return jsonResponse(
-          { error: { code: "rate_limited", message: "Rate limit exceeded" } },
-          429,
-          rate.headers,
-        );
+      let rateHeaders: Record<string, string> = {};
+      if (!isTrustedInternal(request, env)) {
+        const rate = await rateLimit(auth.keyHash, env, auth);
+        if (!rate.allowed) {
+          return jsonResponse(
+            { error: { code: "rate_limited", message: "Rate limit exceeded" } },
+            429,
+            rate.headers,
+          );
+        }
+        const wsRpm = quota.planLimits.workspace_rpm ?? 120;
+        const wsRate = await rateLimitWorkspace(auth.workspaceId, wsRpm, env);
+        if (!wsRate.allowed) {
+          return jsonResponse(
+            { error: { code: "rate_limited", message: "Workspace rate limit exceeded" } },
+            429,
+            { ...rate.headers, ...wsRate.headers },
+          );
+        }
+        rateHeaders = { ...rate.headers, ...wsRate.headers };
       }
-      const wsRpm = quota.planLimits.workspace_rpm ?? 120;
-      const wsRate = await rateLimitWorkspace(auth.workspaceId, wsRpm, env);
-      if (!wsRate.allowed) {
-        return jsonResponse(
-          { error: { code: "rate_limited", message: "Workspace rate limit exceeded" } },
-          429,
-          { ...rate.headers, ...wsRate.headers },
-        );
-      }
-      const rateHeaders = { ...rate.headers, ...wsRate.headers };
       const reserveGet = await d.reserveQuotaAndMaybeRespond(
         quota,
         supabase,
@@ -1101,24 +1115,27 @@ export function createMemoryHandlers(
           402,
         );
       }
-      const rate = await rateLimit(auth.keyHash, env, auth);
-      if (!rate.allowed) {
-        return jsonResponse(
-          { error: { code: "rate_limited", message: "Rate limit exceeded" } },
-          429,
-          rate.headers,
-        );
+      let rateHeaders: Record<string, string> = {};
+      if (!isTrustedInternal(request, env)) {
+        const rate = await rateLimit(auth.keyHash, env, auth);
+        if (!rate.allowed) {
+          return jsonResponse(
+            { error: { code: "rate_limited", message: "Rate limit exceeded" } },
+            429,
+            rate.headers,
+          );
+        }
+        const wsRpm = quota.planLimits.workspace_rpm ?? 120;
+        const wsRate = await rateLimitWorkspace(auth.workspaceId, wsRpm, env);
+        if (!wsRate.allowed) {
+          return jsonResponse(
+            { error: { code: "rate_limited", message: "Workspace rate limit exceeded" } },
+            429,
+            { ...rate.headers, ...wsRate.headers },
+          );
+        }
+        rateHeaders = { ...rate.headers, ...wsRate.headers };
       }
-      const wsRpm = quota.planLimits.workspace_rpm ?? 120;
-      const wsRate = await rateLimitWorkspace(auth.workspaceId, wsRpm, env);
-      if (!wsRate.allowed) {
-        return jsonResponse(
-          { error: { code: "rate_limited", message: "Workspace rate limit exceeded" } },
-          429,
-          { ...rate.headers, ...wsRate.headers },
-        );
-      }
-      const rateHeaders = { ...rate.headers, ...wsRate.headers };
 
       const deleted = await d.deleteMemoryCascade(supabase, auth.workspaceId, memoryId);
       if (!deleted) {
