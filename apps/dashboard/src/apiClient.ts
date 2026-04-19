@@ -160,6 +160,16 @@ export async function apiDelete<T>(path: string): Promise<T> {
   return fetchJson<T>(path, { method: "DELETE", headers });
 }
 
+export async function apiPatch<T>(path: string, body: unknown = {}, extraHeaders?: Record<string, string>): Promise<T> {
+  const headers: Record<string, string> = { "content-type": "application/json", ...extraHeaders };
+  if (csrfToken) headers["x-csrf-token"] = csrfToken;
+  return fetchJson<T>(path, {
+    method: "PATCH",
+    headers,
+    body: JSON.stringify(body),
+  });
+}
+
 export async function adminGet<T>(path: string, adminToken: string): Promise<T> {
   return fetchJson<T>(
     path,

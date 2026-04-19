@@ -1,9 +1,9 @@
 import { Component, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Session, type AuthChangeEvent } from "@supabase/supabase-js";
 import { supabase, supabaseEnvError } from "./supabaseClient";
-import { ApiKeyRow, InviteRow, MemoryRow, UsageRow } from "./types";
+import { ApiKeyRow, ConnectorSettingRow, InviteRow, MemoryRow, UsageRow } from "./types";
 import { loadWorkspaceId, persistWorkspaceId } from "./state";
-import { apiDelete, apiEnvError, apiGet, apiPost, ensureDashboardSession, dashboardLogout, setOnUnauthorized, userFacingErrorMessage } from "./apiClient";
+import { apiDelete, apiEnvError, apiGet, apiPatch, apiPost, ensureDashboardSession, dashboardLogout, setOnUnauthorized, userFacingErrorMessage } from "./apiClient";
 import { mapSearchResultsToRows, type MemorySearchRow, type SearchApiResult } from "./memorySearch";
 import { DeveloperNextSteps } from "./DeveloperNextSteps";
 
@@ -14,10 +14,11 @@ type Tab =
   | "import"
   | "api_keys"
   | "mcp"
+  | "connectors"
   | "team"
   | "billing";
 
-const tabsRequiringWorkspace: Tab[] = ["memories", "usage", "import", "api_keys", "team", "billing"];
+const tabsRequiringWorkspace: Tab[] = ["memories", "usage", "import", "api_keys", "connectors", "team", "billing"];
 
 type SidebarNavEntry = { tab: Tab; label: string; showLock?: boolean };
 
@@ -33,6 +34,7 @@ const SIDEBAR_GROUPS: SidebarGroup[] = [
       { tab: "import", label: "Import (Paid)" },
       { tab: "api_keys", label: "API Access" },
       { tab: "mcp", label: "MCP" },
+      { tab: "connectors", label: "Connectors" },
     ],
   },
   {
@@ -765,6 +767,7 @@ export function App(): JSX.Element {
                 />
               )}
               {tab === "mcp" && <McpView />}
+              {tab === "connectors" && <ConnectorSettingsView />}
               {tab === "team" && (
                 <WorkspacesView
                   workspaceId={workspaceClaim || workspaceId}
@@ -1095,13 +1098,127 @@ function ImportView({ isPaid }: { isPaid: boolean }) {
   );
 }
 
+function ConnectorSettingsView() {
+  const [rows, setRows] = useState<ConnectorSettingRow[]>([]);
+  const [busy, setBusy] = useState(false);
+  const [message, setMessage] = useState<string | null>(null);
+
+  const load = useCallback(async () => {
+    setBusy(true);
+    setMessage(null);
+    try {
+      const res = await apiGet<{ settings: ConnectorSettingRow[] }>("/v1/connectors/settings");
+      setRows(Array.isArray(res.settings) ? res.settings : []);
+    } catch (err: unknown) {
+      setMessage(userFacingErrorMessage(err));
+    } finally {
+      setBusy(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    void load();
+  }, [load]);
+
+  const ensureRow = (connectorId: string): ConnectorSettingRow => {
+    const existing = rows.find((row) => row.connector_id === connectorId);
+    if (existing) return existing;
+    return {
+      connector_id: connectorId,
+      sync_enabled: true,
+      capture_types: {
+        pdf: true,
+        docx: true,
+        txt: true,
+        md: true,
+        html: true,
+        csv: false,
+        tsv: false,
+        xlsx: false,
+        pptx: false,
+        eml: false,
+        msg: false,
+      },
+      updated_at: new Date(0).toISOString(),
+    };
+  };
+
+  const patch = async (connectorId: string, syncEnabled: boolean, captureTypes: Record<string, boolean>) => {
+    setBusy(true);
+    setMessage(null);
+    try {
+      const saved = await apiPatch<ConnectorSettingRow>("/v1/connectors/settings", {
+        connector_id: connectorId,
+        sync_enabled: syncEnabled,
+        capture_types: captureTypes,
+      });
+      setRows((prev) => {
+        const next = prev.filter((row) => row.connector_id !== connectorId);
+        next.unshift(saved);
+        return next;
+      });
+    } catch (err: unknown) {
+      setMessage(userFacingErrorMessage(err));
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const connectors = ["google_drive", "notion", "slack", "gmail", "onedrive"];
+  const fileTypes = ["pdf", "docx", "txt", "md", "html", "csv", "tsv", "xlsx", "pptx", "eml", "msg"];
+
+  return (
+    <Panel title="Connector Capture Settings">
+      <div className="muted small">Toggle sync per connector and choose which file types should be captured.</div>
+      {message && <div className="badge">{message}</div>}
+      {connectors.map((connectorId) => {
+        const row = ensureRow(connectorId);
+        return (
+          <div key={connectorId} className="card">
+            <div className="row">
+              <strong>{connectorId}</strong>
+              <button
+                className="ghost"
+                disabled={busy}
+                onClick={() => void patch(connectorId, !row.sync_enabled, row.capture_types)}
+              >
+                {row.sync_enabled ? "Sync: ON" : "Sync: OFF"}
+              </button>
+            </div>
+            <div className="grid-two">
+              {fileTypes.map((typeKey) => (
+                <label key={`${connectorId}:${typeKey}`} className="muted small row">
+                  <input
+                    type="checkbox"
+                    checked={Boolean(row.capture_types?.[typeKey])}
+                    onChange={(e) => {
+                      const next = { ...(row.capture_types ?? {}), [typeKey]: e.target.checked };
+                      void patch(connectorId, row.sync_enabled, next);
+                    }}
+                    disabled={busy || !row.sync_enabled}
+                  />
+                  <span>{typeKey.toUpperCase()}</span>
+                </label>
+              ))}
+            </div>
+          </div>
+        );
+      })}
+      <button className="ghost" onClick={() => void load()} disabled={busy}>
+        {busy ? "Refreshing..." : "Refresh"}
+      </button>
+    </Panel>
+  );
+}
+
 function McpView() {
   return (
     <Panel title="MCP Setup">
-      <div className="muted small">Connect your agent host to MemoryNode with the official MCP server.</div>
+      <div className="muted small">Connect any MCP-compatible host to MemoryNode with the official MCP endpoint.</div>
       <code className="code-block">pnpm add @memorynodeai/mcp-server</code>
       <div className="muted small">Required env vars:</div>
-      <code className="code-block">MEMORYNODE_API_KEY=mn_live_xxx{"\n"}MEMORYNODE_BASE_URL=https://api.memorynode.ai{"\n"}MEMORYNODE_USER_ID=user-123{"\n"}MEMORYNODE_NAMESPACE=default</code>
+      <code className="code-block">MEMORYNODE_API_KEY=mn_live_xxx{"\n"}MEMORYNODE_BASE_URL=https://api.memorynode.ai{"\n"}MEMORYNODE_CONTAINER_TAG=default</code>
+      <div className="muted small">Supported clients: Claude Desktop, Cursor IDE, Windsurf, VS Code MCP extensions, Cline/Roo-Cline, and generic MCP clients.</div>
       <a className="ghost" href="https://docs.memorynode.ai/quickstart" target="_blank" rel="noopener noreferrer">
         Open quickstart
       </a>

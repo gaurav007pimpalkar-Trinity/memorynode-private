@@ -18,6 +18,7 @@ export interface AuthContext {
   workspaceId: string;
   keyHash: string;
   apiKeyId?: string;
+  scopedContainerTag?: string | null;
   plan: "pro" | "team";
   planStatus?: "trialing" | "active" | "past_due" | "canceled";
   /** Set when authenticated via API key; used for new-key rate limit (15 RPM for first 48h). */
@@ -205,6 +206,7 @@ export async function authenticate(
     const ctx: AuthContext = {
       workspaceId: dashSession.workspaceId,
       keyHash: `dashboard:${dashSession.sessionId}`,
+      scopedContainerTag: null,
       plan,
       planStatus: planStatusRaw ?? "past_due",
     };
@@ -258,7 +260,7 @@ export async function authenticate(
     const fallback = await withSupabaseQueryRetry(async () =>
       supabase
         .from("api_keys")
-        .select("id, workspace_id, created_at, workspaces(plan, plan_status)")
+        .select("id, workspace_id, created_at, scoped_container_tag, workspaces(plan, plan_status)")
         .eq("key_hash", hashed)
         .is("revoked_at", null)
         .single(),
@@ -327,6 +329,7 @@ export async function authenticate(
     workspaceId: (apiKeyRow?.workspace_id as string | undefined) ?? "",
     keyHash: hashed,
     apiKeyId: keyId,
+    scopedContainerTag: ((apiKeyRow as { scoped_container_tag?: string | null } | null)?.scoped_container_tag ?? null),
     plan,
     planStatus: planStatusRaw ?? "past_due",
     keyCreatedAt: createdAt,

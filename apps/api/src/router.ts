@@ -220,12 +220,33 @@ export interface RouterHandlers {
     requestId: string,
     deps: HandlerDeps,
   ) => Promise<Response>;
+  handleMemoryRetention: (
+    request: Request,
+    env: Env,
+    supabase: SupabaseClient,
+    requestId: string,
+    deps: HandlerDeps,
+  ) => Promise<Response>;
   handleImport: (
     request: Request,
     env: Env,
     supabase: SupabaseClient,
     auditCtx: AuditCtx,
     requestId: string,
+    deps: HandlerDeps,
+  ) => Promise<Response>;
+  handleGetConnectorSettings: (
+    request: Request,
+    env: Env,
+    supabase: SupabaseClient,
+    auditCtx: AuditCtx,
+    deps: HandlerDeps,
+  ) => Promise<Response>;
+  handlePatchConnectorSettings: (
+    request: Request,
+    env: Env,
+    supabase: SupabaseClient,
+    auditCtx: AuditCtx,
     deps: HandlerDeps,
   ) => Promise<Response>;
   handleCreateEvalSet: (
@@ -441,6 +462,10 @@ export async function route(
     return handlers.handleMemoryHygiene(request, env, supabase, requestId, handlerDeps);
   }
 
+  if (request.method === "POST" && url.pathname === "/admin/memory-retention") {
+    return handlers.handleMemoryRetention(request, env, supabase, requestId, handlerDeps);
+  }
+
   if (request.method === "GET" && url.pathname === "/v1/admin/billing/health") {
     return handlers.handleAdminBillingHealth(request, env, supabase, handlerDeps);
   }
@@ -451,6 +476,14 @@ export async function route(
 
   if (request.method === "POST" && url.pathname === "/v1/import") {
     return handlers.handleImport(request, env, supabase, auditCtx, requestId, handlerDeps);
+  }
+
+  if (request.method === "GET" && url.pathname === "/v1/connectors/settings") {
+    return handlers.handleGetConnectorSettings(request, env, supabase, auditCtx, handlerDeps);
+  }
+
+  if (request.method === "PATCH" && url.pathname === "/v1/connectors/settings") {
+    return handlers.handlePatchConnectorSettings(request, env, supabase, auditCtx, handlerDeps);
   }
 
   if (request.method === "GET" && url.pathname === "/v1/evals/sets") {

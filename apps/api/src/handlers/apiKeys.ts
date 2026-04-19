@@ -138,11 +138,12 @@ export function createApiKeysHandlers(
         .insert({
           workspace_id: body.data.workspace_id,
           name: body.data.name,
+          scoped_container_tag: body.data.scoped_container_tag ?? null,
           key_hash: keyHash,
           key_prefix: rawKey.split("_").slice(0, 2).join("_"),
           key_last4: rawKey.slice(-4),
         })
-        .select("id, workspace_id, name, key_prefix, key_last4, created_at, revoked_at")
+        .select("id, workspace_id, name, scoped_container_tag, key_prefix, key_last4, created_at, revoked_at")
         .single();
 
       if (error || !data) {
@@ -207,7 +208,7 @@ export function createApiKeysHandlers(
 
       const { data, error } = await supabase
         .from("api_keys")
-        .select("id, workspace_id, name, created_at, revoked_at, key_prefix, key_last4, last_used_at, last_used_ip")
+        .select("id, workspace_id, name, scoped_container_tag, created_at, revoked_at, key_prefix, key_last4, last_used_at, last_used_ip")
         .eq("workspace_id", workspaceId);
 
       if (error) {
@@ -223,6 +224,7 @@ export function createApiKeysHandlers(
           id: k.id,
           workspace_id: k.workspace_id,
           name: k.name,
+          scoped_container_tag: (k as { scoped_container_tag?: string | null }).scoped_container_tag ?? null,
           created_at: k.created_at,
           revoked_at: k.revoked_at,
           key_prefix: (k as { key_prefix?: string }).key_prefix ?? "mn_live",

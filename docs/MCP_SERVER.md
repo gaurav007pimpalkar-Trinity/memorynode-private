@@ -3,7 +3,7 @@
 MemoryNode exposes MCP in two ways:
 
 1. **stdio package** (`@memorynodeai/mcp-server`) — local process for editors; forwards to REST with env vars.
-2. **Hosted Streamable HTTP** on the API worker — recommended URL **`https://mcp.memorynode.ai/mcp`** (dedicated host; routes in `apps/api/wrangler.toml`). Same MCP is also available at **`https://api.memorynode.ai/v1/mcp`**. Uses your **workspace API key** (`Authorization: Bearer …` or `x-api-key`). Optional headers: **`x-mn-user-id`** (default `default`), **`x-mn-project`** (default `mcp`, maps to MemoryNode `namespace`). Tooling calls REST on **`api.memorynode.ai`** automatically when the MCP request hits `mcp.memorynode.ai` (override with Worker var **`MEMORYNODE_REST_ORIGIN`** if needed). Canonical tools are **`memory`**, **`recall`**, **`context`**, **`whoAmI`**. Alias tools (`memory_search`, `memory_insert`, `memory_context`) are maintained for migration with deprecated metadata. No Supabase in the MCP layer—only REST.
+2. **Hosted Streamable HTTP** on the API worker — recommended URL **`https://mcp.memorynode.ai/mcp`** (dedicated host; routes in `apps/api/wrangler.toml`). Same MCP is also available at **`https://api.memorynode.ai/v1/mcp`**. Uses your **workspace API key** (`Authorization: Bearer …` or `x-api-key`). Optional header: **`x-mn-container-tag`** (default `default`, maps to MemoryNode `namespace`). Tooling calls REST on **`api.memorynode.ai`** automatically when the MCP request hits `mcp.memorynode.ai` (override with Worker var **`MEMORYNODE_REST_ORIGIN`** if needed). Canonical tools are **`memory`**, **`recall`**, **`context`**, **`whoAmI`**. Alias tools (`memory_search`, `memory_insert`, `memory_context`) are maintained for migration with deprecated metadata. No Supabase in the MCP layer—only REST.
 
 ## Canonical MCP tool contracts
 
@@ -37,6 +37,8 @@ All ranking and workspace isolation stay server-side; the MCP adapter only forwa
 
 ## Hosted MCP (Cursor, Claude, VS Code, etc.)
 
+Supported clients (first-class): Claude Desktop, Cursor IDE, Windsurf, VS Code MCP extensions, Cline/Roo-Cline, and any MCP-compatible host.
+
 **DNS:** create **`mcp.memorynode.ai`** in the `memorynode.ai` zone (proxied through Cloudflare). Deploy the API worker so the **`mcp.memorynode.ai/*`** route is active (see `wrangler.toml`).
 
 Add a **url** server in your client MCP config (example: Cursor `mcp.json`). Prefer the MCP subdomain:
@@ -60,7 +62,7 @@ Same behavior on the API host (alternative URL):
 { "mcpServers": { "memorynode": { "url": "https://api.memorynode.ai/v1/mcp", "headers": { "Authorization": "Bearer mn_live_xxx" } } } }
 ```
 
-Optional project and user slice (same as setting `MEMORYNODE_USER_ID` / namespace on the stdio server):
+Optional container tag slice (same as setting `MEMORYNODE_CONTAINER_TAG` on the stdio server):
 
 ```json
 {
@@ -69,15 +71,16 @@ Optional project and user slice (same as setting `MEMORYNODE_USER_ID` / namespac
       "url": "https://mcp.memorynode.ai/mcp",
       "headers": {
         "Authorization": "Bearer mn_live_xxx",
-        "x-mn-user-id": "default",
-        "x-mn-project": "my-repo"
+        "x-mn-container-tag": "my-repo"
       }
     }
   }
 }
 ```
 
-Per-tool **`containerTag`** overrides the namespace for that call (same idea as a project tag). Sessions use **`mcp-session-id`** after `initialize` (Streamable HTTP); the worker keeps sessions in memory until idle expiry or `DELETE`.
+Per-tool **`containerTag`** overrides the namespace for that call. Sessions use **`mcp-session-id`** after `initialize` (Streamable HTTP); the worker keeps sessions in memory until idle expiry or `DELETE`.
+
+Scoped API keys can be restricted to a single container tag using the `api_keys.scoped_container_tag` field. When present, hosted MCP forces that container tag for all tool calls.
 
 Authentication is **API key only** on this path (no OAuth on the MCP URL yet).
 
@@ -86,7 +89,7 @@ Authentication is **API key only** on this path (no OAuth on the MCP URL yet).
 - Policy contract version: **`2026-04-19.1`** (`x-mcp-policy-version` header on hosted responses).
 - Session window defaults: total calls `<= 40/10m`, read calls `<= 12/10m`, writes `<= 6/10m`.
 - API key window defaults: reads `<= 300/h`, writes `<= 60/h`.
-- Scope window defaults (`workspace,user,namespace`): writes `<= 20/h`, forgets `<= 10/h`.
+- Scope window defaults (`workspace,containerTag`): writes `<= 20/h`, forgets `<= 10/h`.
 - Loop detection: lexical prefilter + semantic confirm, threshold `>= 3` similar queries in `120s`.
 - Context budget: fixed cap `2500` chars with deterministic section truncation.
 - Mutating actions require replay protection (`nonce`, `timestampMs`).
@@ -103,7 +106,7 @@ For product positioning and ICP, see [external/POSITIONING.md](./external/POSITI
 
 - `MEMORYNODE_API_KEY`: API key (Bearer). Required.
 - `MEMORYNODE_BASE_URL`: Base URL (e.g. `https://api.memorynode.ai`). No trailing slash. Required.
-- `MEMORYNODE_USER_ID`: Default user id for search/insert. Optional; default `default`.
+- `MEMORYNODE_CONTAINER_TAG`: Default container tag / namespace for search and insert. Optional; default `default`.
 
 If `MEMORYNODE_API_KEY` or `MEMORYNODE_BASE_URL` is missing, the server exits at startup with a clear error.
 
@@ -128,7 +131,7 @@ Or use a `.env` file and load it before starting (e.g. `dotenv` or your shell).
 ```env
 MEMORYNODE_API_KEY=mn_...
 MEMORYNODE_BASE_URL=https://api.memorynode.ai
-MEMORYNODE_USER_ID=default
+MEMORYNODE_CONTAINER_TAG=default
 ```
 
 ## Example tool call (recall)
@@ -139,7 +142,7 @@ Client sends a tool call, e.g.:
 { "name": "recall", "arguments": { "query": "user preferences", "top_k": 5 } }
 ```
 
-Server calls `POST {MEMORYNODE_BASE_URL}/v1/search` with `Authorization: Bearer MEMORYNODE_API_KEY` and body `{ "user_id": "<MEMORYNODE_USER_ID>", "query": "user preferences", "top_k": 5 }`, then returns structured + text output with confidence metadata.
+Server calls `POST {MEMORYNODE_BASE_URL}/v1/search` with `Authorization: Bearer MEMORYNODE_API_KEY` and body `{ "user_id": "default", "namespace": "<MEMORYNODE_CONTAINER_TAG>", "query": "user preferences", "top_k": 5 }`, then returns structured + text output with confidence metadata.
 
 ```text
 Result 1
@@ -190,4 +193,5 @@ Use the path to the built `dist/index.js` and ensure `MEMORYNODE_API_KEY` and `M
 
 - **stdio package:** keeps a lightweight local in-memory policy layer for deterministic limits; no external stateful policy service.
 - **Hosted `/mcp` or `/v1/mcp`:** sessions are **in-memory per isolate** (lost on cold start); use the stdio package if you need a fully local MCP process.
+- Automatic memory capture is integration-driven: tools must call `memory` (or REST writes) explicitly. Cross-client recall works once memories are stored in the same workspace/container tag scope.
 - Backend API contracts unchanged; adapters call the same public REST routes.

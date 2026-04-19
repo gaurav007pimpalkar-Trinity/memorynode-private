@@ -162,6 +162,36 @@ export interface QuotaResolutionLike {
 }
 
 const DEFAULT_NAMESPACE = "default";
+const AUTO_SAVE_KEYWORDS = [
+  "prefer",
+  "preference",
+  "always",
+  "never",
+  "allergic",
+  "project",
+  "deadline",
+  "goal",
+  "working on",
+  "do not",
+  "timezone",
+];
+const ALLOWED_ATTACHMENT_TYPES = new Set(["pdf", "docx", "txt", "md", "html", "csv", "tsv", "xlsx", "pptx", "eml", "msg"]);
+const MAX_ATTACHMENT_BYTES = 10 * 1024 * 1024;
+
+function normalizeTextKey(input: string): string {
+  return input.toLowerCase().replace(/\s+/g, " ").trim();
+}
+
+function shouldAutoSaveMemory(args: { text: string; memoryType?: string; metadata?: Record<string, unknown> }): boolean {
+  const text = args.text.trim();
+  if (text.length < 24) return false;
+  if (args.memoryType && args.memoryType !== "note") return true;
+  if (args.metadata?.force_save === true) return true;
+  const lower = text.toLowerCase();
+  const words = lower.split(/\s+/).filter(Boolean).length;
+  if (words < 5) return false;
+  return AUTO_SAVE_KEYWORDS.some((keyword) => lower.includes(keyword));
+}
 
 const EXTRACTION_PROMPT = `You are a memory extraction assistant. Given the user's text, extract distinct facts, preferences, and events as a JSON array.
 
@@ -462,6 +492,90 @@ export function createMemoryHandlers(
 
       const { user_id, text, metadata, namespace, memory_type, extract, importance, chunk_profile } = parseResult.data;
       const namespaceVal = namespace ?? DEFAULT_NAMESPACE;
+      const strictAutosaveMode = metadata?.autosave_mode === "strict";
+      const attachmentType = typeof metadata?.attachment_type === "string" ? metadata.attachment_type.toLowerCase() : null;
+      if (attachmentType && !ALLOWED_ATTACHMENT_TYPES.has(attachmentType)) {
+        return jsonResponse(
+          { error: { code: "BAD_REQUEST", message: `Unsupported attachment_type '${attachmentType}'` } },
+          400,
+          rateHeaders,
+        );
+      }
+      const attachmentBytes = typeof metadata?.attachment_bytes === "number" ? metadata.attachment_bytes : null;
+      if (attachmentBytes != null && attachmentBytes > MAX_ATTACHMENT_BYTES) {
+        return jsonResponse(
+          { error: { code: "BAD_REQUEST", message: `attachment_bytes exceeds ${MAX_ATTACHMENT_BYTES}` } },
+          400,
+          rateHeaders,
+        );
+      }
+
+      if (strictAutosaveMode && !shouldAutoSaveMemory({ text, memoryType: memory_type, metadata })) {
+        logger.info({
+          event: "memory_save_skipped_low_signal",
+          request_id: requestId,
+          workspace_id: auth.workspaceId,
+          user_id,
+          namespace: namespaceVal,
+        });
+        return jsonResponse(
+          {
+            stored: false,
+            reason: "low_signal",
+            message: "Memory skipped by autosave policy.",
+          },
+          200,
+          rateHeaders,
+        );
+      }
+
+      const dedupeCutoffIso = new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString();
+      const normalizedIncoming = normalizeTextKey(text);
+      try {
+        const baseQuery = supabase.from("memories") as unknown as {
+          select?: (columns: string) => {
+            eq: (column: string, value: unknown) => unknown;
+          };
+        };
+        if (typeof baseQuery.select === "function") {
+          const rowsResult = await (supabase
+            .from("memories")
+            .select("id,text,created_at")
+            .eq("workspace_id", auth.workspaceId)
+            .eq("user_id", user_id)
+            .eq("namespace", namespaceVal)
+            .gte("created_at", dedupeCutoffIso)
+            .order("created_at", { ascending: false })
+            .limit(25) as Promise<{ data?: Array<{ id: string; text?: string; created_at?: string }>; error?: { message?: string } | null }>);
+          const dedupeRows = rowsResult.data ?? [];
+          const dedupeErr = rowsResult.error ?? null;
+          if (!dedupeErr) {
+            const duplicate = dedupeRows.find((row) => normalizeTextKey(String(row.text ?? "")) === normalizedIncoming);
+            if (duplicate) {
+              logger.info({
+                event: "memory_save_deduped",
+                request_id: requestId,
+                workspace_id: auth.workspaceId,
+                memory_id: duplicate.id,
+                user_id,
+                namespace: namespaceVal,
+              });
+              return jsonResponse(
+                {
+                  memory_id: duplicate.id,
+                  stored: true,
+                  deduped: true,
+                  duplicate_created_at: duplicate.created_at ?? null,
+                },
+                200,
+                rateHeaders,
+              );
+            }
+          }
+        }
+      } catch {
+        // Dedupe is best-effort; continue with normal ingest.
+      }
 
       if (text.length > quota.planLimits.max_text_chars) {
         return d.planLimitExceededResponse(

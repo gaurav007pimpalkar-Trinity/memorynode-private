@@ -19,7 +19,7 @@ Every metric below is emitted as a structured JSON log line. No additional agent
 
 **Route groups** (emitted as `route_group` on every `request_completed`):
 
-`health`, `memories`, `search`, `context`, `usage`, `billing`, `workspaces`, `api_keys`, `export`, `import`, `admin`, `unknown`.
+`health`, `memories`, `search`, `context`, `usage`, `billing`, `workspaces`, `api_keys`, `export`, `import`, `connectors`, `mcp`, `admin`, `unknown`.
 
 ### 1b) Quota & Rate-Limit Rejections
 

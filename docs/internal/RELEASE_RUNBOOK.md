@@ -25,6 +25,7 @@ Safe vars (tracked in `apps/api/wrangler.toml`):
 - `BILLING_RECONCILE_ON_AMBIGUITY`
 - `BILLING_WEBHOOKS_ENABLED`
 - `PUBLIC_APP_URL`
+- `MEMORYNODE_REST_ORIGIN`
 - PayU vars as needed: `PAYU_BASE_URL`, `PAYU_VERIFY_URL`, `PAYU_SUCCESS_PATH`, `PAYU_CANCEL_PATH`, etc. (see `apps/api/wrangler.toml` and docs/PROD_SETUP_CHECKLIST.md)
 
 Secrets (never commit to git):
@@ -35,6 +36,12 @@ Secrets (never commit to git):
 - `PAYU_MERCHANT_KEY`
 - `PAYU_MERCHANT_SALT`
 - Optionally `PAYU_WEBHOOK_SECRET` for webhook verification
+- `MCP_INTERNAL_SECRET` (required for hosted MCP internal subrequests)
+
+MCP-specific go-live checks:
+- Hosted routes are active for both `api.memorynode.ai/v1/mcp` and `mcp.memorynode.ai/mcp`.
+- `x-mcp-policy-version` header is present on hosted MCP responses.
+- Scoped key behavior verified when `api_keys.scoped_container_tag` is set.
 
 ## 2) Pre-Release Gate (must pass)
 

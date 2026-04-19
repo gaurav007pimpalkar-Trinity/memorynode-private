@@ -414,6 +414,56 @@ function truncateContextSections(context: {
   };
 }
 
+type ProfileEngineView = {
+  identity: { workspace_id: string; container_tag: string };
+  preferences: string[];
+  projects: string[];
+  goals: string[];
+  constraints: string[];
+  last_updated: string;
+  confidence: number;
+};
+
+function buildProfileEngine(args: {
+  workspaceId: string;
+  containerTag: string;
+  recentTexts: string[];
+  historyTexts: string[];
+}): ProfileEngineView {
+  const all = [...args.recentTexts, ...args.historyTexts].map((x) => x.trim()).filter((x) => x.length > 0);
+  const pick = (matcher: RegExp, limit: number): string[] => {
+    const out: string[] = [];
+    const seen = new Set<string>();
+    const ordered = [...all].reverse();
+    for (const row of ordered) {
+      if (!matcher.test(row.toLowerCase())) continue;
+      const key = normalizeForDedupe(row);
+      if (seen.has(key)) continue;
+      seen.add(key);
+      out.push(row);
+      if (out.length >= limit) break;
+    }
+    return out;
+  };
+  const preferences = pick(/\bprefer|likes|favorite|usually\b/, 8);
+  const projects = pick(/\bproject|building|working on|repo\b/, 8);
+  const goals = pick(/\bgoal|deadline|milestone|plan\b/, 8);
+  const constraints = pick(/\bnever|do not|can't|cannot|allergic|avoid\b/, 8);
+  // Correction-aware confidence: explicit corrections get priority in confidence math.
+  const correctionCount = all.filter((row) => /\bactually|correction|update\b/i.test(row)).length;
+  const filledBuckets = [preferences, projects, goals, constraints].filter((bucket) => bucket.length > 0).length;
+  const confidence = Math.min(1, Math.max(0.1, (filledBuckets + Math.min(1, correctionCount)) / 4));
+  return {
+    identity: { workspace_id: args.workspaceId, container_tag: args.containerTag },
+    preferences,
+    projects,
+    goals,
+    constraints,
+    last_updated: new Date().toISOString(),
+    confidence,
+  };
+}
+
 function invalidateScopeCache(workspaceId: string, userId: string, namespace: string): void {
   mcpCache.invalidateScope(`${workspaceId}:${userId}:${namespace}`);
 }
@@ -431,8 +481,10 @@ function createBrandedMcpServer(args: {
   const { env, restApiOrigin, apiKey, auth, defaultUserId, defaultNamespace, requestId, getSessionId } = args;
 
   const resolveScope = (containerTag?: string | null) => {
-    const namespace = sanitizeScopePart(containerTag ?? null, 128, defaultNamespace);
-    const user_id = sanitizeScopePart(defaultUserId, 200, "default");
+    let namespace = sanitizeScopePart(containerTag ?? null, 128, defaultNamespace);
+    const user_id = "default";
+    const scopedTag = sanitizeScopePart(auth.scopedContainerTag ?? null, 128, "");
+    if (scopedTag) namespace = scopedTag;
     return { user_id, namespace };
   };
   const toPolicyScope = (scope: { user_id: string; namespace: string }): PolicyScope => ({
@@ -859,6 +911,7 @@ function createBrandedMcpServer(args: {
       );
 
       let profileBlock = "";
+      let recentTextsForProfile: string[] = [];
       const includeEffective = include && decision.degradeLevel !== "disable_profile";
       if (includeEffective) {
         const list = await internalJson(
@@ -873,6 +926,9 @@ function createBrandedMcpServer(args: {
         const recent = Array.isArray((list.data as { results?: { text?: string }[] })?.results)
           ? (list.data as { results: { text?: string }[] }).results
           : [];
+        recentTextsForProfile = recent
+          .map((r) => (typeof r.text === "string" ? r.text : ""))
+          .filter((x) => x.length > 0);
         profileBlock =
           recent.length === 0
             ? "_No recent rows for profile summary._"
@@ -882,12 +938,19 @@ function createBrandedMcpServer(args: {
         ? `## Profile (recent)\n${profileBlock}\n\n## Recall\n${formatSearchResults(out.data)}`
         : formatSearchResults(out.data);
       const status = confidence < 0.35 ? "low_confidence" : decision.status === "degrade" ? "degraded" : "ok";
+      const profileEngine = buildProfileEngine({
+        workspaceId: auth.workspaceId,
+        containerTag: namespace,
+        recentTexts: recentTextsForProfile,
+        historyTexts: resultsOut.map((r) => r.text),
+      });
       const response = {
         content: [{ type: "text" as const, text: textBody }],
         structuredContent: {
           status,
           results: resultsOut,
           profile: { recent: includeEffective ? profileBlock : "" },
+          profile_engine: profileEngine,
           meta: {
             reasoning,
             confidence,
@@ -1001,6 +1064,12 @@ function createBrandedMcpServer(args: {
           truncated: truncated.truncated || decision.status === "degrade",
         });
         const status = decision.status === "degrade" ? "degraded" : "ok";
+        const profileEngine = buildProfileEngine({
+          workspaceId: auth.workspaceId,
+          containerTag: namespace,
+          recentTexts: truncated.profileFacts,
+          historyTexts: truncated.relevantHistory.map((x) => x.text),
+        });
         const response = {
           content: [
             {
@@ -1024,6 +1093,7 @@ function createBrandedMcpServer(args: {
               relevantHistory: truncated.relevantHistory,
               guidance: truncated.guidance,
             },
+            profile_engine: profileEngine,
             meta: {
               budget_chars: CONTEXT_BUDGET_CHARS,
               used_chars: truncated.usedChars,
@@ -1070,6 +1140,7 @@ function createBrandedMcpServer(args: {
         workspace_id: z.string(),
         user_id: z.string(),
         namespace: z.string(),
+        container_tag: z.string(),
         session_id: z.string(),
         client: z.string(),
         policy_version: z.string(),
@@ -1093,9 +1164,11 @@ function createBrandedMcpServer(args: {
             workspace_id: auth.workspaceId,
             user_id,
             namespace,
+            container_tag: namespace,
             session_id: sessionId,
             client: "memorynode-mcp-http",
             policy_version: MCP_POLICY_VERSION,
+            scoped_container_tag: auth.scopedContainerTag ?? null,
           },
         },
       };
@@ -1336,7 +1409,7 @@ function createBrandedMcpServer(args: {
       const text = [
         "## MemoryNode project scope",
         "",
-        "- Use HTTP header **`x-mn-project`** on the MCP URL (or tool argument **`containerTag`**) to set the MemoryNode **namespace** for this session.",
+        "- Use HTTP header **`x-mn-container-tag`** on the MCP URL (or tool argument **`containerTag`**) to set the MemoryNode **namespace** for this session.",
         `- Defaults for this connection: user slice **${defaultUserId}**, namespace **${defaultNamespace}**.`,
         "- API key determines the **workspace**; keep keys server-side.",
         `- Streamable HTTP sessions idle out after **~${Math.round(SESSION_TTL_MS / 60000)} minutes** (in-process map; deploy/restart clears sessions).`,
@@ -1501,8 +1574,8 @@ export async function handleHostedMcpRequest(
   const gated = await applyMcpEntitlementAndRateLimits(env, supabase, auth, ctx);
   if (gated) return gated;
 
-  const defaultUserId = sanitizeScopePart(request.headers.get("x-mn-user-id"), 200, "default");
-  const defaultNamespace = sanitizeScopePart(request.headers.get("x-mn-project"), 128, "mcp");
+  const defaultUserId = "default";
+  const defaultNamespace = sanitizeScopePart(request.headers.get("x-mn-container-tag"), 128, "default");
   const restApiOrigin = resolveRestApiOrigin(request, env);
 
   const sessionHeader = request.headers.get("mcp-session-id");

@@ -44,3 +44,10 @@ export {
   type CreateApiKeyPayload,
   type RevokeApiKeyPayload,
 } from "./admin.js";
+export {
+  CAPTURE_TYPE_KEYS,
+  CaptureTypesSchema,
+  ConnectorSettingPatchSchema,
+  type CaptureTypeKey,
+  type ConnectorSettingPatchPayload,
+} from "./connectorSettings.js";

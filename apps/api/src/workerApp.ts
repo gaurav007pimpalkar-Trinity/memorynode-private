@@ -62,6 +62,7 @@ import { createBillingHandlers, type BillingHandlerDeps } from "./handlers/billi
 import { createWebhookHandlers, type WebhookHandlerDeps } from "./handlers/webhooks.js";
 import { createAdminHandlers, type AdminHandlerDeps } from "./handlers/admin.js";
 import { createImportHandlers, type ImportHandlerDeps, type ImportMode } from "./handlers/import.js";
+import { createConnectorSettingsHandlers } from "./handlers/connectorSettings.js";
 import { createWorkspacesHandlers, type WorkspacesHandlerDeps } from "./handlers/workspaces.js";
 import { createApiKeysHandlers, type ApiKeysHandlerDeps } from "./handlers/apiKeys.js";
 import { createEvalHandlers, type EvalHandlerDeps } from "./handlers/evals.js";
@@ -444,6 +445,9 @@ function resolveBodyLimit(method: string, path: string, env: Env): number {
       path === "/v1/evals/run")
   )
     return Math.min(base, SEARCH_MAX_BODY_BYTES);
+  if (path === "/v1/connectors/settings" && (method === "GET" || method === "PATCH")) {
+    return Math.min(base, SEARCH_MAX_BODY_BYTES);
+  }
   if (method === "POST" && path === "/v1/import") return Number(env.MAX_IMPORT_BYTES ?? DEFAULT_MAX_IMPORT_BYTES);
   if (method === "POST" && (path === "/v1/workspaces" || path === "/v1/api-keys" || path === "/v1/api-keys/revoke"))
     return Math.min(base, ADMIN_MAX_BODY_BYTES);
@@ -482,11 +486,13 @@ const KNOWN_PATH_ALLOWED_METHODS: Array<{ test: (path: string) => boolean; allow
   { test: (p) => p === "/v1/api-keys", allow: "GET, POST" },
   { test: (p) => p === "/v1/api-keys/revoke", allow: "POST" },
   { test: (p) => p === "/v1/import", allow: "POST" },
+  { test: (p) => p === "/v1/connectors/settings", allow: "GET, PATCH" },
   { test: (p) => p === "/v1/admin/billing/health", allow: "GET" },
   { test: (p) => p === "/admin/webhooks/reprocess", allow: "POST" },
   { test: (p) => p === "/admin/usage/reconcile", allow: "POST" },
   { test: (p) => p === "/admin/sessions/cleanup", allow: "POST" },
   { test: (p) => p === "/admin/memory-hygiene", allow: "POST" },
+  { test: (p) => p === "/admin/memory-retention", allow: "POST" },
   { test: (p) => p === "/v1/dashboard/session", allow: "POST" },
   { test: (p) => p === "/v1/dashboard/logout", allow: "POST" },
 ];
@@ -990,6 +996,7 @@ async function handleRequestImpl(request: Request, env: Env): Promise<Response> 
       const webhookHandlers = createWebhookHandlers(handlerDeps, defaultWebhookHandlerDeps);
       const adminHandlers = createAdminHandlers(handlerDeps, defaultAdminHandlerDeps);
       const importHandlers = createImportHandlers(handlerDeps, defaultImportHandlerDeps);
+      const connectorSettingsHandlers = createConnectorSettingsHandlers(handlerDeps, { jsonResponse });
       const workspacesHandlers = createWorkspacesHandlers(handlerDeps, defaultWorkspacesHandlerDeps);
       const apiKeysHandlers = createApiKeysHandlers(handlerDeps, defaultApiKeysHandlerDeps);
       const evalHandlers = createEvalHandlers(handlerDeps, defaultEvalHandlerDeps);
@@ -1019,6 +1026,7 @@ async function handleRequestImpl(request: Request, env: Env): Promise<Response> 
           ...webhookHandlers,
           ...adminHandlers,
           ...importHandlers,
+          ...connectorSettingsHandlers,
           ...workspacesHandlers,
           ...apiKeysHandlers,
           ...evalHandlers,
@@ -1118,6 +1126,8 @@ function classifyRouteGroup(pathname: string): string {
   if (pathname === "/v1/workspaces") return "workspaces";
   if (pathname.startsWith("/v1/api-keys")) return "api_keys";
   if (pathname === "/v1/import") return "import";
+  if (pathname === "/v1/connectors/settings") return "connectors";
+  if (pathname === "/v1/mcp" || pathname === "/mcp") return "mcp";
   if (pathname.startsWith("/v1/admin/") || pathname.startsWith("/admin/")) return "admin";
   return "unknown";
 }
@@ -3880,6 +3890,7 @@ export const handleAdminBillingHealth = adminHandlersDefault.handleAdminBillingH
 export const handleFounderPhase1Metrics = adminHandlersDefault.handleFounderPhase1Metrics;
 export const handleCleanupExpiredSessions = adminHandlersDefault.handleCleanupExpiredSessions;
 export const handleMemoryHygiene = adminHandlersDefault.handleMemoryHygiene;
+export const handleMemoryRetention = adminHandlersDefault.handleMemoryRetention;
 export const handleImport = importHandlersDefault.handleImport;
 export const handleCreateWorkspace = workspacesHandlersDefault.handleCreateWorkspace;
 export const handleCreateApiKey = apiKeysHandlersDefault.handleCreateApiKey;

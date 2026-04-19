@@ -15,8 +15,8 @@ import { McpResponseCache } from "./cache.js";
 
 const MEMORYNODE_API_KEY = process.env.MEMORYNODE_API_KEY;
 const MEMORYNODE_BASE_URL = process.env.MEMORYNODE_BASE_URL;
-const MEMORYNODE_USER_ID = process.env.MEMORYNODE_USER_ID ?? "default";
-const MEMORYNODE_NAMESPACE = process.env.MEMORYNODE_NAMESPACE ?? "default";
+const MEMORYNODE_CONTAINER_TAG = process.env.MEMORYNODE_CONTAINER_TAG ?? process.env.MEMORYNODE_NAMESPACE ?? "default";
+const MCP_USER_ID = "default";
 
 if (!MEMORYNODE_API_KEY || typeof MEMORYNODE_API_KEY !== "string" || !MEMORYNODE_API_KEY.trim()) {
   console.error("MEMORYNODE_API_KEY is required. Set it in your environment or .env.");
@@ -112,14 +112,14 @@ function getScope(): PolicyScope {
   return {
     workspaceId: "stdio",
     keyId: "stdio",
-    userId: MEMORYNODE_USER_ID,
-    namespace: MEMORYNODE_NAMESPACE,
+    userId: MCP_USER_ID,
+    namespace: MEMORYNODE_CONTAINER_TAG,
     sessionId: "stdio",
   };
 }
 
 function scopeKey(): string {
-  return `stdio:${MEMORYNODE_USER_ID}:${MEMORYNODE_NAMESPACE}`;
+  return `stdio:${MCP_USER_ID}:${MEMORYNODE_CONTAINER_TAG}`;
 }
 
 function evaluate(actionId: McpActionId, args: {
@@ -211,7 +211,7 @@ function formatSearchResults(results: Array<{ text?: string; score?: number }>):
 async function searchRows(query: string, topK: number): Promise<Array<{ memory_id: string; text: string; score: number }>> {
   const out = await restFetch("/v1/search", {
     method: "POST",
-    body: { user_id: MEMORYNODE_USER_ID, namespace: MEMORYNODE_NAMESPACE, query: query.trim(), top_k: topK },
+    body: { user_id: MCP_USER_ID, namespace: MEMORYNODE_CONTAINER_TAG, query: query.trim(), top_k: topK },
   });
   if (!out.ok) throw new Error(JSON.stringify({ code: mapRestStatusToMcpCode(out.status), message: out.error ?? "Search failed" }));
   const rows = Array.isArray((out.data as { results?: unknown })?.results)
@@ -226,7 +226,7 @@ async function searchRows(query: string, topK: number): Promise<Array<{ memory_i
 
 async function listRecent(limit: number): Promise<string[]> {
   const out = await restFetch(
-    `/v1/memories?user_id=${encodeURIComponent(MEMORYNODE_USER_ID)}&namespace=${encodeURIComponent(MEMORYNODE_NAMESPACE)}&page=1&page_size=${Math.max(1, Math.min(20, limit))}`,
+    `/v1/memories?user_id=${encodeURIComponent(MCP_USER_ID)}&namespace=${encodeURIComponent(MEMORYNODE_CONTAINER_TAG)}&page=1&page_size=${Math.max(1, Math.min(20, limit))}`,
     { method: "GET" },
   );
   if (!out.ok) return [];
@@ -275,6 +275,49 @@ function buildContext(query: string, rows: Array<{ memory_id: string; text: stri
   };
 }
 
+type ProfileEngineView = {
+  identity: { workspace_id: string; container_tag: string };
+  preferences: string[];
+  projects: string[];
+  goals: string[];
+  constraints: string[];
+  last_updated: string;
+  confidence: number;
+};
+
+function buildProfileEngine(args: { recentTexts: string[]; historyTexts: string[] }): ProfileEngineView {
+  const all = [...args.recentTexts, ...args.historyTexts].map((x) => x.trim()).filter((x) => x.length > 0);
+  const pick = (matcher: RegExp, limit: number): string[] => {
+    const out: string[] = [];
+    const seen = new Set<string>();
+    const ordered = [...all].reverse();
+    for (const row of ordered) {
+      if (!matcher.test(row.toLowerCase())) continue;
+      const key = row.toLowerCase().replace(/\s+/g, " ").trim();
+      if (seen.has(key)) continue;
+      seen.add(key);
+      out.push(row);
+      if (out.length >= limit) break;
+    }
+    return out;
+  };
+  const preferences = pick(/\bprefer|likes|favorite|usually\b/, 8);
+  const projects = pick(/\bproject|building|working on|repo\b/, 8);
+  const goals = pick(/\bgoal|deadline|milestone|plan\b/, 8);
+  const constraints = pick(/\bnever|do not|can't|cannot|allergic|avoid\b/, 8);
+  const correctionCount = all.filter((row) => /\bactually|correction|update\b/i.test(row)).length;
+  const filledBuckets = [preferences, projects, goals, constraints].filter((bucket) => bucket.length > 0).length;
+  return {
+    identity: { workspace_id: "stdio", container_tag: MEMORYNODE_CONTAINER_TAG },
+    preferences,
+    projects,
+    goals,
+    constraints,
+    last_updated: new Date().toISOString(),
+    confidence: Math.min(1, Math.max(0.1, (filledBuckets + Math.min(1, correctionCount)) / 4)),
+  };
+}
+
 const server = new McpServer(
   { name: "memorynode-mcp", version: "1.1.0" },
   { capabilities: { tools: {}, resources: {} } },
@@ -304,11 +347,16 @@ server.registerTool("recall", {
       const recent = includeProfile && decision.degradeLevel !== "disable_profile" ? await listRecent(5) : [];
       const text = `${recent.length > 0 ? `## Profile (recent)\n${recent.map((x, i) => `${i + 1}. ${x}`).join("\n")}\n\n` : ""}## Recall\n${formatSearchResults(rows)}`;
       const confidence = rows.length > 0 ? Math.min(1, Math.max(0, (rows[0]?.score ?? 0) / 0.08)) : 0;
+      const profileEngine = buildProfileEngine({
+        recentTexts: recent,
+        historyTexts: rows.map((r) => r.text),
+      });
       return {
       content: [{ type: "text" as const, text }],
       structuredContent: {
         status: confidence < 0.35 ? "low_confidence" : decision.status === "degrade" ? "degraded" : "ok",
         results: rows,
+        profile_engine: profileEngine,
         meta: {
           confidence,
           policy_version: MCP_POLICY_VERSION,
@@ -378,6 +426,10 @@ server.registerTool("context", {
         "Guidance:",
         ...context.guidance.map((x) => `- ${x}`),
       ].join("\n");
+      const profileEngine = buildProfileEngine({
+        recentTexts: context.profileFacts,
+        historyTexts: context.relevantHistory.map((row) => row.text),
+      });
       return {
       content: [{ type: "text" as const, text }],
       structuredContent: {
@@ -387,6 +439,7 @@ server.registerTool("context", {
           relevantHistory: context.relevantHistory,
           guidance: context.guidance,
         },
+        profile_engine: profileEngine,
         meta: {
           budget_chars: CONTEXT_BUDGET_CHARS,
           used_chars: context.usedChars,
@@ -442,8 +495,8 @@ server.registerTool("memory", {
     const out = await restFetch("/v1/memories", {
       method: "POST",
       body: {
-        user_id: MEMORYNODE_USER_ID,
-        namespace: MEMORYNODE_NAMESPACE,
+        user_id: MCP_USER_ID,
+        namespace: MEMORYNODE_CONTAINER_TAG,
         text: content,
         ...(metadata && Object.keys(metadata).length > 0 ? { metadata } : {}),
       },
@@ -480,6 +533,7 @@ server.registerTool("whoAmI", {
     workspace_id: z.string(),
     user_id: z.string(),
     namespace: z.string(),
+    container_tag: z.string(),
     session_id: z.string(),
     client: z.string(),
     policy_version: z.string(),
@@ -490,8 +544,9 @@ server.registerTool("whoAmI", {
     status: "ok",
     identity: {
       workspace_id: "stdio",
-      user_id: MEMORYNODE_USER_ID,
-      namespace: MEMORYNODE_NAMESPACE,
+      user_id: MCP_USER_ID,
+      namespace: MEMORYNODE_CONTAINER_TAG,
+      container_tag: MEMORYNODE_CONTAINER_TAG,
       session_id: "stdio",
       client: "memorynode-mcp-stdio",
       policy_version: MCP_POLICY_VERSION,
@@ -563,8 +618,8 @@ server.registerTool("memory_insert", {
     const out = await restFetch("/v1/memories", {
       method: "POST",
       body: {
-        user_id: MEMORYNODE_USER_ID,
-        namespace: MEMORYNODE_NAMESPACE,
+        user_id: MCP_USER_ID,
+        namespace: MEMORYNODE_CONTAINER_TAG,
         text: content,
         ...(metadata && Object.keys(metadata).length > 0 ? { metadata } : {}),
       },

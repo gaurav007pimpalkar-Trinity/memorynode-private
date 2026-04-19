@@ -13,6 +13,7 @@ Set via **Wrangler secrets** (never in repo or `[vars]`):
 - [ ] `SUPABASE_URL`, `SUPABASE_SERVICE_ROLE_KEY`, `SUPABASE_ANON_KEY`
 - [ ] `API_KEY_SALT`, `MASTER_ADMIN_TOKEN`, `OPENAI_API_KEY`
 - [ ] `PAYU_MERCHANT_KEY`, `PAYU_MERCHANT_SALT` (if billing enabled)
+- [ ] `MCP_INTERNAL_SECRET` (required for hosted MCP internal auth)
 
 Production vars: [ ] `ENVIRONMENT=production`, [ ] `EMBEDDINGS_MODE=openai`, [ ] `RATE_LIMIT_MODE=on`, [ ] `ALLOWED_ORIGINS` includes `https://console.memorynode.ai`.
 
@@ -25,6 +26,7 @@ Production vars: [ ] `ENVIRONMENT=production`, [ ] `EMBEDDINGS_MODE=openai`, [ ]
 1. [ ] Staging: `pnpm deploy:staging` then `TARGET_ENV=staging STAGING_BASE_URL=... API_KEY=... pnpm release:staging:validate`
 2. [ ] Production: `DEPLOY_ENV=production DEPLOY_CONFIRM=memorynode-prod pnpm deploy:prod`
 3. [ ] Production validate: `TARGET_ENV=production PROD_BASE_URL=https://api.memorynode.ai API_KEY=... pnpm release:prod:validate`
+4. [ ] MCP validate: connect a client to `https://mcp.memorynode.ai/mcp` and verify `memory`, `recall`, `context`, `whoAmI`.
 
 ## 5. Dashboard & security (before prod traffic)
 - [ ] Dashboard deployed (e.g. `console.memorynode.ai`).

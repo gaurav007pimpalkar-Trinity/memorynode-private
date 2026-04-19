@@ -91,6 +91,13 @@ export function createAdminHandlers(
     requestId: string,
     deps?: HandlerDeps,
   ) => Promise<Response>;
+  handleMemoryRetention: (
+    request: Request,
+    env: Env,
+    supabase: SupabaseClient,
+    requestId: string,
+    deps?: HandlerDeps,
+  ) => Promise<Response>;
 } {
   async function guardAdminIp(request: Request, env: Env, d: AdminHandlerDeps): Promise<void> {
     const ip = extractClientIp(request);
@@ -504,6 +511,99 @@ export function createAdminHandlers(
 
       const metrics = await d.getFounderPhase1Metrics(supabase, rangeRaw);
       return jsonResponse(metrics, 200, rate.headers);
+    },
+
+    async handleMemoryRetention(request, env, supabase, requestId = "", deps?) {
+      const d = (deps ?? defaultDeps) as AdminHandlerDeps;
+      const { jsonResponse } = d;
+      await guardAdminIp(request, env, d);
+      const { token } = await d.requireAdmin(request, env);
+      const rate = await d.rateLimit(`admin:retention:${token}`, env, undefined, getRouteRateLimitMax(env, "admin"));
+      if (!rate.allowed) {
+        return jsonResponse(
+          { error: { code: "rate_limited", message: "Rate limit exceeded" } },
+          429,
+          rate.headers,
+        );
+      }
+
+      const url = new URL(request.url);
+      const workspaceId = url.searchParams.get("workspace_id")?.trim();
+      if (!workspaceId) {
+        return jsonResponse(
+          { error: { code: "BAD_REQUEST", message: "workspace_id query parameter is required" } },
+          400,
+          rate.headers,
+        );
+      }
+      const olderThanDaysRaw = Number(url.searchParams.get("older_than_days") ?? "90");
+      const olderThanDays = Number.isFinite(olderThanDaysRaw)
+        ? Math.max(7, Math.min(3650, Math.floor(olderThanDaysRaw)))
+        : 90;
+      const limitRaw = Number(url.searchParams.get("limit") ?? "500");
+      const limit = Number.isFinite(limitRaw) ? Math.max(1, Math.min(5000, Math.floor(limitRaw))) : 500;
+      const dryRun = url.searchParams.get("dry_run")?.toLowerCase() !== "false";
+      const cutoffIso = new Date(Date.now() - olderThanDays * 24 * 60 * 60 * 1000).toISOString();
+
+      const { data, error } = await supabase
+        .from("memories")
+        .select("id,memory_type,metadata,created_at")
+        .eq("workspace_id", workspaceId)
+        .lt("created_at", cutoffIso)
+        .order("created_at", { ascending: true })
+        .limit(limit);
+      if (error) {
+        return jsonResponse(
+          { error: { code: "DB_ERROR", message: error.message ?? "Failed to load retention candidates" } },
+          500,
+          rate.headers,
+        );
+      }
+
+      const candidates = (Array.isArray(data) ? data : []).filter((row) => {
+        const memoryType = typeof row.memory_type === "string" ? row.memory_type : "";
+        const metadata = (row.metadata ?? {}) as Record<string, unknown>;
+        return memoryType === "note" || metadata._extracted === true;
+      });
+      let archived = 0;
+      if (!dryRun) {
+        for (const row of candidates) {
+          const metadata = (row.metadata ?? {}) as Record<string, unknown>;
+          const nextMetadata: Record<string, unknown> = {
+            ...metadata,
+            _archived: true,
+            _archived_at: new Date().toISOString(),
+          };
+          const result = await supabase
+            .from("memories")
+            .update({ metadata: nextMetadata })
+            .eq("workspace_id", workspaceId)
+            .eq("id", row.id);
+          if (!result.error) archived += 1;
+        }
+      }
+      d.emitEventLog("memory_retention_run", {
+        route: "/admin/memory-retention",
+        request_id: requestId || null,
+        workspace_id: workspaceId,
+        dry_run: dryRun,
+        older_than_days: olderThanDays,
+        scanned: Array.isArray(data) ? data.length : 0,
+        candidates: candidates.length,
+        archived,
+      });
+      return jsonResponse(
+        {
+          workspace_id: workspaceId,
+          dry_run: dryRun,
+          older_than_days: olderThanDays,
+          scanned: Array.isArray(data) ? data.length : 0,
+          candidates: candidates.length,
+          archived,
+        },
+        200,
+        rate.headers,
+      );
     },
 
     /**

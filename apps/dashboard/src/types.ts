@@ -8,6 +8,7 @@ export type ApiKeyRow = {
   key_last4?: string;
   last_used_at?: string | null;
   last_used_ip?: string | null;
+  scoped_container_tag?: string | null;
 };
 
 export type MemoryRow = {
@@ -62,4 +63,11 @@ export type InviteRow = {
   expires_at: string;
   accepted_at: string | null;
   revoked_at: string | null;
+};
+
+export type ConnectorSettingRow = {
+  connector_id: string;
+  sync_enabled: boolean;
+  capture_types: Record<string, boolean>;
+  updated_at: string;
 };
