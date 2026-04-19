@@ -283,15 +283,6 @@ function hashToken(input: string): string {
     .slice(0, 8);
 }
 
-function recentCount(entries: number[], now: number, windowMs: number): number {
-  let keep = 0;
-  for (let i = entries.length - 1; i >= 0; i--) {
-    if (now - entries[i] <= windowMs) keep += 1;
-    else break;
-  }
-  return keep;
-}
-
 function pushTime(map: Map<string, number[]>, key: string, now: number): number[] {
   const arr = map.get(key) ?? [];
   arr.push(now);

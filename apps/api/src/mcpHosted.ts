@@ -542,7 +542,7 @@ function createBrandedMcpServer(args: {
       if (decision.status === "deny") {
         return formatDeniedForTool(actionId, scope, decision);
       }
-      let mustComplete = decision.status === "allow" || decision.status === "degrade";
+      const mustComplete = decision.status === "allow" || decision.status === "degrade";
       try {
         if (act === "confirm_forget") {
           const token = confirm?.token ?? "";
