@@ -56,8 +56,8 @@ Single source mapping for API routes, dashboard surfaces, and docs surfaces.
 | Docs Entry | Layer | Purpose |
 | --- | --- | --- |
 | `docs/start-here/README.md` | Developer | 4-call quickstart |
-| `docs/build/README.md` | Developer | Advanced build/integration path |
-| `docs/build/sdk-usage.md` | Developer | SDK method usage |
+| `docs/external/API_USAGE.md` | Developer | Advanced API and integration path |
+| `packages/sdk/README.md` | Developer | SDK method usage and examples |
 | `docs/external/API_SURFACE_PHASE1.md` | Developer + SaaS | Public API visibility boundary |
 | `docs/start-here/FOUNDER_PATH.md` | SaaS | Founder/operator onboarding path |
 | `docs/external/ASSISTANT_WORKSPACE.md` | Assistant | No-code assistant workspace flow |

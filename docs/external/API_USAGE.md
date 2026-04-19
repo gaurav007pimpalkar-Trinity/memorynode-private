@@ -129,4 +129,4 @@ The TypeScript SDK exposes the same operations: `addMemory`, `search`, `context`
 
 Recommended default flow in app code: `search` -> `context` -> `contextExplain` so developers can verify retrieval reasoning early.
 
-See [docs/build/sdk-usage.md](../build/sdk-usage.md).
+See [packages/sdk/README.md](../../packages/sdk/README.md).

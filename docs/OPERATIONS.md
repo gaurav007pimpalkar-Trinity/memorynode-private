@@ -21,7 +21,7 @@
 
 ## B.1) Error Budget Policy
 
-When the 28-day rolling error budget is exhausted (see `docs/OBSERVABILITY.md` §4 and Appendix A):
+When the 28-day rolling error budget is exhausted (see `docs/internal/OBSERVABILITY.md` §4 and Appendix A):
 
 1. **Freeze** non-essential releases.
 2. **Focus** on reliability and root-cause.

@@ -7,7 +7,7 @@ User-facing documentation for MemoryNode.
 | Mode | Audience | Start |
 |------|------------|--------|
 | **1 — Just use it** | Everyone shipping on the hosted API | [../start-here/README.md](../start-here/README.md) |
-| **2 — Build** | Engineers who need filters, SDK, OpenAPI | [../build/README.md](../build/README.md) |
+| **2 — Build** | Engineers who need filters, SDK, OpenAPI | [../external/API_USAGE.md](../external/API_USAGE.md) |
 | **3 — Self-host** | Contributors and private deployments | [../self-host/README.md](../self-host/README.md) |
 
 **New here?** Open **[Start here →](../start-here/README.md)** (~10 minutes, hosted only).
@@ -18,7 +18,7 @@ User-facing documentation for MemoryNode.
 |----------|------|
 | Default (everyone) | [../start-here/README.md](../start-here/README.md) |
 | Founders (no repo) | [../start-here/FOUNDER_PATH.md](../start-here/FOUNDER_PATH.md) |
-| Advanced usage | [../build/README.md](../build/README.md) |
+| Advanced usage | [../external/API_USAGE.md](../external/API_USAGE.md) |
 | Self-host / contributors | [../self-host/README.md](../self-host/README.md) |
 
 ## Canonical pages in this folder

@@ -17,7 +17,7 @@ If your team uses MCP in the editor, see **[MCP.md](./MCP.md)** (install package
 - [Trust (customer-facing)](../external/TRUST.md)
 - [Data retention](../DATA_RETENTION.md)
 
-When you need namespaces, metadata filters, or language-specific examples, open **[Build mode](../build/README.md)** — not required for your first ship.
+When you need namespaces, metadata filters, or language-specific examples, open **[Build mode](../external/API_USAGE.md)** — not required for your first ship.
 
-**Need more control?** → [Build mode](../build/README.md).
+**Need more control?** → [Build mode](../external/API_USAGE.md).
 

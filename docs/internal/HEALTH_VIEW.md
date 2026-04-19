@@ -28,13 +28,13 @@ Single dashboard for on-call. Open this view in **<2 minutes** to assess product
 | 10 | No webhook backlog | `webhook_deferred` − `webhook_reconciled` | <5 net deferred in 1h |
 | 11 | No signature issues | `billing_webhook_signature_invalid` | 0 in last hour |
 
-**Paging thresholds:** See `docs/ALERTS.md` (A1–E2).
+**Paging thresholds:** See `docs/internal/ALERTS.md` (A1–E2).
 
 ---
 
 ## If Any Check is RED
 
-1. See `docs/ALERTS.md` §2 (Triage Playbooks) for first action.
+1. See `docs/internal/ALERTS.md` §2 (Triage Playbooks) for first action.
 2. Use `x-request-id` from client → filter logs by `request_id`.
 3. Check `docs/OPERATIONS.md` for rollback and incident procedures.
 4. For billing: `docs/internal/BILLING_RUNBOOK.md`.

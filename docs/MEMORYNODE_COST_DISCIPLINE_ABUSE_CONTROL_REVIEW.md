@@ -78,7 +78,7 @@
 ### Evaluate
 
 - **Are plan limits aligned with real OpenAI cost?**  
-  **Roughly for “average” usage; not for heavy/extraction-heavy usage.** Embed cost is ~$0.02/1M input tokens (text-embedding-3-small). Scale plan example: 60M embed_tokens/day → 300k embeds at 200 tokens → 60M tokens/day → ~$1.20/day → ~₹100/day. Scale price_inr 4999/30 ≈ ₹167/day. So embed-only at cap is below revenue. But extraction uses gpt-4o-mini (chat), and is **not** limited by a separate cap; heavy extract usage can dominate cost. Existing audit (MEMORYNODE_POST_STAGE3_TECHNICAL_COST_AUDIT_SOLO_FOUNDER.md) notes: at scale plan cap, extraction alone can be ~$60/mo vs ~₹5000 revenue → negative margin if extraction is heavy.
+  **Roughly for “average” usage; not for heavy/extraction-heavy usage.** Embed cost is ~$0.02/1M input tokens (text-embedding-3-small). Scale plan example: 60M embed_tokens/day → 300k embeds at 200 tokens → 60M tokens/day → ~$1.20/day → ~₹100/day. Scale price_inr 4999/30 ≈ ₹167/day. So embed-only at cap is below revenue. But extraction uses gpt-4o-mini (chat), and is **not** limited by a separate cap; heavy extract usage can dominate cost. Existing audit notes in `docs/COST_BILLING_AUDIT.md` and this review indicate extraction can create negative margin when usage is extraction-heavy.
 
 - **Could a single heavy scale-plan user create negative margin?**  
   **Yes.** If they max out writes with `extract: true`, extraction cost (gpt-4o-mini) plus embed cost can exceed plan revenue. Scale plan is the main risk; scale_plus (custom) is unbounded by design.

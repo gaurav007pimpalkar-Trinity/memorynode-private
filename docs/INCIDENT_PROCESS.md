@@ -29,8 +29,8 @@ How we detect, triage, communicate, and resolve incidents. Linked from Trust ent
 
 ## Detection
 
-- **Alerts:** See `docs/ALERTS.md`. Alerts fire when thresholds (A1–E2) are breached.
-- **Health view:** `docs/HEALTH_VIEW.md` — open in <2 min to assess.
+- **Alerts:** See `docs/internal/ALERTS.md`. Alerts fire when thresholds (A1–E2) are breached.
+- **Health view:** `docs/internal/HEALTH_VIEW.md` — open in <2 min to assess.
 - **Logs:** Cloudflare Workers Logs; filter by `event_name`, `request_id`.
 
 ---
@@ -38,7 +38,7 @@ How we detect, triage, communicate, and resolve incidents. Linked from Trust ent
 ## Triage
 
 1. **Identify severity** (S0–S3).
-2. **First action:** See `docs/ALERTS.md` §2 (Triage Playbooks) for each alert ID.
+2. **First action:** See `docs/internal/ALERTS.md` §2 (Triage Playbooks) for each alert ID.
 3. **Trace:** Use `x-request-id` from client → filter logs by `request_id`.
 
 ---
@@ -60,11 +60,11 @@ How we detect, triage, communicate, and resolve incidents. Linked from Trust ent
 
 ## Error Budget Policy
 
-When the **28-day rolling** error budget is exhausted (see `docs/OBSERVABILITY.md` § SLO definitions):
+When the **28-day rolling** error budget is exhausted (see `docs/internal/OBSERVABILITY.md` § SLO definitions):
 
 1. **Freeze** non-essential releases; focus on reliability.
 2. **Communicate** to stakeholders (e.g. email, in-app notification).
 3. **Root-cause** the burn; add or tighten mitigations.
 4. **Resume** normal release cadence only after budget recovers or policy exception.
 
-Detailed math and window: `docs/OBSERVABILITY.md` Appendix A and § Error Budget.
+Detailed math and window: `docs/internal/OBSERVABILITY.md` Appendix A and § Error Budget.

@@ -23,7 +23,7 @@
 - Namespaces, filters, TypeScript SDK, OpenAPI  
 - For product engineers shipping real apps  
 
-→ **[docs/build/README.md](docs/build/README.md)**
+→ **[docs/external/API_USAGE.md](docs/external/API_USAGE.md)**
 
 ---
 
@@ -106,7 +106,7 @@ Only if you chose **Self-host** above or you contribute to this repo:
 | `packages/mcp-server` | MCP server                      |
 | `packages/shared`     | Shared types                    |
 | `docs/start-here`     | Mode 1 — quickstart             |
-| `docs/build`          | Mode 2 — advanced usage         |
+| `docs/external`       | Mode 2 — advanced usage         |
 | `docs/self-host`      | Mode 3 — local / private deploy |
 
 Internal runbooks: [docs/internal/README.md](docs/internal/README.md).

@@ -218,14 +218,14 @@ TARGET_ENV=production PROD_BASE_URL=https://api.memorynode.ai API_KEY=<prod-api-
 - [ ] PayU test/callback is accepted by webhook endpoint (check Worker logs for `webhook_verified` / `webhook_processed`)
 - [ ] Worker logs show normal `request_completed` and no burst of `request_failed`
 
-1. [ ] Observability verification (see `docs/OBSERVABILITY.md` § 3):
+1. [ ] Observability verification (see `docs/internal/OBSERVABILITY.md` § 3):
 
 - [ ] `request_completed` events include `route_group` field
 - [ ] `embed_request` events appear with `embed_latency_ms` on search/ingest
 - [ ] `search_request` events appear with `search_latency_ms` on search
 - [ ] `db_rpc` events appear with `db_latency_ms` on search
-- [ ] Run the 60-second health checklist from `docs/OBSERVABILITY.md` § 3
-- [ ] Confirm alert filters from `docs/ALERTS.md` are configured in your log sink
+- [ ] Run the 60-second health checklist from `docs/internal/OBSERVABILITY.md` § 3
+- [ ] Confirm alert filters from `docs/internal/ALERTS.md` are configured in your log sink
 
 1. [ ] PayU secret security verification:
 

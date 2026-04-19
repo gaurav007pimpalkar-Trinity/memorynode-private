@@ -1,6 +1,6 @@
 # Self-host / run the repo (Mode 3 — advanced)
 
-**You do not need this for most products.** If you only call the hosted API, stay in **[Start here (Mode 1)](../start-here/README.md)**. If you need filters, SDK, and OpenAPI on the hosted API, use **[Build mode (Mode 2)](../build/README.md)** first.
+**You do not need this for most products.** If you only call the hosted API, stay in **[Start here (Mode 1)](../start-here/README.md)**. If you need filters, SDK, and OpenAPI on the hosted API, use **[Build mode (Mode 2)](../external/API_USAGE.md)** first.
 
 This section is for **infra engineers**, contributors, or teams operating a **private** deployment.
 

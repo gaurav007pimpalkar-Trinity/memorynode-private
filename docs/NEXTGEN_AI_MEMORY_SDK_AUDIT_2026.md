@@ -133,7 +133,7 @@
 
 **Present (conceptual/infra only):**
 
-- Docs describe Worker as “edge” (Cloudflare) with central Supabase/OpenAI (`docs/MEMORYNODE_BRUTAL_TECHNICAL_AUDIT_PRE_MARKETING.md`; `docs/RESILIENCE_UPGRADE_SUMMARY.md`).  
+- Docs describe Worker as “edge” (Cloudflare) with central Supabase/OpenAI (`docs/FULL_TECHNICAL_PRODUCT_AUDIT.md`; `docs/RESILIENCE_UPGRADE_SUMMARY.md`).  
 - Audit uses `ip_hash`, `api_key_id` (no raw keys); `apps/api/src/auth.ts` hashing; non-sensitive logging considerations in docs.
 
 **Missing (where to inject):**

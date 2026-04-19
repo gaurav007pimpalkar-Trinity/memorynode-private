@@ -33,4 +33,4 @@ Full protocol details and tool list: [MCP_SERVER.md](../MCP_SERVER.md) (includes
 - Denials are explicit and structured (for example `RATE_LIMITED`, `LOOP_DETECTED`, `COST_BUDGET_EXCEEDED`).
 - Supported clients include Claude Desktop, Cursor IDE, Windsurf, VS Code MCP extensions, Cline/Roo-Cline, and any MCP-compatible host.
 
-**Need more control?** → [Build mode](../build/README.md).
+**Need more control?** → [Build mode](../external/API_USAGE.md).

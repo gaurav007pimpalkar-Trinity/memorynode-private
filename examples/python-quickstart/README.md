@@ -39,4 +39,4 @@ python examples/python-quickstart/main.py
 ## Docs
 
 - [Start here](../../docs/start-here/README.md)
-- [Build mode](../../docs/build/README.md)
+- [Build mode](../../docs/external/API_USAGE.md)

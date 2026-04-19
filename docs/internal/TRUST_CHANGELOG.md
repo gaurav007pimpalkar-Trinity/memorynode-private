@@ -7,7 +7,7 @@ Security and operational improvements by date. Updated on each meaningful trust/
 ## 2026-02-14
 
 - **Phase 3 Observability:** SLO definitions (28-day rolling, Appendix A); error budget policy; INCIDENT_PROCESS with severity taxonomy S0–S3; saved queries and health view; alert rules (machine-readable).
-- **Trust entry point:** `docs/TRUST.md` created linking to SECURITY, INCIDENT_PROCESS, OBSERVABILITY, ALERTS, OPERATIONS.
+- **Trust entry point:** `docs/external/TRUST.md` created linking to SECURITY, INCIDENT_PROCESS, OBSERVABILITY, ALERTS, OPERATIONS.
 
 ---
 

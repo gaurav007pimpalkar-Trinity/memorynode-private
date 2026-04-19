@@ -144,7 +144,7 @@ Example interpretation (using each result’s `scores`):
 - **Founder checklist (no repo):** [FOUNDER_PATH.md](./FOUNDER_PATH.md)  
 - **Use MemoryNode from an AI editor:** [MCP.md](./MCP.md)
 
-**Need more control?** → [Build mode](../build/README.md)
+**Need more control?** → [Build mode](../external/API_USAGE.md)
 
 Public endpoint boundary for Phase 1: [../external/API_SURFACE_PHASE1.md](../external/API_SURFACE_PHASE1.md)
 
