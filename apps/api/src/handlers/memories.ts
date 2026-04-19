@@ -532,45 +532,38 @@ export function createMemoryHandlers(
       const dedupeCutoffIso = new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString();
       const normalizedIncoming = normalizeTextKey(text);
       try {
-        const baseQuery = supabase.from("memories") as unknown as {
-          select?: (columns: string) => {
-            eq: (column: string, value: unknown) => unknown;
-          };
-        };
-        if (typeof baseQuery.select === "function") {
-          const rowsResult = await (supabase
-            .from("memories")
-            .select("id,text,created_at")
-            .eq("workspace_id", auth.workspaceId)
-            .eq("user_id", user_id)
-            .eq("namespace", namespaceVal)
-            .gte("created_at", dedupeCutoffIso)
-            .order("created_at", { ascending: false })
-            .limit(25) as Promise<{ data?: Array<{ id: string; text?: string; created_at?: string }>; error?: { message?: string } | null }>);
-          const dedupeRows = rowsResult.data ?? [];
-          const dedupeErr = rowsResult.error ?? null;
-          if (!dedupeErr) {
-            const duplicate = dedupeRows.find((row) => normalizeTextKey(String(row.text ?? "")) === normalizedIncoming);
-            if (duplicate) {
-              logger.info({
-                event: "memory_save_deduped",
-                request_id: requestId,
-                workspace_id: auth.workspaceId,
+        const rowsResult = await supabase
+          .from("memories")
+          .select("id,text,created_at")
+          .eq("workspace_id", auth.workspaceId)
+          .eq("user_id", user_id)
+          .eq("namespace", namespaceVal)
+          .gte("created_at", dedupeCutoffIso)
+          .order("created_at", { ascending: false })
+          .limit(25);
+        const dedupeRows = Array.isArray(rowsResult.data) ? rowsResult.data : [];
+        const dedupeErr = rowsResult.error ?? null;
+        if (!dedupeErr) {
+          const duplicate = dedupeRows.find((row) => normalizeTextKey(String(row.text ?? "")) === normalizedIncoming);
+          if (duplicate) {
+            logger.info({
+              event: "memory_save_deduped",
+              request_id: requestId,
+              workspace_id: auth.workspaceId,
+              memory_id: duplicate.id,
+              user_id,
+              namespace: namespaceVal,
+            });
+            return jsonResponse(
+              {
                 memory_id: duplicate.id,
-                user_id,
-                namespace: namespaceVal,
-              });
-              return jsonResponse(
-                {
-                  memory_id: duplicate.id,
-                  stored: true,
-                  deduped: true,
-                  duplicate_created_at: duplicate.created_at ?? null,
-                },
-                200,
-                rateHeaders,
-              );
-            }
+                stored: true,
+                deduped: true,
+                duplicate_created_at: duplicate.created_at ?? null,
+              },
+              200,
+              rateHeaders,
+            );
           }
         }
       } catch {
