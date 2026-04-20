@@ -207,6 +207,10 @@ Used by `apps/dashboard` with Supabase login — **cookie** session, not the API
 
 CORS: production requires `ALLOWED_ORIGINS` to include the console origin.
 
+### Memory Lab (Developer Console)
+
+The signed-in **Memory Lab** in the dashboard uses the same REST behavior as product integrations: **`POST /v1/search`**, **`POST /v1/context`**, optional **explain** and advanced routes (search history, replay, evals, context feedback) as listed in this document. Browser calls use the **dashboard session** (cookie + CSRF on writes), not `Authorization: Bearer`. In-app “copy as curl” helpers show an equivalent API-key request shape for debugging.
+
 ---
 
 ## Hosted MCP
