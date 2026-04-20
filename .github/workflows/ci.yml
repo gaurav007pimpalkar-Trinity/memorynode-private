@@ -101,6 +101,10 @@ jobs:
           bash -n scripts/verify_e2e.sh
           node --check scripts/verify_staging.mjs
           node --check scripts/beta_verify.mjs
+          node --check scripts/dashboard_build_prod_surfaces.mjs
+          node --check scripts/deploy_dashboard_pages.mjs
+          node --check scripts/verify_dashboard_pages_deploy.mjs
+          node --check scripts/dashboard_deploy_sha.mjs
           node --check examples/node-quickstart/index.mjs
           node --check examples/support-bot-minimal/index.mjs
           node --check examples/nextjs-middleware/demo.mjs
@@ -133,6 +137,8 @@ jobs:
       - name: Build
         env:
           VITE_API_BASE_URL: https://api.memorynode.ai
+          VITE_APP_SURFACE: console
+          VITE_BUILD_SHA: ${{ github.sha }}
         run: pnpm -w build
 
       - name: Dashboard quality gates (CSP/a11y/perf)
@@ -144,6 +150,8 @@ jobs:
       - name: Test (with coverage)
         env:
           VITE_API_BASE_URL: https://api.memorynode.ai
+          VITE_APP_SURFACE: console
+          VITE_BUILD_SHA: ${{ github.sha }}
         run: pnpm test:coverage
 
   db-migration-drift:

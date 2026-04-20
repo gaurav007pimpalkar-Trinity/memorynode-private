@@ -4,6 +4,7 @@
  * G1: No dash-user in dashboard (or API used by dashboard).
  * G2: No key material in browser storage — allowlist: theme, workspace_id, mn_workspace_id, mn_console_surface.
  * G3: Prod build requires VITE_API_BASE_URL (enforced by Vite plugin; this step asserts build fails when unset).
+ * G3b: Prod build requires VITE_APP_SURFACE=console|app (enforced by Vite plugin; asserts build fails when unset).
  */
 
 import { readFileSync, readdirSync } from "fs";
@@ -113,7 +114,7 @@ function runG3() {
   try {
     execSync("pnpm run build", {
       cwd: dashboardRoot,
-      env: { ...process.env, VITE_API_BASE_URL: "" },
+      env: { ...process.env, VITE_API_BASE_URL: "", VITE_APP_SURFACE: "console" },
       stdio: "pipe",
     });
     fail("G3 failed: production build succeeded without VITE_API_BASE_URL (expected failure).");
@@ -122,6 +123,27 @@ function runG3() {
       console.log("G3 passed (build correctly failed when VITE_API_BASE_URL unset).");
     } else {
       fail(`G3 failed: unexpected error running build: ${e.message}`);
+    }
+  }
+}
+
+// G3b: Assert production build fails when VITE_APP_SURFACE is unset (valid API set)
+function runG3b() {
+  console.log("G3b: Asserting dashboard prod build fails without VITE_APP_SURFACE...");
+  const env = { ...process.env, VITE_API_BASE_URL: "https://api.memorynode.ai" };
+  delete env.VITE_APP_SURFACE;
+  try {
+    execSync("pnpm run build", {
+      cwd: dashboardRoot,
+      env,
+      stdio: "pipe",
+    });
+    fail("G3b failed: production build succeeded without VITE_APP_SURFACE (expected failure).");
+  } catch (e) {
+    if (e.status === 1) {
+      console.log("G3b passed (build correctly failed when VITE_APP_SURFACE unset).");
+    } else {
+      fail(`G3b failed: unexpected error running build: ${e.message}`);
     }
   }
 }
@@ -216,6 +238,7 @@ async function main() {
   runG1();
   runG2();
   runG3();
+  runG3b();
   runG4();
   await runG5();
   process.exit(failed ? 1 : 0);

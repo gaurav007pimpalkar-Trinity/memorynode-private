@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { DashboardBuildFooter } from "./DashboardBuildFooter";
 import { adminGet, apiEnvError, userFacingErrorMessage } from "./apiClient";
 import { isFounderPath } from "./appSurface";
 import { relativeBarPercents } from "./founderChartHelpers";
@@ -384,6 +385,7 @@ export function FounderApp(): JSX.Element {
               </div>
             </>
           )}
+          <DashboardBuildFooter placement="founder" />
         </div>
       </div>
     </FounderShell>

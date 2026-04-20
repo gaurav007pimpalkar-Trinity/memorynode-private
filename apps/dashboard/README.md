@@ -65,10 +65,16 @@ Use the **anon** (not service-role) key so browser traffic is RLS-enforced. Foun
 
 ## Production build (local or CI)
 
-`vite build` requires a **non-localhost** `VITE_API_BASE_URL` in production mode.
+`vite build` in **production** mode requires:
 
-- **CI:** set `VITE_API_BASE_URL` in the workflow or host (see root `.github/workflows/ci.yml`).
-- **Local:** copy [`.env.production.example`](./.env.production.example), [`.env.console.production.example`](./.env.console.production.example), or [`.env.app.production.example`](./.env.app.production.example) to **`.env.production`** in this folder (gitignored), set your real origins, then run `pnpm build` from `apps/dashboard` or `pnpm --filter @memorynode/dashboard build` from the repo root.
+- **`VITE_API_BASE_URL`** — set and **not** localhost (the Vite plugin throws otherwise).
+- **`VITE_APP_SURFACE`** — exactly `console` or `app` (same plugin).
+- **`VITE_BUILD_SHA`** — full git commit id for `dist/version.json` (CI sets `github.sha`; locally use `git rev-parse HEAD` or set explicitly).
+
+- **CI:** root `.github/workflows/ci.yml` sets `VITE_API_BASE_URL`, `VITE_APP_SURFACE=console`, and `VITE_BUILD_SHA` for the shared workspace build.
+- **Local:** copy [`.env.production.example`](./.env.production.example), [`.env.console.production.example`](./.env.console.production.example), or [`.env.app.production.example`](./.env.app.production.example) to **`.env.production`** in this folder (gitignored), then run `pnpm build` here or `pnpm --filter @memorynode/dashboard build` from the repo root.
+
+**Both production surfaces from one checkout:** from repo root, `pnpm dashboard:build:prod-surfaces` or `pnpm dashboard:deploy:pages` (see [`docs/internal/DASHBOARD_DEPLOY.md`](../../docs/internal/DASHBOARD_DEPLOY.md)).
 
 ## Commands
 

@@ -974,6 +974,20 @@ details > summary {
   padding: 16px 20px 40px;
 }
 
+.console-build-footer {
+  flex-shrink: 0;
+  padding: 8px 20px 14px;
+  border-top: 1px solid var(--panel-border);
+  opacity: 0.88;
+}
+
+.founder-build-footer {
+  margin-top: 20px;
+  padding-top: 12px;
+  border-top: 1px solid var(--panel-border);
+  opacity: 0.88;
+}
+
 .console-celebration {
   margin-bottom: 14px;
 }

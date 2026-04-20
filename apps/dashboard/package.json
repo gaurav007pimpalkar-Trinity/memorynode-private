@@ -8,6 +8,9 @@
     "lint": "eslint src",
     "test": "vitest run --passWithNoTests",
     "build": "vite build",
+    "build:prod:surfaces": "node ../../scripts/dashboard_build_prod_surfaces.mjs",
+    "deploy:pages": "node ../../scripts/deploy_dashboard_pages.mjs",
+    "verify:pages": "node ../../scripts/verify_dashboard_pages_deploy.mjs",
     "preview": "vite preview",
     "typecheck": "tsc -b"
   },

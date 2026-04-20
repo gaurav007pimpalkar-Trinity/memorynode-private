@@ -8,6 +8,8 @@ node_modules/
 # Build & cache artifacts
 ##########
 dist/
+apps/dashboard/dist-console/
+apps/dashboard/dist-app/
 build/
 .turbo/
 .vite/

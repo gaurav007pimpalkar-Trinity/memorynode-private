@@ -1,7 +1,14 @@
-# Cloudflare Pages shared frontend config.
-# Deploy console: pnpm --filter @memorynode/dashboard build && pnpm --filter @memorynode/dashboard exec wrangler pages deploy dist --project-name=memorynode-console
-# Deploy founder app: pnpm --filter @memorynode/dashboard build && pnpm --filter @memorynode/dashboard exec wrangler pages deploy dist --project-name=memorynode-app
-# Use VITE_APP_SURFACE=console for console.memorynode.ai and VITE_APP_SURFACE=app for app.memorynode.ai.
+# Cloudflare Pages — two projects, one repo (apps/dashboard):
+#   memorynode-console → console.memorynode.ai (VITE_APP_SURFACE=console at build time)
+#   memorynode-app     → app.memorynode.ai (VITE_APP_SURFACE=app at build time)
+#
+# Recommended: from repo root, one command builds both surfaces and deploys both (same commit):
+#   pnpm dashboard:deploy:pages
+# Requires CLOUDFLARE_API_TOKEN, CLOUDFLARE_ACCOUNT_ID, VITE_API_BASE_URL, VITE_SUPABASE_* for console build.
+#
+# Legacy single-surface CLI (build dist once, then deploy):
+#   VITE_APP_SURFACE=console VITE_API_BASE_URL=https://api.memorynode.ai pnpm --filter @memorynode/dashboard build
+#   pnpm exec wrangler pages deploy apps/dashboard/dist --project-name=memorynode-console
 
 name = "memorynode-console"
 pages_build_output_dir = "./dist"

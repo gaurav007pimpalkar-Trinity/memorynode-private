@@ -6,6 +6,7 @@ import { loadWorkspaceId, persistWorkspaceId } from "./state";
 import { apiDelete, apiEnvError, apiGet, apiPatch, apiPost, ensureDashboardSession, dashboardLogout, setOnUnauthorized, userFacingErrorMessage } from "./apiClient";
 import { mapSearchResultsToRows, type MemorySearchRow, type SearchApiResult } from "./memorySearch";
 import { DeveloperNextSteps } from "./DeveloperNextSteps";
+import { DashboardBuildFooter } from "./DashboardBuildFooter";
 
 type Tab =
   | "overview"
@@ -932,6 +933,7 @@ export function App(): JSX.Element {
             </div>
           </ErrorBoundary>
         </div>
+        <DashboardBuildFooter placement="console" />
       </div>
     </div>
   );
