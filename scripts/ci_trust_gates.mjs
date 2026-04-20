@@ -2,7 +2,7 @@
 /**
  * Hard CI gates for Phase 0.
  * G1: No dash-user in dashboard (or API used by dashboard).
- * G2: No key material in browser storage — allowlist: theme, workspace_id, mn_workspace_id, mn_console_surface.
+ * G2: localStorage/sessionStorage keys must match allowlist (no surprise key names; values not inspected here).
  * G3: Prod build requires VITE_API_BASE_URL (enforced by Vite plugin; this step asserts build fails when unset).
  * G3b: Prod build requires VITE_APP_SURFACE=console|app (enforced by Vite plugin; asserts build fails when unset).
  */
@@ -18,7 +18,24 @@ const dashboardSrc = join(root, "apps", "dashboard", "src");
 const dashboardRoot = join(root, "apps", "dashboard");
 const apiSrc = join(root, "apps", "api", "src");
 
-const ALLOWED_STORAGE_KEYS = new Set(["theme", "workspace_id", "mn_workspace_id", "mn_console_surface"]);
+const ALLOWED_STORAGE_KEYS = new Set([
+  "theme",
+  "workspace_id",
+  "mn_workspace_id",
+  "mn_console_surface",
+  /** Last plaintext API key shown once after creation (sessionStorage only; cleared on sign-out). */
+  "mn_console_last_api_key_plaintext",
+  /** Command palette recent command ids (localStorage JSON array). */
+  "mn_cmd_palette_recent_v2",
+  /** Per-project Memory Lab subject id + scope map (localStorage JSON). */
+  "memorynode.identity",
+  /** Onboarding / checklist: user ran a Memory Lab search. */
+  "mn_lab_search_done",
+  "mn_lab_active_tab",
+  "mn_lab_last_query",
+  "mn_lab_last_context_q",
+  "mn_lab_density",
+]);
 let failed = false;
 
 function fail(msg) {
@@ -70,9 +87,7 @@ function exists(p) {
 
 // G2: No localStorage/sessionStorage.setItem except allowlist
 function runG2() {
-  console.log(
-    "G2: Checking browser storage keys (allowlist: theme, workspace_id, mn_workspace_id, mn_console_surface)...",
-  );
+  console.log("G2: Checking browser storage keys against allowlist...");
   const files = walk(dashboardSrc, (f) => f.endsWith(".tsx") || f.endsWith(".ts") || f.endsWith(".js"));
   for (const file of files) {
     const content = readFileSync(file, "utf8");

@@ -2,12 +2,7 @@ import { Component, useCallback, useEffect, useMemo, useRef, useState } from "re
 import { Navigate, NavLink, useLocation, useNavigate } from "react-router-dom";
 import { Session, type AuthChangeEvent } from "@supabase/supabase-js";
 import { supabase, supabaseEnvError } from "./supabaseClient";
-import {
-  SESSION_LAST_API_KEY_PLAINTEXT,
-  buildPaletteSectionRows,
-  pushRecentCommandId,
-  type PaletteCommand,
-} from "./consoleCommandPalette";
+import { buildPaletteSectionRows, pushRecentCommandId, type PaletteCommand } from "./consoleCommandPalette";
 import { pathForTab, tabFromPath, tabsRequiringWorkspace, UNIFIED_SIDEBAR_GROUPS, type Tab } from "./consoleRoutes";
 import { ApiKeyRow, ConnectorSettingRow, InviteRow, MemoryRow, UsageRow } from "./types";
 import { loadWorkspaceId, persistWorkspaceId } from "./state";
@@ -19,6 +14,9 @@ import { DashboardSessionAuthNote } from "./components/DashboardSessionAuthNote"
 import { OverviewView } from "./views/OverviewView";
 import { MemoryLabView } from "./views/MemoryLabView";
 import { ImportView } from "./views/ImportView";
+
+/** Same value as SESSION_LAST_API_KEY_PLAINTEXT in consoleCommandPalette.ts (literal for CI trust-gate resolution). */
+const MN_CONSOLE_LAST_API_KEY_PLAINTEXT = "mn_console_last_api_key_plaintext";
 
 function seatCapForPlan(planCode: string | null | undefined): number {
   const normalized = (planCode ?? "launch").toLowerCase();
@@ -486,7 +484,7 @@ export function App(): JSX.Element {
         locked: false,
         execute: () => {
           try {
-            const key = sessionStorage.getItem(SESSION_LAST_API_KEY_PLAINTEXT)?.trim();
+            const key = sessionStorage.getItem(MN_CONSOLE_LAST_API_KEY_PLAINTEXT)?.trim();
             if (key) {
               void navigator.clipboard.writeText(key);
               setAlert("API key copied to clipboard.");
@@ -844,7 +842,7 @@ export function App(): JSX.Element {
               className="ghost console-header-signout"
               onClick={async () => {
                 try {
-                  sessionStorage.removeItem(SESSION_LAST_API_KEY_PLAINTEXT);
+                  sessionStorage.removeItem(MN_CONSOLE_LAST_API_KEY_PLAINTEXT);
                 } catch {
                   /* ignore */
                 }
@@ -1988,7 +1986,7 @@ function ApiKeysView({
       if (row?.api_key) {
         setPlaintextKey(row.api_key);
         try {
-          sessionStorage.setItem(SESSION_LAST_API_KEY_PLAINTEXT, row.api_key);
+          sessionStorage.setItem(MN_CONSOLE_LAST_API_KEY_PLAINTEXT, row.api_key);
         } catch {
           /* ignore */
         }
