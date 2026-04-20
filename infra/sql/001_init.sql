@@ -26,8 +26,6 @@ create table if not exists memories (
   id uuid primary key default gen_random_uuid(),
   workspace_id uuid references workspaces(id) on delete cascade,
   user_id text not null,
-  owner_id text not null,
-  owner_type text not null default 'user',
   namespace text not null default 'default',
   text text not null,
   metadata jsonb not null default '{}'::jsonb,
@@ -39,8 +37,6 @@ create table if not exists memory_chunks (
   workspace_id uuid references workspaces(id) on delete cascade,
   memory_id uuid references memories(id) on delete cascade,
   user_id text not null,
-  owner_id text not null,
-  owner_type text not null default 'user',
   namespace text not null default 'default',
   chunk_index int not null,
   chunk_text text not null,
@@ -71,11 +67,5 @@ create index if not exists memory_chunks_tsv_idx
 create index if not exists memories_workspace_user_namespace_idx
   on memories (workspace_id, user_id, namespace);
 
-create index if not exists memories_workspace_owner_namespace_idx
-  on memories (workspace_id, owner_id, owner_type, namespace);
-
 create index if not exists memory_chunks_workspace_user_namespace_idx
   on memory_chunks (workspace_id, user_id, namespace);
-
-create index if not exists memory_chunks_workspace_owner_namespace_idx
-  on memory_chunks (workspace_id, owner_id, owner_type, namespace);
