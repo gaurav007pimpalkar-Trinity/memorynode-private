@@ -96,7 +96,8 @@ jobs:
             0|false|off|no|disabled) billing_on=0 ;;
           esac
           missing=()
-          for key in CLOUDFLARE_API_TOKEN DATABASE_URL BASE_URL MEMORYNODE_API_KEY SUPABASE_URL SUPABASE_SERVICE_ROLE_KEY API_KEY_SALT MASTER_ADMIN_TOKEN EMBEDDINGS_MODE BILLING_WEBHOOKS_ENABLED; do
+          # BILLING_WEBHOOKS_ENABLED is optional: unset/empty means billing on (see raw= above).
+          for key in CLOUDFLARE_API_TOKEN DATABASE_URL BASE_URL MEMORYNODE_API_KEY SUPABASE_URL SUPABASE_SERVICE_ROLE_KEY API_KEY_SALT MASTER_ADMIN_TOKEN EMBEDDINGS_MODE; do
             [[ -z "${!key}" ]] && missing+=("$key")
           done
           if [[ "$billing_on" -eq 1 ]]; then
@@ -192,7 +193,8 @@ jobs:
             0|false|off|no|disabled) billing_on=0 ;;
           esac
           missing=()
-          for key in CLOUDFLARE_API_TOKEN DATABASE_URL BASE_URL MEMORYNODE_API_KEY SUPABASE_URL SUPABASE_SERVICE_ROLE_KEY SUPABASE_ANON_KEY ALLOWED_ORIGINS API_KEY_SALT MASTER_ADMIN_TOKEN EMBEDDINGS_MODE RATE_LIMIT_MODE BILLING_WEBHOOKS_ENABLED; do
+          # BILLING_WEBHOOKS_ENABLED is optional: unset/empty means billing on (see raw= above).
+          for key in CLOUDFLARE_API_TOKEN DATABASE_URL BASE_URL MEMORYNODE_API_KEY SUPABASE_URL SUPABASE_SERVICE_ROLE_KEY SUPABASE_ANON_KEY ALLOWED_ORIGINS API_KEY_SALT MASTER_ADMIN_TOKEN EMBEDDINGS_MODE RATE_LIMIT_MODE; do
             [[ -z "${!key}" ]] && missing+=("$key")
           done
           if [[ "$billing_on" -eq 1 ]]; then
