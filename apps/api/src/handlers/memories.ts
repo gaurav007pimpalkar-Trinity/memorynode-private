@@ -333,7 +333,6 @@ async function extractItems(text: string, env: Env): Promise<ExtractedItem[]> {
       if (attempt < maxAttempts) {
         await new Promise((r) => setTimeout(r, delaysMs[attempt] ?? 500));
       } else {
-        const msg = err instanceof Error ? err.message : String(err);
         return deterministicExtractFallback(text);
       }
     }
