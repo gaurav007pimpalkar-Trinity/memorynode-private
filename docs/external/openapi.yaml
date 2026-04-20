@@ -642,6 +642,85 @@ components:
         - memories
         - search_requests
         - container_tags
+    ConnectorCaptureTypes:
+      type: object
+      properties:
+        pdf:
+          type: boolean
+        docx:
+          type: boolean
+        txt:
+          type: boolean
+        md:
+          type: boolean
+        html:
+          type: boolean
+        csv:
+          type: boolean
+        tsv:
+          type: boolean
+        xlsx:
+          type: boolean
+        pptx:
+          type: boolean
+        eml:
+          type: boolean
+        msg:
+          type: boolean
+    ConnectorSettingRow:
+      type: object
+      properties:
+        connector_id:
+          type: string
+        sync_enabled:
+          type: boolean
+        capture_types:
+          $ref: "#/components/schemas/ConnectorCaptureTypes"
+        updated_at:
+          type: string
+      required:
+        - connector_id
+        - sync_enabled
+        - capture_types
+        - updated_at
+    ConnectorSettingsListResponse:
+      type: object
+      properties:
+        settings:
+          type: array
+          items:
+            $ref: "#/components/schemas/ConnectorSettingRow"
+      required:
+        - settings
+    ConnectorSettingPatchResponse:
+      type: object
+      properties:
+        connector_id:
+          type: string
+        sync_enabled:
+          type: boolean
+        capture_types:
+          $ref: "#/components/schemas/ConnectorCaptureTypes"
+        updated_at:
+          type: string
+      required:
+        - connector_id
+        - sync_enabled
+        - capture_types
+        - updated_at
+    ConnectorSettingPatchPayload:
+      type: object
+      properties:
+        connector_id:
+          type: string
+          minLength: 1
+          maxLength: 120
+        sync_enabled:
+          type: boolean
+        capture_types:
+          $ref: "#/components/schemas/ConnectorCaptureTypes"
+      required:
+        - connector_id
     ImportResponse:
       type: object
       properties:
@@ -1235,6 +1314,81 @@ paths:
                 $ref: "#/components/schemas/DashboardOverviewResponse"
         "401":
           description: Unauthorized
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "500":
+          description: Server error
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+  /v1/connectors/settings:
+    get:
+      summary: List connector capture settings for the workspace
+      tags:
+        - Connectors
+      security:
+        - BearerAuth: []
+      responses:
+        "200":
+          description: Connector settings rows
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ConnectorSettingsListResponse"
+        "401":
+          description: Unauthorized
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "429":
+          description: Rate limited
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "500":
+          description: Server error
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+    patch:
+      summary: Upsert capture settings for one connector
+      tags:
+        - Connectors
+      security:
+        - BearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ConnectorSettingPatchPayload"
+      responses:
+        "200":
+          description: Updated connector row
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ConnectorSettingPatchResponse"
+        "400":
+          description: Validation error
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "401":
+          description: Unauthorized
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "429":
+          description: Rate limited
           content:
             application/json:
               schema:

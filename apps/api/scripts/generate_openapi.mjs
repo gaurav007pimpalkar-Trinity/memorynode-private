@@ -401,6 +401,54 @@ const DashboardOverviewResponse = z
   })
   .openapi("DashboardOverviewResponse");
 
+const ConnectorCaptureTypesSchema = z
+  .object({
+    pdf: z.boolean().optional(),
+    docx: z.boolean().optional(),
+    txt: z.boolean().optional(),
+    md: z.boolean().optional(),
+    html: z.boolean().optional(),
+    csv: z.boolean().optional(),
+    tsv: z.boolean().optional(),
+    xlsx: z.boolean().optional(),
+    pptx: z.boolean().optional(),
+    eml: z.boolean().optional(),
+    msg: z.boolean().optional(),
+  })
+  .openapi("ConnectorCaptureTypes");
+
+const ConnectorSettingRowSchema = z
+  .object({
+    connector_id: z.string(),
+    sync_enabled: z.boolean(),
+    capture_types: ConnectorCaptureTypesSchema,
+    updated_at: z.string(),
+  })
+  .openapi("ConnectorSettingRow");
+
+const ConnectorSettingsListResponse = z
+  .object({
+    settings: z.array(ConnectorSettingRowSchema),
+  })
+  .openapi("ConnectorSettingsListResponse");
+
+const ConnectorSettingPatchPayload = z
+  .object({
+    connector_id: z.string().min(1).max(120),
+    sync_enabled: z.boolean().optional(),
+    capture_types: ConnectorCaptureTypesSchema.optional(),
+  })
+  .openapi("ConnectorSettingPatchPayload");
+
+const ConnectorSettingPatchResponse = z
+  .object({
+    connector_id: z.string(),
+    sync_enabled: z.boolean(),
+    capture_types: ConnectorCaptureTypesSchema,
+    updated_at: z.string(),
+  })
+  .openapi("ConnectorSettingPatchResponse");
+
 // ── Billing schemas ─────────────────────────────────────────────────────────
 const BillingStatusResponse = z
   .object({
@@ -755,6 +803,47 @@ registry.registerPath({
       content: { "application/json": { schema: DashboardOverviewResponse } },
     },
     401: errorRef("Unauthorized"),
+    500: errorRef("Server error"),
+  },
+});
+
+registry.registerPath({
+  method: "get",
+  path: "/v1/connectors/settings",
+  summary: "List connector capture settings for the workspace",
+  tags: ["Connectors"],
+  security: [{ [bearerAuth.name]: [] }],
+  responses: {
+    200: {
+      description: "Connector settings rows",
+      content: { "application/json": { schema: ConnectorSettingsListResponse } },
+    },
+    401: errorRef("Unauthorized"),
+    429: errorRef("Rate limited"),
+    500: errorRef("Server error"),
+  },
+});
+
+registry.registerPath({
+  method: "patch",
+  path: "/v1/connectors/settings",
+  summary: "Upsert capture settings for one connector",
+  tags: ["Connectors"],
+  security: [{ [bearerAuth.name]: [] }],
+  request: {
+    body: {
+      required: true,
+      content: { "application/json": { schema: ConnectorSettingPatchPayload } },
+    },
+  },
+  responses: {
+    200: {
+      description: "Updated connector row",
+      content: { "application/json": { schema: ConnectorSettingPatchResponse } },
+    },
+    400: errorRef("Validation error"),
+    401: errorRef("Unauthorized"),
+    429: errorRef("Rate limited"),
     500: errorRef("Server error"),
   },
 });
