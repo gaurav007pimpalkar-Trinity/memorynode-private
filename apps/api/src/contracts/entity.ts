@@ -55,7 +55,7 @@ export function normalizeOwnerIdentity(
     };
   }
   if (ids.some((id) => id !== resolvedId)) {
-    throw new Error("user_id, owner_id, and entity_id must match when provided together");
+    throw new Error(`${fieldName}: provided identifiers must match`);
   }
   return {
     user_id: resolvedId,
