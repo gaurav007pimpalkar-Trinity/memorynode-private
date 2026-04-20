@@ -24,6 +24,9 @@ new_sqlite_classes = ["CircuitBreakerDO"]
 
 [env.staging]
 name = "memorynode-api-staging"
+routes = [
+  { pattern = "api-staging.memorynode.ai/*", zone_name = "memorynode.ai" },
+]
 [env.staging.durable_objects]
 bindings = [
   { name = "RATE_LIMIT_DO", class_name = "RateLimitDO" },

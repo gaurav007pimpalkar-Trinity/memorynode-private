@@ -18,7 +18,7 @@
  *   pnpm deploy:staging
  */
 
-import { execSync } from "node:child_process";
+import { execSync, spawnSync } from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
 
@@ -78,6 +78,46 @@ function runWrangler(args, extraEnv = {}) {
   const cmd = `pnpm exec wrangler ${args}`;
   console.log(`\n$ (apps/api) ${cmd}`);
   execSync(cmd, { stdio: "inherit", cwd: "apps/api", env: { ...process.env, ...extraEnv } });
+}
+
+/** Run wrangler with captured stdout/stderr (used after deploy to discover workers.dev URL). */
+function runWranglerCapture(args, extraEnv = {}) {
+  const cmd = `pnpm exec wrangler ${args}`;
+  console.log(`\n$ (apps/api) ${cmd}`);
+  const r = spawnSync(cmd, {
+    cwd: "apps/api",
+    env: { ...process.env, ...extraEnv },
+    encoding: "utf8",
+    maxBuffer: 50 * 1024 * 1024,
+    shell: true,
+  });
+  const combined = `${r.stdout ?? ""}\n${r.stderr ?? ""}`;
+  process.stdout.write(combined);
+  if ((r.status ?? 1) !== 0) {
+    fail(`wrangler failed (exit ${r.status ?? "unknown"})`);
+  }
+  return combined;
+}
+
+function extractWorkersDevUrl(output) {
+  const re = /https:\/\/[a-z0-9-]+(?:\.[a-z0-9-]+)?\.workers\.dev/gi;
+  const found = output.match(re) ?? [];
+  const prefer = found.find((u) => /memorynode-api-staging/i.test(u));
+  return prefer ?? (found.length ? found[found.length - 1] : null);
+}
+
+function uniqueHealthOrigins(...candidates) {
+  const seen = new Set();
+  const out = [];
+  for (const raw of candidates) {
+    const u = `${raw ?? ""}`.trim().replace(/\/$/, "");
+    if (!u) continue;
+    const key = u.toLowerCase();
+    if (seen.has(key)) continue;
+    seen.add(key);
+    out.push(u);
+  }
+  return out;
 }
 
 function resolveBuildVersion() {
@@ -234,45 +274,66 @@ async function main() {
   // Strict gate including DB migrate/verify
   run("pnpm release:gate:full", { CHECK_ENV: "staging" });
 
-  // Deploy to staging environment
-  runWrangler(`deploy --env staging --config ${path.basename(wranglerConfig)}`, {
+  // Deploy to staging environment (capture output: workers.dev URL may differ from BASE_URL)
+  const deployOutput = runWranglerCapture(`deploy --env staging --config ${path.basename(wranglerConfig)}`, {
     BUILD_VERSION: buildVersion,
   });
+  const workerDevHint = `${process.env.WORKER_STAGING_VERIFY_URL ?? ""}`.trim();
+  const workerDevUrl = workerDevHint || extractWorkersDevUrl(deployOutput);
+  if (workerDevUrl) {
+    console.log(`\n[verify] workers.dev URL from deploy output: ${workerDevUrl}`);
+  }
 
-  // Verify new version is live
-  console.log("\n[verify] polling /healthz for new version...");
+  // Verify new version is live (try workers.dev first — custom domain can lag if not routed via wrangler)
+  const verifyOrigins = uniqueHealthOrigins(workerDevUrl, baseUrl);
+  console.log(`\n[verify] polling /healthz on: ${verifyOrigins.join(", ")}`);
   let seenVersion = null;
+  let verifiedOrigin = null;
   let lastStatus = 0;
   let lastBody = "<none>";
   const attempts = 10;
-  for (let i = 0; i < attempts; i++) {
-    const res = await getHealth(baseUrl);
-    lastStatus = res.status;
-    lastBody = res?.text ?? "<none>";
-    seenVersion = res?.json?.build_version ?? res?.json?.version;
-    const stageSeen = res.json?.stage?.toLowerCase?.();
-    const stageMatch = !stageSeen || stageSeen === expectedStage;
-    if (res.ok && res.json?.status === "ok" && seenVersion === buildVersion && stageMatch) {
-      const stagePretty = res.json?.stage ?? "<unset>";
+  outer: for (let i = 0; i < attempts; i++) {
+    for (const origin of verifyOrigins) {
+      const res = await getHealth(origin);
+      lastStatus = res.status;
+      lastBody = res?.text ?? "<none>";
+      seenVersion = res?.json?.build_version ?? res?.json?.version;
+      const stageSeen = res.json?.stage?.toLowerCase?.();
+      const stageMatch = !stageSeen || stageSeen === expectedStage;
+      if (res.ok && res.json?.status === "ok" && seenVersion === buildVersion && stageMatch) {
+        verifiedOrigin = origin;
+        const stagePretty = res.json?.stage ?? "<unset>";
+        console.log(
+          ` healthz ok: origin=${origin} status=${res.status}, version=${seenVersion}, stage=${stagePretty}, attempts=${i + 1}`,
+        );
+        break outer;
+      }
+      const stageMsg = res.json?.stage ? ` stage=${res.json.stage}` : "";
       console.log(
-        ` healthz ok: status=${res.status}, version=${seenVersion}, stage=${stagePretty}, attempts=${i + 1}`,
+        ` attempt ${i + 1}/${attempts} @ ${origin}: status=${res.status}, seenVersion=${seenVersion ?? "<none>"}${stageMsg} (expect ${buildVersion}, stage=${expectedStage})`,
       );
-      break;
     }
-    const stageMsg = res.json?.stage ? ` stage=${res.json.stage}` : "";
-    console.log(
-      ` attempt ${i + 1}/${attempts}: status=${res.status}, seenVersion=${seenVersion ?? "<none>"}${stageMsg} (expect ${buildVersion}, stage=${expectedStage})`,
-    );
     await wait(3000);
   }
-  if (seenVersion !== buildVersion) {
+  if (seenVersion !== buildVersion || !verifiedOrigin) {
     fail(
       `Deployed version not observed. oldVersion=${oldVersion ?? "<none>"} lastVersion=${seenVersion ?? "<none>"} lastStatus=${lastStatus} lastBody=${lastBody}`,
     );
   }
 
-  // Post-deploy smoke
-  await smoke(baseUrl, apiKey);
+  if (verifiedOrigin.replace(/\/$/, "") !== baseUrl.replace(/\/$/, "")) {
+    const baseProbe = await getHealth(baseUrl);
+    const baseV = baseProbe.json?.build_version ?? baseProbe.json?.version;
+    if (baseV !== buildVersion) {
+      console.warn(
+        `[warn] BASE_URL still shows ${baseV ?? "<none>"} while ${verifiedOrigin} has ${buildVersion}. ` +
+          `Ensure api-staging.memorynode.ai routes to script memorynode-api-staging (staging routes in wrangler.toml).`,
+      );
+    }
+  }
+
+  // Post-deploy smoke against the origin that proved the new build (falls back to BASE_URL)
+  await smoke(verifiedOrigin, apiKey);
 
   // Optional PayU webhook test when billing is enabled and secrets are present.
   if (billingWebhooksEnabled() && process.env.PAYU_MERCHANT_KEY && process.env.PAYU_MERCHANT_SALT) {
