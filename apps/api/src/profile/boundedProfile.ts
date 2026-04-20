@@ -35,10 +35,22 @@ function isParentMemory(row: ListOutcome["results"][number]): boolean {
   return row.source_memory_id == null;
 }
 
-function rowsToProfileRows(rows: ListOutcome["results"][number][], cap: number): ContextProfileRow[] {
+/** Normalizes profile.summary list fields from JSONB (may be missing or non-array). */
+function coerceSummaryStringList(value: unknown, cap: number): string[] {
+  if (!Array.isArray(value)) return [];
+  const out: string[] = [];
+  for (const v of value) {
+    if (typeof v !== "string" || !v.trim()) continue;
+    out.push(v);
+    if (out.length >= cap) break;
+  }
+  return out;
+}
+
+function rowsToProfileRows(rows: ListOutcome["results"][number][] | undefined | null, cap: number): ContextProfileRow[] {
   const out: ContextProfileRow[] = [];
   let budget = MAX_PROFILE_JSON_CHARS;
-  for (const r of rows) {
+  for (const r of rows ?? []) {
     if (!isParentMemory(r) || !r.text?.trim()) continue;
     const text = clipText(r.text, MAX_ITEM_CHARS);
     const entryLen = text.length + 80;
@@ -78,20 +90,16 @@ export async function fetchBoundedContextProfile(
   ]);
 
   const pinnedMap = new Map<string, ListOutcome["results"][number]>();
-  for (const row of [...pinnedMeta.results, ...pinnedType.results]) {
+  for (const row of [...(pinnedMeta.results ?? []), ...(pinnedType.results ?? [])]) {
     if (!isParentMemory(row)) continue;
     if (!pinnedMap.has(row.id)) pinnedMap.set(row.id, row);
   }
   const pinnedSorted = [...pinnedMap.values()].sort((a, b) => String(b.created_at).localeCompare(String(a.created_at)));
   const profileJson = (!snapshot.error ? snapshot.data?.profile : null) as
-    | { summary?: { top_facts?: string[]; top_preferences?: string[] } }
+    | { summary?: { top_facts?: unknown; top_preferences?: unknown } }
     | null;
-  const summaryTopFacts = Array.isArray(profileJson?.summary?.top_facts)
-    ? profileJson?.summary?.top_facts.filter((v): v is string => typeof v === "string").slice(0, 4)
-    : [];
-  const summaryTopPrefs = Array.isArray(profileJson?.summary?.top_preferences)
-    ? profileJson?.summary?.top_preferences.filter((v): v is string => typeof v === "string").slice(0, 4)
-    : [];
+  const summaryTopFacts = coerceSummaryStringList(profileJson?.summary?.top_facts, 4);
+  const summaryTopPrefs = coerceSummaryStringList(profileJson?.summary?.top_preferences, 4);
   const summaryRowsFacts: ContextProfileRow[] = summaryTopFacts.map((text, idx) => ({
     memory_id: `profile-fact-${idx + 1}`,
     text: clipText(text, MAX_ITEM_CHARS),
