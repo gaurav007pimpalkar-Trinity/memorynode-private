@@ -44,6 +44,7 @@ Body:
 | effective_at | No | ISO time when the memory becomes retrievable (defaults to now). |
 | replaces_memory_id | No | When set, supersedes that memory (server links `duplicate_of` to the new row). |
 | extract | No | Defaults to **`true`**. When allowed by plan/budget, runs lightweight LLM extraction to child memories. Set **`false`** to store only the parent memory. |
+| idempotency_key | No | Optional write idempotency key for replay-safe ingest (recommended for agents/webhooks). |
 
 **Documents (phase A — client-side extract):** For PDF/DOCX, extract text in your app or worker, then `POST /v1/memories` with that text and `chunk_profile: "document"`. Optional `metadata.source: "pdf" | "docx"` helps you filter later. Server-side binary parsing is not required for this path.
 
@@ -52,6 +53,11 @@ Example: `{"userId":"user-123","scope":"myapp","text":"User loves coffee"}`
 With typing and extraction: `{"userId":"user-123","text":"I'm vegetarian and visited Paris last week","memory_type":"note","extract":true}`
 
 Response: always includes **`"stored": true`** on HTTP 200 (your row was saved). **`chunks`** is the count of search-indexed segments when embedding ran; it may be omitted when embedding was skipped (e.g. text-only ingest under global AI budget — then **`"embedding": "skipped_due_to_budget"`** appears instead). **`extraction`**: `{ "status": "run" | "degraded" | "skipped" }`; when `status` is `skipped`, a **`reason`** (and optional **`error`**) is included. Headers: **`x-extraction-status`** always; **`x-extraction-reason`** only when skipped (and not `none`).
+
+When memory intelligence is active, successful writes may also include:
+- `deduped: true` when an exact/near duplicate is reused.
+- `intelligence` object with `confidence`, `priority_score`, `priority_tier`, `auto_pinned`, and conflict status.
+- automatic `metadata.pinned=true` for high-priority memories (`pinned_auto=true` internally).
 
 ---
 
@@ -113,6 +119,8 @@ Response: List of matching memories (and optional scores). You can send `"explai
 **POST /v1/context**
 
 Same body as search (including optional `search_mode`, `min_score`, and `filters.memory_type` / `filters.filter_mode`). Response includes `context_text` (formatted text of relevant memories), `citations`, and optionally `context_blocks` (count after merging adjacent chunks). It also returns a bounded **`profile`** object (`pinned_facts`, `recent_notes`, `preferences`) and optional **`linked_memories`** (one hop from top hits via `memory_links`, capped server-side). Use this to build your AI prompt.
+
+Context assembly is budget-aware: the server prioritizes higher-value memories under a token budget and may reduce retrieval depth during cost pressure instead of failing hard.
 
 ### Profile pins
 

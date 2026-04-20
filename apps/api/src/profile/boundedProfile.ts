@@ -55,6 +55,12 @@ export async function fetchBoundedContextProfile(
   supabase: SupabaseClient,
   scope: { user_id: string; namespace: string },
 ): Promise<BoundedContextProfile> {
+  const snapshot = await supabase
+    .from("memory_profiles")
+    .select("profile")
+    .eq("workspace_id", auth.workspaceId)
+    .eq("container_tag", scope.namespace)
+    .maybeSingle();
   const base = (partial: Partial<MemoryListParams>): MemoryListParams => ({
     page: 1,
     page_size: partial.page_size ?? 20,
@@ -77,10 +83,43 @@ export async function fetchBoundedContextProfile(
     if (!pinnedMap.has(row.id)) pinnedMap.set(row.id, row);
   }
   const pinnedSorted = [...pinnedMap.values()].sort((a, b) => String(b.created_at).localeCompare(String(a.created_at)));
+  const profileJson = (!snapshot.error ? snapshot.data?.profile : null) as
+    | { summary?: { top_facts?: string[]; top_preferences?: string[] } }
+    | null;
+  const summaryTopFacts = Array.isArray(profileJson?.summary?.top_facts)
+    ? profileJson?.summary?.top_facts.filter((v): v is string => typeof v === "string").slice(0, 4)
+    : [];
+  const summaryTopPrefs = Array.isArray(profileJson?.summary?.top_preferences)
+    ? profileJson?.summary?.top_preferences.filter((v): v is string => typeof v === "string").slice(0, 4)
+    : [];
+  const summaryRowsFacts: ContextProfileRow[] = summaryTopFacts.map((text, idx) => ({
+    memory_id: `profile-fact-${idx + 1}`,
+    text: clipText(text, MAX_ITEM_CHARS),
+    memory_type: "fact",
+  }));
+  const summaryRowsPrefs: ContextProfileRow[] = summaryTopPrefs.map((text, idx) => ({
+    memory_id: `profile-pref-${idx + 1}`,
+    text: clipText(text, MAX_ITEM_CHARS),
+    memory_type: "preference",
+  }));
+  const mergedPinned = [...summaryRowsFacts, ...rowsToProfileRows(pinnedSorted, MAX_PINNED)];
+  const mergedPrefs = [...summaryRowsPrefs, ...rowsToProfileRows(prefs.results, MAX_PREFS)];
+  const dedupeRows = (rows: ContextProfileRow[], cap: number): ContextProfileRow[] => {
+    const seen = new Set<string>();
+    const out: ContextProfileRow[] = [];
+    for (const row of rows) {
+      const key = row.text.toLowerCase().trim();
+      if (!key || seen.has(key)) continue;
+      seen.add(key);
+      out.push(row);
+      if (out.length >= cap) break;
+    }
+    return out;
+  };
 
   return {
-    pinned_facts: rowsToProfileRows(pinnedSorted, MAX_PINNED),
+    pinned_facts: dedupeRows(mergedPinned, MAX_PINNED),
     recent_notes: rowsToProfileRows(notes.results, MAX_NOTES),
-    preferences: rowsToProfileRows(prefs.results, MAX_PREFS),
+    preferences: dedupeRows(mergedPrefs, MAX_PREFS),
   };
 }

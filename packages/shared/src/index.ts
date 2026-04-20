@@ -55,6 +55,8 @@ export interface AddMemoryRequest {
   effective_at?: string;
   /** Supersedes an existing memory (marks it duplicate_of the new row). */
   replaces_memory_id?: string;
+  /** Optional ingest idempotency key for repeat-safe writes. */
+  idempotency_key?: string;
 }
 
 export type ConversationRole = "user" | "assistant" | "system" | "tool";
@@ -85,6 +87,7 @@ export interface AddConversationMemoryRequest {
   extract?: boolean;
   effective_at?: string;
   replaces_memory_id?: string;
+  idempotency_key?: string;
 }
 
 export type AddConversationMemoryResponse = AddMemoryResponse;
@@ -110,6 +113,18 @@ export interface AddMemoryResponse {
   };
   /** Present when `x-safety-pii-scan: 1` was sent on the request and hints were found. */
   safety?: { pii_hints: PiiHintKind[] };
+  /** Exact or near duplicate was detected and existing memory reused. */
+  deduped?: boolean;
+  /** Optional intelligence attributes for observability/debugging. */
+  intelligence?: {
+    canonical_hash?: string;
+    confidence?: number;
+    source_weight?: number;
+    priority_score?: number;
+    priority_tier?: "cold" | "warm" | "hot" | "critical";
+    auto_pinned?: boolean;
+    conflict_state?: "none" | "candidate" | "resolved" | "superseded";
+  };
 }
 
 export interface SearchRequest {
@@ -355,6 +370,13 @@ export interface MemoryRecord {
   source_memory_id?: MemoryId | null;
   importance?: number;
   retrieval_count?: number;
+  confidence?: number;
+  source_weight?: number;
+  priority_score?: number;
+  priority_tier?: "cold" | "warm" | "hot" | "critical";
+  pinned_auto?: boolean;
+  conflict_state?: "none" | "candidate" | "resolved" | "superseded";
+  last_conflict_at?: string | null;
 }
 
 export interface ListMemoriesResponse {

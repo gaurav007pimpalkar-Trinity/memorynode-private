@@ -51,6 +51,8 @@ export const MemoryInsertSchema = z.object({
   effective_at: z.string().optional(),
   /** When set, the new memory supersedes this existing memory (marks old row duplicate_of → new id). */
   replaces_memory_id: z.string().uuid().optional(),
+  /** Optional client-provided idempotency key used to prevent duplicate ingest loops. */
+  idempotency_key: z.string().min(8).max(128).optional(),
 }).superRefine((value, ctx) => {
   const userId = value.userId?.trim() ?? value.user_id?.trim() ?? "";
   const ownerId = value.owner_id?.trim() ?? "";

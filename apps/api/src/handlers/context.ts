@@ -17,13 +17,14 @@ import {
   rateLimit,
   releaseWorkspaceConcurrencySlot,
 } from "../auth.js";
-import { getRouteRateLimitMax } from "../limits.js";
+import { getRouteRateLimitMax, MCP_CONTEXT_BUDGET_CHARS } from "../limits.js";
 import type { HandlerDeps } from "../router.js";
 import type { SearchHandlerDeps } from "./search.js";
 import { SearchPayloadSchema, parseWithSchema } from "../contracts/index.js";
 import { requireWorkspaceId } from "../supabaseScoped.js";
 import { enforceIsolation } from "../middleware/isolation.js";
 import { logger } from "../logger.js";
+import { budgetContextBlocks, applyCostAwareRetrievalCap } from "../search/contextBudget.js";
 
 export type ContextHandlerDeps = SearchHandlerDeps;
 
@@ -246,6 +247,22 @@ export function createContextHandlers(
       parseResult.data.user_id = isolationResolution.isolation.ownerId;
       parseResult.data.owner_id = isolationResolution.isolation.ownerId;
       parseResult.data.namespace = isolationResolution.isolation.containerTag;
+      const usageToday = await supabase
+        .from("usage_daily")
+        .select("reads")
+        .eq("workspace_id", auth.workspaceId)
+        .eq("day", d.todayUtc())
+        .maybeSingle();
+      const readsToday = Number((usageToday.data as { reads?: number } | null)?.reads ?? 0);
+      const readCap = Math.max(1, quota.planLimits.reads_per_day);
+      const budgetPressure = Math.min(1, readsToday / readCap);
+      const cappedRetrieval = applyCostAwareRetrievalCap({
+        requestedTopK: parseResult.data.top_k,
+        requestedPageSize: parseResult.data.page_size,
+        budgetPressure,
+      });
+      if (cappedRetrieval.topK !== undefined) parseResult.data.top_k = cappedRetrieval.topK;
+      if (cappedRetrieval.pageSize !== undefined) parseResult.data.page_size = cappedRetrieval.pageSize;
 
       const searchMode = parseResult.data.search_mode ?? "hybrid";
       const stage = (env.ENVIRONMENT ?? env.NODE_ENV ?? "dev").toLowerCase();
@@ -309,12 +326,18 @@ export function createContextHandlers(
         throw err;
       }
       const blocks = assembleSmartContext(outcome.results);
+      const budgetedBlocks = budgetContextBlocks(blocks, {
+        maxTokens: Math.max(180, Math.floor(MCP_CONTEXT_BUDGET_CHARS / 4)),
+        fallbackScore: 0.72,
+        confidence: 0.66,
+        priorityScore: 0.68,
+      });
 
       const lines: string[] = [];
       const citations: { i: number; chunk_id: string; memory_id: string; chunk_index: number }[] = [];
 
       let citationIdx = 1;
-      for (const block of blocks) {
+      for (const block of budgetedBlocks) {
         lines.push(`[-${citationIdx}-] ${block.text}`);
         for (let j = 0; j < block.chunk_ids.length; j++) {
           citations.push({
@@ -383,7 +406,7 @@ export function createContextHandlers(
         {
           context_text: lines.join("\n\n"),
           citations,
-          context_blocks: blocks.length,
+          context_blocks: budgetedBlocks.length,
           /** total/has_more reflect the underlying search result set before merge/dedup. */
           page: outcome.page,
           page_size: outcome.page_size,

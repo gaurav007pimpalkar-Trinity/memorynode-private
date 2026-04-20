@@ -40,6 +40,19 @@ import { checkGlobalCostGuard, AIBudgetExceededError } from "../costGuard.js";
 import { decideExtraction, type ExtractionSkipReason } from "../memories/extractionPolicy.js";
 import { logger } from "../logger.js";
 import { enforceIsolation } from "../middleware/isolation.js";
+import {
+  computeIntelligenceScore,
+  deterministicExtractFallback,
+  normalizeExtractedCandidates,
+  normalizeTextForMemoryKey,
+  semanticFingerprintFromText,
+  estimateNoveltyScore,
+  deriveSourceWeight,
+  type ConflictState,
+} from "../memories/intelligence.js";
+import { createMemoryRevision, detectAndResolveConflict } from "../memories/conflictResolution.js";
+import { evaluateIngestAbuse, writeIngestControlEvent } from "../memories/ingestAbuse.js";
+import { updateProfileSnapshot } from "../profile/profileSynthesis.js";
 
 export type { MemoryInsertPayload } from "../contracts/index.js";
 
@@ -86,6 +99,13 @@ export interface ListOutcome {
     created_at: string;
     memory_type?: string | null;
     source_memory_id?: string | null;
+    confidence?: number;
+    source_weight?: number;
+    priority_score?: number;
+    priority_tier?: "cold" | "warm" | "hot" | "critical";
+    pinned_auto?: boolean;
+    conflict_state?: ConflictState;
+    last_conflict_at?: string | null;
   }[];
   total: number;
   page: number;
@@ -206,6 +226,12 @@ function normalizeTextKey(input: string): string {
   return input.toLowerCase().replace(/\s+/g, " ").trim();
 }
 
+async function sha256Hex(input: string): Promise<string> {
+  const bytes = new TextEncoder().encode(input);
+  const digest = await crypto.subtle.digest("SHA-256", bytes);
+  return [...new Uint8Array(digest)].map((b) => b.toString(16).padStart(2, "0")).join("");
+}
+
 function shouldAutoSaveMemory(args: { text: string; memoryType?: string; metadata?: Record<string, unknown> }): boolean {
   const text = args.text.trim();
   if (text.length < 24) return false;
@@ -232,6 +258,7 @@ Output: [{"text":"User loves Thai food","memory_type":"preference"},{"text":"Use
 interface ExtractedItem {
   text: string;
   memory_type: MemoryType;
+  confidence?: number;
 }
 
 /**
@@ -296,20 +323,9 @@ async function extractItems(text: string, env: Env): Promise<ExtractedItem[]> {
       };
       const raw = json.choices?.[0]?.message?.content?.trim() ?? "";
       const parsed = JSON.parse(raw);
-      if (!Array.isArray(parsed)) return [];
-      const valid: ExtractedItem[] = [];
-      for (const item of parsed) {
-        if (
-          typeof item === "object" && item &&
-          typeof item.text === "string" && item.text.length > 0 &&
-          typeof item.memory_type === "string" &&
-          ["fact", "preference", "event"].includes(item.memory_type)
-        ) {
-          valid.push({ text: item.text, memory_type: item.memory_type as MemoryType });
-        }
-        if (valid.length >= MAX_EXTRACT_ITEMS) break;
-      }
-      return valid;
+      if (!Array.isArray(parsed)) return deterministicExtractFallback(text);
+      const valid = normalizeExtractedCandidates(parsed).slice(0, MAX_EXTRACT_ITEMS);
+      return valid.length > 0 ? valid : deterministicExtractFallback(text);
     } catch (err) {
       clearTimeout(timeoutId);
       lastError = err;
@@ -318,12 +334,12 @@ async function extractItems(text: string, env: Env): Promise<ExtractedItem[]> {
         await new Promise((r) => setTimeout(r, delaysMs[attempt] ?? 500));
       } else {
         const msg = err instanceof Error ? err.message : String(err);
-        throw createHttpError(503, "EXTRACTION_ERROR", `Extraction failed: ${msg}`);
+        return deterministicExtractFallback(text);
       }
     }
   }
-  const msg = lastError instanceof Error ? lastError.message : String(lastError);
-  throw createHttpError(503, "EXTRACTION_ERROR", `Extraction failed: ${msg}`);
+  void lastError;
+  return deterministicExtractFallback(text);
 }
 
 /**
@@ -362,6 +378,16 @@ async function extractAndStore(
       const chunks = d.chunkText(item.text);
       const embedResult = await d.embedText(chunks, env);
       const embeddings = embedResult.embeddings;
+      const normalized = normalizeTextForMemoryKey(item.text);
+      const canonicalHash = await sha256Hex(`${workspaceId}:${ownerId}:${namespace}:${item.memory_type}:${normalized}`);
+      const sourceWeight = 0.9;
+      const intelligence = computeIntelligenceScore({
+        text: item.text,
+        memoryType: item.memory_type,
+        extractionConfidence: item.confidence ?? 0.62,
+        sourceWeight,
+        noveltyScore: 0.6,
+      });
 
       const { data: childInsert, error: childError } = await supabase
         .from("memories")
@@ -376,6 +402,15 @@ async function extractAndStore(
           memory_type: item.memory_type,
           source_memory_id: sourceMemoryId,
           effective_at: effectiveAtIso,
+          canonical_hash: canonicalHash,
+          semantic_fingerprint: semanticFingerprintFromText(item.text),
+          confidence: intelligence.confidence,
+          source_weight: sourceWeight,
+          priority_score: intelligence.priorityScore,
+          priority_tier: intelligence.priorityTier,
+          pinned_auto: false,
+          conflict_state: "none",
+          importance: Math.max(0.2, 0.8 + intelligence.priorityScore * 1.3),
         })
         .select("id")
         .single();
@@ -567,6 +602,7 @@ export function createMemoryHandlers(
         chunk_profile,
         replaces_memory_id,
         effective_at: effectiveAtRaw,
+        idempotency_key,
       } = parseResult.data;
       const ownerId = isolationResolution.isolation.ownerId;
       const ownerType = owner_type ?? "user";
@@ -614,6 +650,12 @@ export function createMemoryHandlers(
       if (replaces_memory_id) {
         metadataOut.supersedes = replaces_memory_id;
       }
+      const normalizedIncoming = normalizeTextForMemoryKey(text);
+      const semanticFingerprint = semanticFingerprintFromText(text);
+      const canonicalHash = await sha256Hex(
+        `${auth.workspaceId}:${ownerId}:${namespaceVal}:${memory_type ?? "note"}:${normalizedIncoming}`,
+      );
+      const sourceWeight = deriveSourceWeight(metadataOut);
       const strictAutosaveMode = metadata?.autosave_mode === "strict";
       const attachmentType = typeof metadata?.attachment_type === "string" ? metadata.attachment_type.toLowerCase() : null;
       if (attachmentType && BANNED_ATTACHMENT_TYPES.has(attachmentType)) {
@@ -664,8 +706,101 @@ export function createMemoryHandlers(
       }
 
       const dedupeCutoffIso = new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString();
-      const normalizedIncoming = normalizeTextKey(text);
+      const abuse = await evaluateIngestAbuse(supabase, {
+        workspaceId: auth.workspaceId,
+        userId: ownerId,
+        namespace: namespaceVal,
+        canonicalHash,
+        semanticFingerprint,
+        idempotencyKey: idempotency_key,
+        textLength: text.length,
+      });
       try {
+        await writeIngestControlEvent(supabase, {
+          workspaceId: auth.workspaceId,
+          userId: ownerId,
+          namespace: namespaceVal,
+          canonicalHash,
+          semanticFingerprint,
+          idempotencyKey: idempotency_key,
+          textLength: text.length,
+          decision: abuse.decision,
+          eventType: "ingest_precheck",
+          metadata: { reason: abuse.reason ?? null },
+        });
+      } catch {
+        // Best-effort telemetry; ingest should not fail if telemetry table is unavailable.
+      }
+      if (abuse.decision === "reject") {
+        if (abuse.reason === "idempotency_replay" && abuse.existingMemoryId) {
+          return jsonResponse(
+            { memory_id: abuse.existingMemoryId, stored: true, deduped: true, reason: abuse.reason },
+            200,
+            rateHeaders,
+          );
+        }
+        return jsonResponse(
+          { error: { code: "INGEST_REJECTED", message: abuse.reason ?? "Ingest rejected by abuse controls." } },
+          429,
+          rateHeaders,
+        );
+      }
+      if (abuse.decision === "throttle") {
+        return jsonResponse(
+          { error: { code: "INGEST_THROTTLED", message: abuse.reason ?? "Ingest throttled due to abnormal pattern." } },
+          429,
+          rateHeaders,
+        );
+      }
+
+      try {
+        const byHash = await supabase
+          .from("memories")
+          .select("id,created_at")
+          .eq("workspace_id", auth.workspaceId)
+          .eq("user_id", ownerId)
+          .eq("namespace", namespaceVal)
+          .eq("canonical_hash", canonicalHash)
+          .is("duplicate_of", null)
+          .order("created_at", { ascending: false })
+          .limit(1)
+          .maybeSingle();
+        if (!byHash.error && byHash.data?.id) {
+          return jsonResponse(
+            {
+              memory_id: byHash.data.id,
+              stored: true,
+              deduped: true,
+              duplicate_created_at: byHash.data.created_at ?? null,
+            },
+            200,
+            rateHeaders,
+          );
+        }
+        const nearMatch = await supabase
+          .from("memories")
+          .select("id,created_at")
+          .eq("workspace_id", auth.workspaceId)
+          .eq("user_id", ownerId)
+          .eq("namespace", namespaceVal)
+          .eq("semantic_fingerprint", semanticFingerprint)
+          .is("duplicate_of", null)
+          .order("created_at", { ascending: false })
+          .limit(1)
+          .maybeSingle();
+        if (!nearMatch.error && nearMatch.data?.id) {
+          return jsonResponse(
+            {
+              memory_id: nearMatch.data.id,
+              stored: true,
+              deduped: true,
+              duplicate_created_at: nearMatch.data.created_at ?? null,
+              dedupe_kind: "near",
+            },
+            200,
+            rateHeaders,
+          );
+        }
         const rowsResult = await supabase
           .from("memories")
           .select("id,text,created_at")
@@ -674,20 +809,11 @@ export function createMemoryHandlers(
           .eq("namespace", namespaceVal)
           .gte("created_at", dedupeCutoffIso)
           .order("created_at", { ascending: false })
-          .limit(25);
+          .limit(30);
         const dedupeRows = Array.isArray(rowsResult.data) ? rowsResult.data : [];
-        const dedupeErr = rowsResult.error ?? null;
-        if (!dedupeErr) {
+        if (!rowsResult.error) {
           const duplicate = dedupeRows.find((row) => normalizeTextKey(String(row.text ?? "")) === normalizedIncoming);
           if (duplicate) {
-            logger.info({
-              event: "memory_save_deduped",
-              request_id: requestId,
-              workspace_id: auth.workspaceId,
-              memory_id: duplicate.id,
-              owner_id: ownerId,
-              namespace: namespaceVal,
-            });
             return jsonResponse(
               {
                 memory_id: duplicate.id,
@@ -718,6 +844,34 @@ export function createMemoryHandlers(
       const stage = (env.ENVIRONMENT ?? env.NODE_ENV ?? "dev").toLowerCase();
       const enforceDegradedBlocks = stage === "production" || stage === "prod" || stage === "staging";
       const planCode = String((quota as { effectivePlan?: string }).effectivePlan ?? "launch").toLowerCase();
+      let recentNormalizedTexts: string[] = [];
+      try {
+        const recentNoveltyRows = await supabase
+          .from("memories")
+          .select("text")
+          .eq("workspace_id", auth.workspaceId)
+          .eq("user_id", ownerId)
+          .eq("namespace", namespaceVal)
+          .order("created_at", { ascending: false })
+          .limit(20);
+        recentNormalizedTexts = Array.isArray(recentNoveltyRows.data)
+          ? recentNoveltyRows.data.map((r) => normalizeTextForMemoryKey(String((r as { text?: unknown }).text ?? "")))
+          : [];
+      } catch {
+        recentNormalizedTexts = [];
+      }
+      const noveltyScore = estimateNoveltyScore(text, recentNormalizedTexts);
+      const intelligence = computeIntelligenceScore({
+        text,
+        memoryType: memory_type ?? "note",
+        importance,
+        sourceWeight,
+        noveltyScore,
+      });
+      const effectiveImportance = importance ?? Math.max(0.2, 0.8 + intelligence.priorityScore * 1.4);
+      if (intelligence.shouldAutoPin) {
+        metadataOut.pinned = true;
+      }
 
       const extractionPolicy = await decideExtraction({
         extractRequested: extract,
@@ -826,7 +980,15 @@ export function createMemoryHandlers(
               metadata: metadataOut,
               effective_at: effectiveAtIso,
               ...(memory_type ? { memory_type } : {}),
-              ...(importance !== undefined ? { importance } : {}),
+              importance: effectiveImportance,
+              canonical_hash: canonicalHash,
+              semantic_fingerprint: semanticFingerprint,
+              confidence: intelligence.confidence,
+              source_weight: intelligence.sourceWeight,
+              priority_score: intelligence.priorityScore,
+              priority_tier: intelligence.priorityTier,
+              pinned_auto: intelligence.shouldAutoPin,
+              conflict_state: "none",
             })
             .select("id")
             .single();
@@ -864,6 +1026,39 @@ export function createMemoryHandlers(
               .is("duplicate_of", null);
           }
 
+          try {
+            await createMemoryRevision(supabase, {
+              workspaceId: auth.workspaceId,
+              memoryId: textOnlyMemoryId,
+              text,
+              metadata: metadataOut,
+              reason: "ingest_create",
+              source: "api",
+            });
+          } catch {
+            // Backward compatible path when revision table is not present.
+          }
+          let textOnlyConflict = { hasConflict: false };
+          try {
+            textOnlyConflict = await detectAndResolveConflict(supabase, {
+              workspaceId: auth.workspaceId,
+              userId: ownerId,
+              namespace: namespaceVal,
+              newMemoryId: textOnlyMemoryId,
+              newText: text,
+              memoryType: memory_type ?? "note",
+              confidence: intelligence.confidence,
+              sourceWeight: intelligence.sourceWeight,
+            });
+          } catch {
+            textOnlyConflict = { hasConflict: false };
+          }
+          void updateProfileSnapshot(supabase, {
+            workspaceId: auth.workspaceId,
+            containerTag: namespaceVal,
+            userId: ownerId,
+          }).catch(() => {});
+
           void d.emitProductEvent(
             supabase,
             "first_ingest_success",
@@ -896,6 +1091,15 @@ export function createMemoryHandlers(
             stored: true,
             embedding: "skipped_due_to_budget",
             extraction: { status: "skipped", reason: "budget_limit" },
+            intelligence: {
+              canonical_hash: canonicalHash,
+              confidence: intelligence.confidence,
+              source_weight: intelligence.sourceWeight,
+              priority_score: intelligence.priorityScore,
+              priority_tier: intelligence.priorityTier,
+              auto_pinned: intelligence.shouldAutoPin,
+              conflict_state: textOnlyConflict.hasConflict ? "resolved" : "none",
+            },
             ...(replaces_memory_id ? { superseded_memory_id: replaces_memory_id } : {}),
           };
 
@@ -987,7 +1191,15 @@ export function createMemoryHandlers(
           metadata: metadataOut,
           effective_at: effectiveAtIso,
           ...(memory_type ? { memory_type } : {}),
-          ...(importance !== undefined ? { importance } : {}),
+          importance: effectiveImportance,
+          canonical_hash: canonicalHash,
+          semantic_fingerprint: semanticFingerprint,
+          confidence: intelligence.confidence,
+          source_weight: intelligence.sourceWeight,
+          priority_score: intelligence.priorityScore,
+          priority_tier: intelligence.priorityTier,
+          pinned_auto: intelligence.shouldAutoPin,
+          conflict_state: "none",
         })
         .select("id")
         .single();
@@ -1052,6 +1264,39 @@ export function createMemoryHandlers(
             .eq("namespace", namespaceVal)
             .is("duplicate_of", null);
         }
+
+        try {
+          await createMemoryRevision(supabase, {
+            workspaceId: auth.workspaceId,
+            memoryId,
+            text,
+            metadata: metadataOut,
+            reason: replaces_memory_id ? "ingest_replaces_memory" : "ingest_create",
+            source: "api",
+          });
+        } catch {
+          // Backward compatible path when revision table is not present.
+        }
+        let conflictOutcome = { hasConflict: false };
+        try {
+          conflictOutcome = await detectAndResolveConflict(supabase, {
+            workspaceId: auth.workspaceId,
+            userId: ownerId,
+            namespace: namespaceVal,
+            newMemoryId: memoryId,
+            newText: text,
+            memoryType: memory_type ?? "note",
+            confidence: intelligence.confidence,
+            sourceWeight: intelligence.sourceWeight,
+          });
+        } catch {
+          conflictOutcome = { hasConflict: false };
+        }
+        void updateProfileSnapshot(supabase, {
+          workspaceId: auth.workspaceId,
+          containerTag: namespaceVal,
+          userId: ownerId,
+        }).catch(() => {});
 
         let extractionResult: { children_created: number; skipped: boolean; error?: string } | undefined;
         let extractionFinalStatus: "run" | "degraded" | "skipped" = "skipped";
@@ -1153,6 +1398,15 @@ export function createMemoryHandlers(
           memory_id: memoryId,
           stored: true,
           chunks: rows.length,
+          intelligence: {
+            canonical_hash: canonicalHash,
+            confidence: intelligence.confidence,
+            source_weight: intelligence.sourceWeight,
+            priority_score: intelligence.priorityScore,
+            priority_tier: intelligence.priorityTier,
+            auto_pinned: intelligence.shouldAutoPin,
+            conflict_state: conflictOutcome.hasConflict ? "resolved" : "none",
+          },
           ...(replaces_memory_id ? { superseded_memory_id: replaces_memory_id } : {}),
         };
         const extractionPayload: Record<string, unknown> = { status: extractionFinalStatus };
@@ -1226,6 +1480,7 @@ export function createMemoryHandlers(
       if (p.importance !== undefined) body.importance = p.importance;
       if (p.effective_at?.trim()) body.effective_at = p.effective_at.trim();
       if (p.replaces_memory_id) body.replaces_memory_id = p.replaces_memory_id;
+      if (p.idempotency_key) body.idempotency_key = p.idempotency_key;
       const memUrl = new URL("/v1/memories", request.url);
       const forwarded = new Request(memUrl.toString(), {
         method: "POST",

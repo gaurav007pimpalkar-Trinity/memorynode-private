@@ -36,6 +36,7 @@ export const ConversationInsertSchema = z
     extract: z.boolean().default(true),
     effective_at: z.string().optional(),
     replaces_memory_id: z.string().uuid().optional(),
+    idempotency_key: z.string().min(8).max(128).optional(),
   })
   .superRefine((value, ctx) => {
     const hasTranscript = Boolean(value.transcript?.trim());

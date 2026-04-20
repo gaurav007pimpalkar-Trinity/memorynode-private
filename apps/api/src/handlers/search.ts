@@ -15,6 +15,7 @@ import { requireWorkspaceId } from "../supabaseScoped.js";
 import type { QuotaResolutionLike } from "./memories.js";
 import { enforceIsolation } from "../middleware/isolation.js";
 import type { BoundedContextProfile } from "../profile/boundedProfile.js";
+import { applyCostAwareRetrievalCap } from "../search/contextBudget.js";
 
 export type { SearchPayload } from "../contracts/index.js";
 
@@ -231,6 +232,21 @@ export function createSearchHandlers(
       parseResult.data.user_id = isolationResolution.isolation.ownerId;
       parseResult.data.owner_id = isolationResolution.isolation.ownerId;
       parseResult.data.namespace = isolationResolution.isolation.containerTag;
+      const usageToday = await supabase
+        .from("usage_daily")
+        .select("reads")
+        .eq("workspace_id", auth.workspaceId)
+        .eq("day", d.todayUtc())
+        .maybeSingle();
+      const readsToday = Number((usageToday.data as { reads?: number } | null)?.reads ?? 0);
+      const readCap = Math.max(1, quota.planLimits.reads_per_day);
+      const capped = applyCostAwareRetrievalCap({
+        requestedTopK: parseResult.data.top_k,
+        requestedPageSize: parseResult.data.page_size,
+        budgetPressure: Math.min(1, readsToday / readCap),
+      });
+      if (capped.topK !== undefined) parseResult.data.top_k = capped.topK;
+      if (capped.pageSize !== undefined) parseResult.data.page_size = capped.pageSize;
 
       const resolvedSearchMode = parseResult.data.search_mode ?? "hybrid";
       const stage = (env.ENVIRONMENT ?? env.NODE_ENV ?? "dev").toLowerCase();

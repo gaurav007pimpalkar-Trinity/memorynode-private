@@ -3222,6 +3222,13 @@ type ListOutcome = {
     source_memory_id?: string | null;
     importance?: number;
     retrieval_count?: number;
+    confidence?: number;
+    source_weight?: number;
+    priority_score?: number;
+    priority_tier?: "cold" | "warm" | "hot" | "critical";
+    pinned_auto?: boolean;
+    conflict_state?: "none" | "candidate" | "resolved" | "superseded";
+    last_conflict_at?: string | null;
   }[];
   total: number;
   page: number;
