@@ -77,6 +77,11 @@ export interface Env {
    * deployment that uses hosted MCP; keep out of client code. Unguessable random string (e.g. 32+ bytes hex).
    */
   MCP_INTERNAL_SECRET?: string;
+  /**
+   * Server-only token used only on internally constructed requests after a verified
+   * `POST /v1/webhooks/memory` HMAC check. Must match between webhook handler and `authenticate()`.
+   */
+  MEMORY_WEBHOOK_INTERNAL_TOKEN?: string;
   PAYU_SUCCESS_PATH?: string;
   PAYU_CANCEL_PATH?: string;
   PAYU_VERIFY_URL?: string;

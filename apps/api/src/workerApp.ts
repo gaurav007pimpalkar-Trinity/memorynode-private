@@ -49,10 +49,12 @@ import {
   createMemoryHandlers,
   type MemoryHandlerDeps,
 } from "./handlers/memories.js";
+import { createMemoryLinkHandlers, type MemoryLinkHandlerDeps } from "./handlers/memoryLinks.js";
 import {
   createSearchHandlers,
   type SearchHandlerDeps,
 } from "./handlers/search.js";
+import { fetchBoundedContextProfile as buildBoundedContextProfile } from "./profile/boundedProfile.js";
 import { createContextHandlers } from "./handlers/context.js";
 import { createContextExplainHandlers } from "./handlers/contextExplain.js";
 import { createUsageHandlers, type UsageHandlerDeps } from "./handlers/usage.js";
@@ -62,6 +64,8 @@ import { createBillingHandlers, type BillingHandlerDeps } from "./handlers/billi
 import { createWebhookHandlers, type WebhookHandlerDeps } from "./handlers/webhooks.js";
 import { createAdminHandlers, type AdminHandlerDeps } from "./handlers/admin.js";
 import { createImportHandlers, type ImportHandlerDeps, type ImportMode } from "./handlers/import.js";
+import { createIngestHandlers } from "./handlers/ingest.js";
+import { createMemoryWebhookHandlers } from "./handlers/memoryWebhook.js";
 import { createConnectorSettingsHandlers } from "./handlers/connectorSettings.js";
 import { createWorkspacesHandlers, type WorkspacesHandlerDeps } from "./handlers/workspaces.js";
 import { createApiKeysHandlers, type ApiKeysHandlerDeps } from "./handlers/apiKeys.js";
@@ -431,7 +435,16 @@ function enforceRuntimeConfigGuards(env: Env): void {
 
 function resolveBodyLimit(method: string, path: string, env: Env): number {
   const base = Number(env.MAX_BODY_BYTES ?? DEFAULT_MAX_BODY_BYTES);
-  if (method === "POST" && path === "/v1/memories") return Math.min(base, MEMORIES_MAX_BODY_BYTES);
+  if (method === "POST" && (path === "/v1/memories" || path === "/v1/memories/conversation")) {
+    return Math.min(base, MEMORIES_MAX_BODY_BYTES);
+  }
+  if (method === "POST" && path === "/v1/webhooks/memory") {
+    return Math.min(base, MEMORIES_MAX_BODY_BYTES);
+  }
+  if (method === "POST" && path === "/v1/ingest") {
+    const importCap = Number(env.MAX_IMPORT_BYTES ?? DEFAULT_MAX_IMPORT_BYTES);
+    return Math.min(base, Math.max(MEMORIES_MAX_BODY_BYTES, importCap));
+  }
   if (method === "POST" && (path === "/v1/mcp" || path === "/mcp")) return Math.min(base, 262_144);
   if (
     method === "POST" &&
@@ -445,8 +458,12 @@ function resolveBodyLimit(method: string, path: string, env: Env): number {
       path === "/v1/evals/run")
   )
     return Math.min(base, SEARCH_MAX_BODY_BYTES);
+  if (method === "PATCH" && path === "/v1/profile/pins") return Math.min(base, SEARCH_MAX_BODY_BYTES);
   if (path === "/v1/connectors/settings" && (method === "GET" || method === "PATCH")) {
     return Math.min(base, SEARCH_MAX_BODY_BYTES);
+  }
+  if (method === "POST" && /^\/v1\/memories\/[^/]+\/links$/.test(path)) {
+    return Math.min(base, MEMORIES_MAX_BODY_BYTES);
   }
   if (method === "POST" && path === "/v1/import") return Number(env.MAX_IMPORT_BYTES ?? DEFAULT_MAX_IMPORT_BYTES);
   if (method === "POST" && (path === "/v1/workspaces" || path === "/v1/api-keys" || path === "/v1/api-keys/revoke"))
@@ -461,6 +478,9 @@ const KNOWN_PATH_ALLOWED_METHODS: Array<{ test: (path: string) => boolean; allow
   { test: (p) => p === "/v1/health", allow: "GET" },
   { test: (p) => p === "/v1/mcp" || p === "/mcp", allow: "GET, POST, DELETE" },
   { test: (p) => p === "/v1/memories", allow: "GET, POST" },
+  { test: (p) => p === "/v1/memories/conversation", allow: "POST" },
+  { test: (p) => p === "/v1/ingest", allow: "POST" },
+  { test: (p) => /^\/v1\/memories\/[^/]+\/links$/.test(p), allow: "POST, DELETE" },
   { test: (p) => /^\/v1\/memories\/[^/]+$/.test(p), allow: "GET, DELETE" },
   { test: (p) => p === "/v1/search/history", allow: "GET" },
   { test: (p) => p === "/v1/search/replay", allow: "POST" },
@@ -471,6 +491,7 @@ const KNOWN_PATH_ALLOWED_METHODS: Array<{ test: (path: string) => boolean; allow
   { test: (p) => /^\/v1\/evals\/items\/[^/]+$/.test(p), allow: "DELETE" },
   { test: (p) => p === "/v1/evals/run", allow: "POST" },
   { test: (p) => p === "/v1/context", allow: "POST" },
+  { test: (p) => p === "/v1/profile/pins", allow: "PATCH" },
   { test: (p) => p === "/v1/context/explain", allow: "GET" },
   { test: (p) => p === "/v1/context/feedback", allow: "POST" },
   { test: (p) => p === "/v1/pruning/metrics", allow: "GET" },
@@ -481,6 +502,7 @@ const KNOWN_PATH_ALLOWED_METHODS: Array<{ test: (path: string) => boolean; allow
   { test: (p) => p === "/v1/billing/status", allow: "GET" },
   { test: (p) => p === "/v1/billing/checkout", allow: "POST" },
   { test: (p) => p === "/v1/billing/portal", allow: "POST" },
+  { test: (p) => p === "/v1/webhooks/memory", allow: "POST" },
   { test: (p) => p === "/v1/billing/webhook", allow: "POST" },
   { test: (p) => p === "/v1/workspaces", allow: "POST" },
   { test: (p) => p === "/v1/api-keys", allow: "GET, POST" },
@@ -937,6 +959,9 @@ async function handleRequestImpl(request: Request, env: Env): Promise<Response> 
         deleteMemoryCascade,
         checkCapsAndMaybeRespond,
         performSearch,
+        fetchBoundedContextProfile: (auth, supabase, scope) =>
+          buildBoundedContextProfile(performListMemories, auth, supabase, scope),
+        expandContextLinkedMemories,
         getUsage,
         resolveQuotaForWorkspace,
         reserveQuotaAndMaybeRespond,
@@ -987,6 +1012,19 @@ async function handleRequestImpl(request: Request, env: Env): Promise<Response> 
         setStubApiKeyIfPresent,
       };
       const memoryHandlers = createMemoryHandlers(handlerDeps, defaultMemoryHandlerDeps);
+      const memoryLinkHandlers = createMemoryLinkHandlers({
+        jsonResponse,
+        resolveQuotaForWorkspace,
+        reserveQuotaAndMaybeRespond,
+        markUsageReservationCommitted,
+        markUsageReservationRefundPending,
+        todayUtc,
+        getMemoryByIdScoped,
+      } satisfies MemoryLinkHandlerDeps);
+      const memoryWebhookHandlers = createMemoryWebhookHandlers({
+        jsonResponse,
+        handleCreateMemory: memoryHandlers.handleCreateMemory,
+      });
       const searchHandlers = createSearchHandlers(handlerDeps, defaultSearchHandlerDeps);
       const contextHandlers = createContextHandlers(handlerDeps, defaultSearchHandlerDeps);
       const contextExplainHandlers = createContextExplainHandlers(handlerDeps, defaultSearchHandlerDeps);
@@ -997,6 +1035,12 @@ async function handleRequestImpl(request: Request, env: Env): Promise<Response> 
       const webhookHandlers = createWebhookHandlers(handlerDeps, defaultWebhookHandlerDeps);
       const adminHandlers = createAdminHandlers(handlerDeps, defaultAdminHandlerDeps);
       const importHandlers = createImportHandlers(handlerDeps, defaultImportHandlerDeps);
+      const ingestHandlers = createIngestHandlers({
+        jsonResponse,
+        handleCreateMemory: memoryHandlers.handleCreateMemory,
+        handleCreateConversation: memoryHandlers.handleCreateConversation,
+        handleImport: importHandlers.handleImport,
+      });
       const connectorSettingsHandlers = createConnectorSettingsHandlers(handlerDeps, { jsonResponse });
       const workspacesHandlers = createWorkspacesHandlers(handlerDeps, defaultWorkspacesHandlerDeps);
       const apiKeysHandlers = createApiKeysHandlers(handlerDeps, defaultApiKeysHandlerDeps);
@@ -1017,12 +1061,15 @@ async function handleRequestImpl(request: Request, env: Env): Promise<Response> 
       const routed = await route(request, env, supabase, url, auditCtx, requestId, {
         handlers: {
           ...memoryHandlers,
+          ...memoryLinkHandlers,
+          ...ingestHandlers,
           ...searchHandlers,
           ...contextHandlers,
           ...contextExplainHandlers,
           ...usageHandlers,
           ...auditLogHandlers,
           ...dashboardOverviewHandlers,
+          ...memoryWebhookHandlers,
           ...billingHandlers,
           ...webhookHandlers,
           ...adminHandlers,
@@ -1113,16 +1160,29 @@ export { createSupabaseClient };
 function classifyRouteGroup(pathname: string): string {
   if (pathname === "/healthz" || pathname === "/ready" || pathname === "/ready/") return "health";
   if (pathname === "/v1/health") return "health";
-  if (pathname === "/v1/memories" || /^\/v1\/memories\/[^/]+$/.test(pathname)) return "memories";
+  if (
+    pathname === "/v1/memories" ||
+    pathname === "/v1/memories/conversation" ||
+    pathname === "/v1/ingest" ||
+    /^\/v1\/memories\/[^/]+\/links$/.test(pathname) ||
+    /^\/v1\/memories\/[^/]+$/.test(pathname)
+  )
+    return "memories";
   if (pathname === "/v1/search" || pathname === "/v1/search/history" || pathname === "/v1/search/replay")
     return "search";
   if (pathname.startsWith("/v1/evals/")) return "evals";
-  if (pathname === "/v1/context" || pathname === "/v1/context/explain" || pathname === "/v1/context/feedback")
+  if (
+    pathname === "/v1/context" ||
+    pathname === "/v1/context/explain" ||
+    pathname === "/v1/context/feedback" ||
+    pathname === "/v1/profile/pins"
+  )
     return "context";
   if (pathname === "/v1/pruning/metrics") return "pruning";
   if (pathname === "/v1/explain/answer") return "explain";
   if (pathname === "/v1/usage/today" || pathname === "/v1/audit/log") return "usage";
   if (pathname.startsWith("/v1/dashboard/")) return "dashboard";
+  if (pathname === "/v1/webhooks/memory") return "billing";
   if (pathname.startsWith("/v1/billing/")) return "billing";
   if (pathname === "/v1/workspaces") return "workspaces";
   if (pathname.startsWith("/v1/api-keys")) return "api_keys";
@@ -1381,13 +1441,14 @@ function createSupabaseClient(env: Env): SupabaseClient {
 }
 
 type StubRow = Record<string, unknown>;
-type StubFilter = { col: string; val: unknown; op: "eq" | "in" | "contains" | "gte" | "lte" | "lt" };
+type StubFilter = { col: string; val: unknown; op: "eq" | "in" | "contains" | "gte" | "lte" | "lt" | "is" };
 
 let stubState: {
   db: {
     workspaces: StubRow[];
     api_keys: StubRow[];
     memories: StubRow[];
+    memory_links: StubRow[];
     memory_chunks: StubRow[];
     usage_daily: StubRow[];
     usage_daily_v2: StubRow[];
@@ -1403,6 +1464,7 @@ let stubState: {
     api_request_events: StubRow[];
     payu_webhook_events: StubRow[];
     payu_transactions: StubRow[];
+    memory_ingest_webhooks: StubRow[];
     dashboard_sessions: StubRow[];
     agent_episodes: StubRow[];
     eval_sets: StubRow[];
@@ -1418,6 +1480,7 @@ function createStubSupabase(env: Env) {
         workspaces: [] as StubRow[],
         api_keys: [] as StubRow[],
         memories: [] as StubRow[],
+        memory_links: [] as StubRow[],
         memory_chunks: [] as StubRow[],
         usage_daily: [] as StubRow[],
         usage_daily_v2: [] as StubRow[],
@@ -1433,6 +1496,7 @@ function createStubSupabase(env: Env) {
         api_request_events: [] as StubRow[],
         payu_webhook_events: [] as StubRow[],
         payu_transactions: [] as StubRow[],
+        memory_ingest_webhooks: [] as StubRow[],
         dashboard_sessions: [] as StubRow[],
         agent_episodes: [] as StubRow[],
         eval_sets: [] as StubRow[],
@@ -1461,6 +1525,10 @@ function createStubSupabase(env: Env) {
         if (f.op === "gte") return (r[f.col] as string) >= (f.val as string);
         if (f.op === "lte") return (r[f.col] as string) <= (f.val as string);
         if (f.op === "lt") return (r[f.col] as string) < (f.val as string);
+        if (f.op === "is") {
+          if (f.val === null) return r[f.col] == null;
+          return r[f.col] === f.val;
+        }
         return r[f.col] === f.val;
       }),
     );
@@ -1567,6 +1635,10 @@ function createStubSupabase(env: Env) {
       filters.push({ col, val, op: "lte" });
       return tableBuilder(table, filters);
     },
+    is(col: string, val: unknown) {
+      filters.push({ col, val, op: "is" });
+      return tableBuilder(table, filters);
+    },
     select(_cols?: string, opts?: { count?: "exact" }) {
       const rows = applyFilters(db[table], filters);
       return makeResult(rows, opts?.count ? rows.length : undefined);
@@ -1591,6 +1663,7 @@ function createStubSupabase(env: Env) {
           const rec = r as Record<string, unknown>;
           if (rec.importance === undefined) rec.importance = 1;
           if (rec.retrieval_count === undefined) rec.retrieval_count = 0;
+          if (rec.effective_at === undefined) rec.effective_at = new Date().toISOString();
         }
         db[table].push(structuredClone(r));
         if (table === "workspaces") {
@@ -1625,27 +1698,35 @@ function createStubSupabase(env: Env) {
       };
     },
     update(values: Record<string, unknown>) {
-      return {
-        eq(col: string, val: unknown) {
-          const withEq = filters.concat({ col, val, op: "eq" });
-          return {
-            in(col2: string, vals: unknown[]) {
-              const withIn = withEq.concat({ col: col2, val: vals, op: "in" });
-              const rows = applyFilters(db[table], withIn);
-              rows.forEach((r) => Object.assign(r, values));
-              return { data: rows, error: null };
-            },
-            then<TResult1 = unknown, TResult2 = never>(
-              onfulfilled?: ((value: { data: StubRow[]; error: null }) => TResult1 | PromiseLike<TResult1>) | null,
-              onrejected?: ((reason: unknown) => TResult2 | PromiseLike<TResult2>) | null,
-            ) {
-              const rows = applyFilters(db[table], withEq);
-              rows.forEach((r) => Object.assign(r, values));
-              return Promise.resolve({ data: rows, error: null }).then(onfulfilled, onrejected);
-            },
-          };
-        },
+      const runUpdate = (fl: StubFilter[]) => {
+        const rows = applyFilters(db[table], fl);
+        rows.forEach((r) => Object.assign(r, values));
+        return { data: rows, error: null as null };
       };
+      type UpdateChain = {
+        eq: (col: string, val: unknown) => UpdateChain;
+        is: (col: string, val: unknown) => UpdateChain;
+        in: (col: string, vals: unknown[]) => { data: StubRow[]; error: null };
+        then: <TResult1 = unknown, TResult2 = never>(
+          onfulfilled?: ((value: { data: StubRow[]; error: null }) => TResult1 | PromiseLike<TResult1>) | null,
+          onrejected?: ((reason: unknown) => TResult2 | PromiseLike<TResult2>) | null,
+        ) => Promise<TResult1 | TResult2>;
+      };
+      const chain = (fl: StubFilter[]): UpdateChain => ({
+        eq(col: string, val: unknown) {
+          return chain(fl.concat({ col, val, op: "eq" }));
+        },
+        is(col: string, val: unknown) {
+          return chain(fl.concat({ col, val, op: "is" }));
+        },
+        in(col2: string, vals: unknown[]) {
+          return runUpdate(fl.concat({ col: col2, val: vals, op: "in" }));
+        },
+        then(onfulfilled, onrejected) {
+          return Promise.resolve(runUpdate(fl)).then(onfulfilled, onrejected);
+        },
+      });
+      return chain(filters);
     },
     delete(opts?: { count?: "exact" }) {
       const deleteFilters = [...filters];
@@ -2158,12 +2239,20 @@ function createStubSupabase(env: Env) {
               c.namespace === params.p_namespace,
           );
 
+          const effectiveOk = (m: StubRow) => {
+            const raw = (m as { effective_at?: string }).effective_at;
+            if (raw == null || raw === "") return true;
+            const t = Date.parse(String(raw));
+            if (!Number.isFinite(t)) return true;
+            return t <= Date.now();
+          };
           if (memoryTypes && memoryTypes.length > 0) {
             const memoryIdSet = new Set(
               db.memories
                 .filter((m) =>
                   m.workspace_id === params.p_workspace_id &&
                   m.duplicate_of == null &&
+                  effectiveOk(m) &&
                   typeof m.memory_type === "string" &&
                   memoryTypes.includes(m.memory_type as string),
                 )
@@ -2173,7 +2262,9 @@ function createStubSupabase(env: Env) {
           } else {
             const nonDupIds = new Set(
               db.memories
-                .filter((m) => m.workspace_id === params.p_workspace_id && m.duplicate_of == null)
+                .filter((m) =>
+                  m.workspace_id === params.p_workspace_id && m.duplicate_of == null && effectiveOk(m),
+                )
                 .map((m) => m.id),
             );
             chunks = chunks.filter((c) => nonDupIds.has(c.memory_id));
@@ -3344,6 +3435,40 @@ async function getMemoryByIdScoped(
   return null;
 }
 
+async function expandContextLinkedMemories(
+  auth: AuthContext,
+  supabase: SupabaseClient,
+  args: { user_id: string; namespace: string; seed_memory_ids: string[] },
+): Promise<Array<{ memory_id: string; text: string; link_type: string; from_memory_id: string }>> {
+  const seeds = [...new Set(args.seed_memory_ids)].filter(Boolean).slice(0, 5);
+  if (seeds.length === 0) return [];
+  const q = await supabase
+    .from("memory_links")
+    .select("to_memory_id, link_type, from_memory_id")
+    .eq("workspace_id", auth.workspaceId)
+    .in("from_memory_id", seeds);
+  if (q.error || !Array.isArray(q.data)) return [];
+  const edges = q.data as { to_memory_id: string; link_type: string; from_memory_id: string }[];
+  const out: Array<{ memory_id: string; text: string; link_type: string; from_memory_id: string }> = [];
+  let budget = 2000;
+  for (const e of edges) {
+    if (out.length >= 8) break;
+    const mem = await getMemoryByIdScoped(supabase, auth.workspaceId, e.to_memory_id);
+    if (!mem || mem.user_id !== args.user_id || mem.namespace !== args.namespace) continue;
+    if (mem.source_memory_id) continue;
+    const t = (mem.text ?? "").trim().slice(0, 500);
+    if (t.length + 40 > budget) break;
+    budget -= t.length + 40;
+    out.push({
+      memory_id: mem.id,
+      text: t,
+      link_type: e.link_type,
+      from_memory_id: e.from_memory_id,
+    });
+  }
+  return out;
+}
+
 export { parseApiKeyMeta, redact };
 
 // Stub embeddings (deterministic) for dev
@@ -3691,6 +3816,11 @@ const defaultMemoryHandlerDeps: MemoryHandlerDeps = {
 
 const memoryHandlersDefault = createMemoryHandlers(defaultMemoryHandlerDeps, defaultMemoryHandlerDeps);
 
+const memoryWebhookHandlersDefault = createMemoryWebhookHandlers({
+  jsonResponse: simpleJsonResponse,
+  handleCreateMemory: memoryHandlersDefault.handleCreateMemory,
+});
+
 /** Full deps for search handler when called directly (e.g. from tests). */
 const defaultSearchHandlerDeps: SearchHandlerDeps = {
   jsonResponse: simpleJsonResponse,
@@ -3703,6 +3833,9 @@ const defaultSearchHandlerDeps: SearchHandlerDeps = {
   todayUtc,
   estimateEmbedTokens,
   performSearch,
+  fetchBoundedContextProfile: (auth, supabase, scope) =>
+    buildBoundedContextProfile(performListMemories, auth, supabase, scope),
+  expandContextLinkedMemories,
   emitProductEvent,
   effectivePlan,
 };
@@ -3860,6 +3993,7 @@ const defaultApiKeysHandlerDeps: ApiKeysHandlerDeps = {
 const apiKeysHandlersDefault = createApiKeysHandlers(defaultApiKeysHandlerDeps, defaultApiKeysHandlerDeps);
 
 export const handleCreateMemory = memoryHandlersDefault.handleCreateMemory;
+export const handleCreateConversation = memoryHandlersDefault.handleCreateConversation;
 export const handleListMemories = memoryHandlersDefault.handleListMemories;
 export const handleGetMemory = memoryHandlersDefault.handleGetMemory;
 export const handleDeleteMemory = memoryHandlersDefault.handleDeleteMemory;
@@ -3885,6 +4019,7 @@ export const handleBillingStatus = billingHandlersDefault.handleBillingStatus;
 export const handleBillingCheckout = billingHandlersDefault.handleBillingCheckout;
 export const handleBillingPortal = billingHandlersDefault.handleBillingPortal;
 export const handleBillingWebhook = webhookHandlersDefault.handleBillingWebhook;
+export const handleMemoryWebhookIngest = memoryWebhookHandlersDefault.handleMemoryWebhookIngest;
 export const handleReprocessDeferredWebhooks = adminHandlersDefault.handleReprocessDeferredWebhooks;
 export const handleReconcileUsageRefunds = adminHandlersDefault.handleReconcileUsageRefunds;
 export const handleAdminBillingHealth = adminHandlersDefault.handleAdminBillingHealth;

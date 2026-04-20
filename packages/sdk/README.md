@@ -29,6 +29,14 @@ await client.addMemory({
   metadata: { source: "settings" },
 });
 
+// Or use unified ingest / transcript helpers
+await client.ingest({ kind: "memory", body: { userId: "user-1", namespace: "default", text: "Note" } });
+await client.addConversationMemory({
+  userId: "user-1",
+  namespace: "default",
+  messages: [{ role: "user", content: "Hello" }, { role: "assistant", content: "Hi" }],
+});
+
 // Search
 const results = await client.search({
   userId: "user-1",

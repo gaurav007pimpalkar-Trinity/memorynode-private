@@ -23,6 +23,7 @@ import type { SearchHandlerDeps } from "./search.js";
 import { SearchPayloadSchema, parseWithSchema } from "../contracts/index.js";
 import { requireWorkspaceId } from "../supabaseScoped.js";
 import { enforceIsolation } from "../middleware/isolation.js";
+import { logger } from "../logger.js";
 
 export type ContextHandlerDeps = SearchHandlerDeps;
 
@@ -345,6 +346,39 @@ export function createContextHandlers(
       if (reservationId) {
         await d.markUsageReservationCommitted(supabase, reservationId);
       }
+      let profile;
+      try {
+        profile = await d.fetchBoundedContextProfile(auth, supabase, {
+          user_id: parseResult.data.user_id,
+          namespace: parseResult.data.namespace,
+        });
+      } catch (e) {
+        logger.info({
+          event: "context_profile_failed",
+          request_id: requestId,
+          message: e instanceof Error ? e.message : String(e),
+        });
+        profile = { pinned_facts: [], recent_notes: [], preferences: [] };
+      }
+      let linked_memories: Array<{
+        memory_id: string;
+        text: string;
+        link_type: string;
+        from_memory_id: string;
+      }> = [];
+      try {
+        linked_memories = await d.expandContextLinkedMemories(auth, supabase, {
+          user_id: parseResult.data.user_id,
+          namespace: parseResult.data.namespace,
+          seed_memory_ids: [...new Set(outcome.results.map((r) => r.memory_id))],
+        });
+      } catch (e) {
+        logger.info({
+          event: "context_linked_memories_failed",
+          request_id: requestId,
+          message: e instanceof Error ? e.message : String(e),
+        });
+      }
       return jsonResponse(
         {
           context_text: lines.join("\n\n"),
@@ -355,6 +389,8 @@ export function createContextHandlers(
           page_size: outcome.page_size,
           total: outcome.total,
           has_more: outcome.has_more,
+          profile,
+          linked_memories,
         },
         200,
         concurrencyHeaders,

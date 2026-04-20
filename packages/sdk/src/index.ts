@@ -1,4 +1,5 @@
 import type {
+  AddConversationMemoryRequest,
   AddMemoryRequest,
   AddMemoryResponse,
   ApiError,
@@ -14,6 +15,8 @@ import type {
   EvalRunResponse,
   ImportRequest,
   ImportResponse,
+  IngestRequest,
+  IngestResponse,
   GetMemoryResponse,
   HealthResponse,
   ListApiKeysResponse,
@@ -53,6 +56,14 @@ type AddMemoryInput = Omit<AddMemoryRequest, "userId"> & {
   /** @deprecated use ownerId */
   entityId?: string;
   /** @deprecated use ownerType */
+  entityType?: OwnerType | "agent";
+};
+
+type AddConversationMemoryInput = Omit<AddConversationMemoryRequest, "userId"> & {
+  userId?: string;
+  ownerId?: string;
+  ownerType?: OwnerType;
+  entityId?: string;
   entityType?: OwnerType | "agent";
 };
 
@@ -302,7 +313,41 @@ export class MemoryNodeClient {
     if (input.importance !== undefined) body.importance = input.importance;
     if (input.chunk_profile) body.chunk_profile = input.chunk_profile;
     if (input.extract === true) body.extract = true;
+    if (input.effective_at) body.effective_at = input.effective_at;
+    if (input.replaces_memory_id) body.replaces_memory_id = input.replaces_memory_id;
     return this.request<AddMemoryResponse>("/v1/memories", { method: "POST", body });
+  }
+
+  async addConversationMemory(input: AddConversationMemoryInput): Promise<AddMemoryResponse> {
+    const { userId, ownerId, ownerType } = this.resolveOwnerIdentity(
+      input.userId,
+      input.ownerId,
+      input.ownerType,
+      input.entityId,
+      input.entityType,
+    );
+    const body: Record<string, unknown> = {
+      user_id: userId,
+      owner_id: ownerId,
+      owner_type: ownerType,
+      entity_id: ownerId,
+      entity_type: ownerType,
+      namespace: input.namespace,
+      metadata: input.metadata,
+    };
+    if (input.messages && input.messages.length > 0) body.messages = input.messages;
+    if (input.transcript?.trim()) body.transcript = input.transcript.trim();
+    if (input.memory_type) body.memory_type = input.memory_type;
+    if (input.importance !== undefined) body.importance = input.importance;
+    if (input.chunk_profile) body.chunk_profile = input.chunk_profile;
+    if (input.extract === true) body.extract = true;
+    if (input.effective_at) body.effective_at = input.effective_at;
+    if (input.replaces_memory_id) body.replaces_memory_id = input.replaces_memory_id;
+    return this.request<AddMemoryResponse>("/v1/memories/conversation", { method: "POST", body });
+  }
+
+  async ingest(input: IngestRequest): Promise<IngestResponse> {
+    return this.request<IngestResponse>("/v1/ingest", { method: "POST", body: input });
   }
 
   async search(input: SearchOptions): Promise<SearchResponse> {

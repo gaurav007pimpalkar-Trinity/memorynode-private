@@ -47,6 +47,10 @@ export const MemoryInsertSchema = z.object({
    * Set to false to store only the parent memory without extraction.
    */
   extract: z.boolean().default(true),
+  /** ISO 8601 timestamp: memory is inactive for retrieval until this moment (defaults to now). */
+  effective_at: z.string().optional(),
+  /** When set, the new memory supersedes this existing memory (marks old row duplicate_of → new id). */
+  replaces_memory_id: z.string().uuid().optional(),
 }).superRefine((value, ctx) => {
   const userId = value.userId?.trim() ?? value.user_id?.trim() ?? "";
   const ownerId = value.owner_id?.trim() ?? "";
@@ -59,6 +63,25 @@ export const MemoryInsertSchema = z.object({
       message: "user_id, owner_id, and entity_id must match when provided together",
       path: ["owner_id"],
     });
+  }
+  if (value.effective_at?.trim()) {
+    const t = Date.parse(value.effective_at.trim());
+    if (!Number.isFinite(t)) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: "effective_at must be a valid ISO 8601 datetime",
+        path: ["effective_at"],
+      });
+    } else {
+      const maxFuture = Date.now() + 366 * 24 * 60 * 60 * 1000;
+      if (t > maxFuture) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          message: "effective_at cannot be more than one year in the future",
+          path: ["effective_at"],
+        });
+      }
+    }
   }
 }).transform((value) => {
   const resolvedId = (

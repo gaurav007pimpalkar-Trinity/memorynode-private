@@ -29,6 +29,22 @@ export interface RouterHandlers {
     requestId: string,
     deps: HandlerDeps,
   ) => Promise<Response>;
+  handleCreateConversation: (
+    request: Request,
+    env: Env,
+    supabase: SupabaseClient,
+    auditCtx: AuditCtx,
+    requestId: string,
+    deps: HandlerDeps,
+  ) => Promise<Response>;
+  handleIngest: (
+    request: Request,
+    env: Env,
+    supabase: SupabaseClient,
+    auditCtx: AuditCtx,
+    requestId: string,
+    deps: HandlerDeps,
+  ) => Promise<Response>;
   handleListMemories: (
     request: Request,
     env: Env,
@@ -53,6 +69,32 @@ export interface RouterHandlers {
     supabase: SupabaseClient,
     memoryId: string,
     auditCtx: AuditCtx,
+    deps: HandlerDeps,
+  ) => Promise<Response>;
+  handlePostMemoryLink: (
+    request: Request,
+    env: Env,
+    supabase: SupabaseClient,
+    fromMemoryId: string,
+    auditCtx: AuditCtx,
+    requestId: string,
+    deps: HandlerDeps,
+  ) => Promise<Response>;
+  handleDeleteMemoryLink: (
+    request: Request,
+    env: Env,
+    supabase: SupabaseClient,
+    fromMemoryId: string,
+    auditCtx: AuditCtx,
+    requestId: string,
+    deps: HandlerDeps,
+  ) => Promise<Response>;
+  handlePatchProfilePins: (
+    request: Request,
+    env: Env,
+    supabase: SupabaseClient,
+    auditCtx: AuditCtx,
+    requestId: string,
     deps: HandlerDeps,
   ) => Promise<Response>;
   handleSearch: (
@@ -153,6 +195,14 @@ export interface RouterHandlers {
     request: Request,
     env: Env,
     supabase: SupabaseClient,
+    requestId: string,
+    deps: HandlerDeps,
+  ) => Promise<Response>;
+  handleMemoryWebhookIngest: (
+    request: Request,
+    env: Env,
+    supabase: SupabaseClient,
+    auditCtx: AuditCtx,
     requestId: string,
     deps: HandlerDeps,
   ) => Promise<Response>;
@@ -348,6 +398,48 @@ export async function route(
     return handlers.handleCreateMemory(request, env, supabase, auditCtx, requestId, handlerDeps);
   }
 
+  if (request.method === "POST" && url.pathname === "/v1/memories/conversation") {
+    return handlers.handleCreateConversation(request, env, supabase, auditCtx, requestId, handlerDeps);
+  }
+
+  if (request.method === "POST" && url.pathname === "/v1/ingest") {
+    return handlers.handleIngest(request, env, supabase, auditCtx, requestId, handlerDeps);
+  }
+
+  const memoryLinksMatch = url.pathname.match(/^\/v1\/memories\/([^/]+)\/links$/);
+  if (memoryLinksMatch) {
+    const rawFromId = decodeURIComponent(memoryLinksMatch[1]);
+    const fromMemoryId = rawFromId.split("?")[0].split("#")[0].trim();
+    if (fromMemoryId.startsWith("=") || !UUID_RE.test(fromMemoryId)) {
+      return jsonResponse(
+        { error: { code: "BAD_REQUEST", message: "memory_id must be a valid UUID" } },
+        400,
+      );
+    }
+    if (request.method === "POST") {
+      return handlers.handlePostMemoryLink(
+        request,
+        env,
+        supabase,
+        fromMemoryId,
+        auditCtx,
+        requestId,
+        handlerDeps,
+      );
+    }
+    if (request.method === "DELETE") {
+      return handlers.handleDeleteMemoryLink(
+        request,
+        env,
+        supabase,
+        fromMemoryId,
+        auditCtx,
+        requestId,
+        handlerDeps,
+      );
+    }
+  }
+
   if (request.method === "GET" && url.pathname === "/v1/memories") {
     return handlers.handleListMemories(request, env, supabase, url, auditCtx, requestId, handlerDeps);
   }
@@ -384,6 +476,10 @@ export async function route(
 
   if (request.method === "POST" && url.pathname === "/v1/context") {
     return handlers.handleContext(request, env, supabase, auditCtx, requestId, handlerDeps);
+  }
+
+  if (request.method === "PATCH" && url.pathname === "/v1/profile/pins") {
+    return handlers.handlePatchProfilePins(request, env, supabase, auditCtx, requestId, handlerDeps);
   }
 
   if (request.method === "GET" && url.pathname === "/v1/context/explain") {
@@ -424,6 +520,10 @@ export async function route(
 
   if (request.method === "POST" && url.pathname === "/v1/billing/portal") {
     return handlers.handleBillingPortal(request, env, supabase, auditCtx, requestId, handlerDeps);
+  }
+
+  if (request.method === "POST" && url.pathname === "/v1/webhooks/memory") {
+    return handlers.handleMemoryWebhookIngest(request, env, supabase, auditCtx, requestId, handlerDeps);
   }
 
   if (request.method === "POST" && url.pathname === "/v1/billing/webhook") {

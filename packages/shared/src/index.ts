@@ -20,7 +20,7 @@ export interface HealthResponse {
 }
 
 /** Recognized memory type tags for categorization (includes task for actionable items). */
-export type MemoryType = "fact" | "preference" | "event" | "note" | "task";
+export type MemoryType = "fact" | "preference" | "event" | "note" | "task" | "correction" | "pin";
 
 /** Search strategy selector. "hybrid" (default) uses vector+keyword fusion. */
 export type SearchMode = "hybrid" | "vector" | "keyword";
@@ -51,11 +51,49 @@ export interface AddMemoryRequest {
   chunk_profile?: ChunkProfile;
   /** When true, runs a lightweight LLM extraction to create child fact/preference memories. */
   extract?: boolean;
+  /** ISO 8601: memory becomes retrievable at this time (default now). */
+  effective_at?: string;
+  /** Supersedes an existing memory (marks it duplicate_of the new row). */
+  replaces_memory_id?: string;
 }
+
+export type ConversationRole = "user" | "assistant" | "system" | "tool";
+
+export interface ConversationMessage {
+  role: ConversationRole;
+  content: string;
+  /** Optional timestamp label stored in the formatted transcript. */
+  at?: string;
+}
+
+/** Body for POST /v1/memories/conversation — same outcome as POST /v1/memories after normalization. */
+export interface AddConversationMemoryRequest {
+  userId: string;
+  ownerId?: string;
+  ownerType?: OwnerType;
+  /** @deprecated use ownerId */
+  entityId?: string;
+  /** @deprecated use ownerType */
+  entityType?: OwnerType | "agent";
+  namespace?: string;
+  messages?: ConversationMessage[];
+  transcript?: string;
+  metadata?: Record<string, unknown>;
+  memory_type?: MemoryType;
+  importance?: number;
+  chunk_profile?: ChunkProfile;
+  extract?: boolean;
+  effective_at?: string;
+  replaces_memory_id?: string;
+}
+
+export type AddConversationMemoryResponse = AddMemoryResponse;
 
 export interface AddMemoryResponse {
   memory_id: MemoryId;
   stored: true;
+  /** Present when `replaces_memory_id` was sent on create. */
+  superseded_memory_id?: MemoryId;
   chunks?: number;
   embedding?: "skipped_due_to_budget";
   extraction: {
@@ -231,6 +269,12 @@ export interface PruningMetricsResponse {
   memory_chunks_total: number;
 }
 
+export interface ContextProfileFact {
+  memory_id: MemoryId;
+  text: string;
+  memory_type?: string | null;
+}
+
 export interface ContextResponse {
   context_text: string;
   citations: Array<{
@@ -244,6 +288,19 @@ export interface ContextResponse {
   total?: number;
   has_more?: boolean;
   context_blocks?: number;
+  /** Bounded profile facts (pinned, recent notes, preferences) when the worker supports it. */
+  profile?: {
+    pinned_facts: ContextProfileFact[];
+    recent_notes: ContextProfileFact[];
+    preferences: ContextProfileFact[];
+  };
+  /** One-hop linked memories from top context hits (strict caps on the worker). */
+  linked_memories?: Array<{
+    memory_id: MemoryId;
+    text: string;
+    link_type: string;
+    from_memory_id: MemoryId;
+  }>;
 }
 
 export interface ContextExplainResult {
@@ -330,6 +387,17 @@ export interface ImportResponse {
   imported_memories: number;
   imported_chunks: number;
 }
+
+export type IngestKind = "memory" | "conversation" | "document" | "bundle";
+
+/** Wire shape for POST /v1/ingest (discriminated by `kind`). */
+export type IngestRequest =
+  | { kind: "memory"; body: AddMemoryRequest }
+  | { kind: "conversation"; body: AddConversationMemoryRequest }
+  | { kind: "document"; body: AddMemoryRequest }
+  | { kind: "bundle"; body: ImportRequest };
+
+export type IngestResponse = AddMemoryResponse | ImportResponse;
 
 export interface AuditLogEntry {
   id: string;

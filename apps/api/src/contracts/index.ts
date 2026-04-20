@@ -24,6 +24,20 @@ export {
   chunkParamsForProfile,
 } from "./memories.js";
 export {
+  ConversationInsertSchema,
+  type ConversationInsertPayload,
+  formatConversationForStorage,
+} from "./conversation.js";
+export { ProfilePinsPatchSchema, type ProfilePinsPatchPayload } from "./profilePins.js";
+export { IngestPayloadSchema, type IngestPayload } from "./ingest.js";
+export {
+  MEMORY_LINK_TYPES,
+  MemoryLinkCreateSchema,
+  type MemoryLinkType,
+  type MemoryLinkCreatePayload,
+} from "./memoryLinks.js";
+export { MemoryWebhookIngestSchema, type MemoryWebhookIngestPayload } from "./memoryWebhook.js";
+export {
   SearchPayloadSchema,
   type SearchPayload,
   type MemoryType,

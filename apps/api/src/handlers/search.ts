@@ -14,6 +14,7 @@ import { SearchPayloadSchema, parseWithSchema, type SearchPayload } from "../con
 import { requireWorkspaceId } from "../supabaseScoped.js";
 import type { QuotaResolutionLike } from "./memories.js";
 import { enforceIsolation } from "../middleware/isolation.js";
+import type { BoundedContextProfile } from "../profile/boundedProfile.js";
 
 export type { SearchPayload } from "../contracts/index.js";
 
@@ -87,6 +88,16 @@ export interface SearchHandlerDeps extends HandlerDeps {
     ensureUnique?: boolean,
   ) => Promise<void>;
   effectivePlan: (plan: AuthContext["plan"], status?: AuthContext["planStatus"]) => AuthContext["plan"];
+  fetchBoundedContextProfile: (
+    auth: AuthContext,
+    supabase: SupabaseClient,
+    scope: { user_id: string; namespace: string },
+  ) => Promise<BoundedContextProfile>;
+  expandContextLinkedMemories: (
+    auth: AuthContext,
+    supabase: SupabaseClient,
+    scope: { user_id: string; namespace: string; seed_memory_ids: string[] },
+  ) => Promise<Array<{ memory_id: string; text: string; link_type: string; from_memory_id: string }>>;
 }
 
 function normalizeOwnerType(input: unknown): "user" | "team" | "app" {

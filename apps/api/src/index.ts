@@ -9,6 +9,7 @@ import {
   handleRequest,
   createSupabaseClient,
   handleCreateMemory,
+  handleCreateConversation,
   handleListMemories,
   handleGetMemory,
   handleDeleteMemory,
@@ -31,6 +32,7 @@ import {
   handleBillingCheckout,
   handleBillingPortal,
   handleBillingWebhook,
+  handleMemoryWebhookIngest,
   handleReprocessDeferredWebhooks,
   handleAdminBillingHealth,
   handleFounderPhase1Metrics,
@@ -78,6 +80,7 @@ export default {
 export { RateLimitDO, CircuitBreakerDO, createSupabaseClient };
 export {
   handleCreateMemory,
+  handleCreateConversation,
   handleListMemories,
   handleGetMemory,
   handleDeleteMemory,
@@ -100,6 +103,7 @@ export {
   handleBillingCheckout,
   handleBillingPortal,
   handleBillingWebhook,
+  handleMemoryWebhookIngest,
   handleReprocessDeferredWebhooks,
   handleAdminBillingHealth,
   handleFounderPhase1Metrics,

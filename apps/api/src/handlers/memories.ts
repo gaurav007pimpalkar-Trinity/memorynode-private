@@ -22,7 +22,12 @@ import {
   releaseWorkspaceConcurrencySlot,
 } from "../auth.js";
 import type { HandlerDeps } from "../router.js";
-import { MemoryInsertSchema, parseWithSchema } from "../contracts/index.js";
+import {
+  ConversationInsertSchema,
+  MemoryInsertSchema,
+  ProfilePinsPatchSchema,
+  parseWithSchema,
+} from "../contracts/index.js";
 import type { ChunkProfile, MemoryType } from "../contracts/index.js";
 import { requireWorkspaceId } from "../supabaseScoped.js";
 import { createHttpError, isApiError } from "../http.js";
@@ -37,6 +42,17 @@ import { logger } from "../logger.js";
 import { enforceIsolation } from "../middleware/isolation.js";
 
 export type { MemoryInsertPayload } from "../contracts/index.js";
+
+function mergeMetadataPinned(meta: unknown, pinned: boolean): Record<string, unknown> {
+  const base =
+    meta && typeof meta === "object" && !Array.isArray(meta) ? { ...(meta as Record<string, unknown>) } : {};
+  if (pinned) {
+    base.pinned = true;
+  } else {
+    delete base.pinned;
+  }
+  return base;
+}
 
 export interface EmbedResult {
   embeddings: number[][];
@@ -179,6 +195,11 @@ const AUTO_SAVE_KEYWORDS = [
   "timezone",
 ];
 const ALLOWED_ATTACHMENT_TYPES = new Set(["pdf", "docx", "txt", "md", "html", "csv", "tsv", "xlsx", "pptx", "eml", "msg"]);
+/** Not supported in product scope (no images/video pipeline). */
+const BANNED_ATTACHMENT_TYPES = new Set([
+  "jpg", "jpeg", "png", "gif", "webp", "bmp", "svg", "ico",
+  "mp4", "webm", "mov", "avi", "mkv", "m4v",
+]);
 const MAX_ATTACHMENT_BYTES = 10 * 1024 * 1024;
 
 function normalizeTextKey(input: string): string {
@@ -325,6 +346,7 @@ async function extractAndStore(
   namespace: string,
   text: string,
   maxPersistItems: number,
+  effectiveAtIso: string,
 ): Promise<{ children_created: number; skipped: boolean; error?: string }> {
   if (!env.OPENAI_API_KEY) {
     return { children_created: 0, skipped: true, error: "OPENAI_API_KEY not configured" };
@@ -353,6 +375,7 @@ async function extractAndStore(
           metadata: { _extracted: true, _source_memory_id: sourceMemoryId },
           memory_type: item.memory_type,
           source_memory_id: sourceMemoryId,
+          effective_at: effectiveAtIso,
         })
         .select("id")
         .single();
@@ -410,6 +433,14 @@ export function createMemoryHandlers(
     requestId: string,
     deps?: HandlerDeps,
   ) => Promise<Response>;
+  handleCreateConversation: (
+    request: Request,
+    env: Env,
+    supabase: SupabaseClient,
+    auditCtx: { workspaceId?: string; apiKeyId?: string },
+    requestId: string,
+    deps?: HandlerDeps,
+  ) => Promise<Response>;
   handleListMemories: (
     request: Request,
     env: Env,
@@ -436,9 +467,23 @@ export function createMemoryHandlers(
     auditCtx: { workspaceId?: string; apiKeyId?: string },
     deps?: HandlerDeps,
   ) => Promise<Response>;
+  handlePatchProfilePins: (
+    request: Request,
+    env: Env,
+    supabase: SupabaseClient,
+    auditCtx: { workspaceId?: string; apiKeyId?: string },
+    requestId: string,
+    deps?: HandlerDeps,
+  ) => Promise<Response>;
 } {
-  return {
-    async handleCreateMemory(request, env, supabase, auditCtx, requestId = "", deps?) {
+  const handleCreateMemoryImpl = async (
+    request: Request,
+    env: Env,
+    supabase: SupabaseClient,
+    auditCtx: { workspaceId?: string; apiKeyId?: string },
+    requestId = "",
+    deps?: HandlerDeps,
+  ) => {
       const d = (deps ?? defaultDeps) as MemoryHandlerDeps;
       const { jsonResponse } = d;
       const auth = await authenticate(request, env, supabase, auditCtx);
@@ -512,12 +557,77 @@ export function createMemoryHandlers(
       );
       rateHeaders = { ...rateHeaders, ...isolationResolution.responseHeaders };
 
-      const { owner_type, text, metadata, memory_type, extract, importance, chunk_profile } = parseResult.data;
+      const {
+        owner_type,
+        text,
+        metadata,
+        memory_type,
+        extract,
+        importance,
+        chunk_profile,
+        replaces_memory_id,
+        effective_at: effectiveAtRaw,
+      } = parseResult.data;
       const ownerId = isolationResolution.isolation.ownerId;
       const ownerType = owner_type ?? "user";
       const namespaceVal = isolationResolution.isolation.containerTag ?? DEFAULT_NAMESPACE;
+      const effectiveAtIso = effectiveAtRaw?.trim()
+        ? new Date(effectiveAtRaw.trim()).toISOString()
+        : new Date().toISOString();
+
+      if (replaces_memory_id) {
+        const { data: repRow, error: repErr } = await supabase
+          .from("memories")
+          .select("id,user_id,namespace,duplicate_of")
+          .eq("id", replaces_memory_id)
+          .eq("workspace_id", auth.workspaceId)
+          .maybeSingle();
+        if (repErr || !repRow) {
+          return jsonResponse(
+            { error: { code: "BAD_REQUEST", message: "replaces_memory_id not found in this workspace" } },
+            400,
+            rateHeaders,
+          );
+        }
+        if (String(repRow.user_id) !== ownerId || String(repRow.namespace) !== namespaceVal) {
+          return jsonResponse(
+            {
+              error: {
+                code: "BAD_REQUEST",
+                message: "replaces_memory_id must belong to the same userId and scope as this request",
+              },
+            },
+            400,
+            rateHeaders,
+          );
+        }
+        if (repRow.duplicate_of != null) {
+          return jsonResponse(
+            { error: { code: "BAD_REQUEST", message: "Target memory was already superseded" } },
+            400,
+            rateHeaders,
+          );
+        }
+      }
+
+      const metadataOut: Record<string, unknown> = { ...(metadata ?? {}) };
+      if (replaces_memory_id) {
+        metadataOut.supersedes = replaces_memory_id;
+      }
       const strictAutosaveMode = metadata?.autosave_mode === "strict";
       const attachmentType = typeof metadata?.attachment_type === "string" ? metadata.attachment_type.toLowerCase() : null;
+      if (attachmentType && BANNED_ATTACHMENT_TYPES.has(attachmentType)) {
+        return jsonResponse(
+          {
+            error: {
+              code: "BAD_REQUEST",
+              message: `attachment_type '${attachmentType}' is not supported (text and office documents only; no images or video).`,
+            },
+          },
+          400,
+          rateHeaders,
+        );
+      }
       if (attachmentType && !ALLOWED_ATTACHMENT_TYPES.has(attachmentType)) {
         return jsonResponse(
           { error: { code: "BAD_REQUEST", message: `Unsupported attachment_type '${attachmentType}'` } },
@@ -612,7 +722,7 @@ export function createMemoryHandlers(
       const extractionPolicy = await decideExtraction({
         extractRequested: extract,
         text,
-        metadata,
+        metadata: metadataOut as Record<string, string | number | boolean | null>,
         memory_type: memory_type ?? undefined,
         planCode,
         planLimits: quota.planLimits,
@@ -713,7 +823,8 @@ export function createMemoryHandlers(
               owner_type: ownerType,
               namespace: namespaceVal,
               text,
-              metadata: metadata ?? {},
+              metadata: metadataOut,
+              effective_at: effectiveAtIso,
               ...(memory_type ? { memory_type } : {}),
               ...(importance !== undefined ? { importance } : {}),
             })
@@ -741,6 +852,17 @@ export function createMemoryHandlers(
           }
 
           const textOnlyMemoryId = memRow.id as string;
+
+          if (replaces_memory_id) {
+            await supabase
+              .from("memories")
+              .update({ duplicate_of: textOnlyMemoryId })
+              .eq("id", replaces_memory_id)
+              .eq("workspace_id", auth.workspaceId)
+              .eq("user_id", ownerId)
+              .eq("namespace", namespaceVal)
+              .is("duplicate_of", null);
+          }
 
           void d.emitProductEvent(
             supabase,
@@ -774,6 +896,7 @@ export function createMemoryHandlers(
             stored: true,
             embedding: "skipped_due_to_budget",
             extraction: { status: "skipped", reason: "budget_limit" },
+            ...(replaces_memory_id ? { superseded_memory_id: replaces_memory_id } : {}),
           };
 
           const piiScanOnBudget = (request.headers.get("x-safety-pii-scan") ?? "").trim() === "1";
@@ -861,7 +984,8 @@ export function createMemoryHandlers(
           owner_type: ownerType,
           namespace: namespaceVal,
           text,
-          metadata: metadata ?? {},
+          metadata: metadataOut,
+          effective_at: effectiveAtIso,
           ...(memory_type ? { memory_type } : {}),
           ...(importance !== undefined ? { importance } : {}),
         })
@@ -918,6 +1042,17 @@ export function createMemoryHandlers(
         );
       }
 
+        if (replaces_memory_id) {
+          await supabase
+            .from("memories")
+            .update({ duplicate_of: memoryId })
+            .eq("id", replaces_memory_id)
+            .eq("workspace_id", auth.workspaceId)
+            .eq("user_id", ownerId)
+            .eq("namespace", namespaceVal)
+            .is("duplicate_of", null);
+        }
+
         let extractionResult: { children_created: number; skipped: boolean; error?: string } | undefined;
         let extractionFinalStatus: "run" | "degraded" | "skipped" = "skipped";
         let extractionFinalReason: ExtractionSkipReason | "extraction_error" = extractionPolicy.reason;
@@ -953,6 +1088,7 @@ export function createMemoryHandlers(
               namespaceVal,
               text,
               maxExtractReserve,
+              effectiveAtIso,
             );
 
             if (extractionResult.error) {
@@ -1017,6 +1153,7 @@ export function createMemoryHandlers(
           memory_id: memoryId,
           stored: true,
           chunks: rows.length,
+          ...(replaces_memory_id ? { superseded_memory_id: replaces_memory_id } : {}),
         };
         const extractionPayload: Record<string, unknown> = { status: extractionFinalStatus };
         if (extractionFinalStatus === "skipped") {
@@ -1048,6 +1185,54 @@ export function createMemoryHandlers(
       } finally {
         await releaseWorkspaceConcurrencySlot(auth.workspaceId, concurrency.leaseToken, env);
       }
+    };
+
+  return {
+    handleCreateMemory: handleCreateMemoryImpl,
+    handleCreateConversation: async (request, env, supabase, auditCtx, requestId = "", deps?) => {
+      const d = (deps ?? defaultDeps) as MemoryHandlerDeps;
+      const { jsonResponse } = d;
+      const parseResult = await parseWithSchema(ConversationInsertSchema, request);
+      if (!parseResult.ok) {
+        return jsonResponse(
+          {
+            error: {
+              code: "BAD_REQUEST",
+              message: parseResult.error,
+              ...(parseResult.details ? { details: parseResult.details } : {}),
+            },
+          },
+          400,
+        );
+      }
+      const p = parseResult.data;
+      const meta = { ...(p.metadata ?? {}), source: "conversation" };
+      const body: Record<string, unknown> = {
+        user_id: p.user_id,
+        owner_id: p.owner_id,
+        owner_type: p.owner_type,
+        userId: p.user_id,
+        text: p.text,
+        memory_type: p.memory_type ?? "note",
+        chunk_profile: p.chunk_profile ?? "dense",
+        extract: p.extract,
+        metadata: meta,
+        namespace: p.namespace,
+      };
+      if (p.containerTag?.trim()) body.containerTag = p.containerTag.trim();
+      if (p.scope?.trim()) body.scope = p.scope.trim();
+      if (p.entity_id?.trim()) body.entity_id = p.entity_id.trim();
+      if (p.entity_type) body.entity_type = p.entity_type;
+      if (p.importance !== undefined) body.importance = p.importance;
+      if (p.effective_at?.trim()) body.effective_at = p.effective_at.trim();
+      if (p.replaces_memory_id) body.replaces_memory_id = p.replaces_memory_id;
+      const memUrl = new URL("/v1/memories", request.url);
+      const forwarded = new Request(memUrl.toString(), {
+        method: "POST",
+        headers: request.headers,
+        body: JSON.stringify(body),
+      });
+      return handleCreateMemoryImpl(forwarded, env, supabase, auditCtx, requestId, deps);
     },
 
     async handleListMemories(request, env, supabase, url, auditCtx, requestId = "", deps?) {
@@ -1281,6 +1466,189 @@ export function createMemoryHandlers(
       }
 
       return jsonResponse({ deleted: true, id: memoryId }, 200, rateHeaders);
+    },
+
+    async handlePatchProfilePins(request, env, supabase, auditCtx, requestId = "", deps?) {
+      const d = (deps ?? defaultDeps) as MemoryHandlerDeps;
+      const { jsonResponse } = d;
+      const auth = await authenticate(request, env, supabase, auditCtx);
+      auditCtx.workspaceId = auth.workspaceId;
+      requireWorkspaceId(auth.workspaceId);
+      const quota = await d.resolveQuotaForWorkspace(auth, supabase);
+      if (quota.blocked) {
+        return jsonResponse(
+          {
+            error: {
+              code: quota.errorCode ?? "ENTITLEMENT_REQUIRED",
+              message: quota.message ?? "No active paid entitlement found. Start a plan to continue.",
+              upgrade_required: true,
+              effective_plan: "launch",
+            },
+            upgrade_url: (env as { PUBLIC_APP_URL?: string }).PUBLIC_APP_URL
+              ? `${(env as { PUBLIC_APP_URL: string }).PUBLIC_APP_URL}/billing`
+              : undefined,
+          },
+          402,
+        );
+      }
+      let rateHeaders: Record<string, string> = {};
+      if (!isTrustedInternal(request, env)) {
+        const rate = await rateLimit(auth.keyHash, env, auth);
+        if (!rate.allowed) {
+          return jsonResponse(
+            { error: { code: "rate_limited", message: "Rate limit exceeded" } },
+            429,
+            rate.headers,
+          );
+        }
+        const wsRpm = quota.planLimits.workspace_rpm ?? 120;
+        const wsRate = await rateLimitWorkspace(auth.workspaceId, wsRpm, env);
+        if (!wsRate.allowed) {
+          return jsonResponse(
+            { error: { code: "rate_limited", message: "Workspace rate limit exceeded" } },
+            429,
+            { ...rate.headers, ...wsRate.headers },
+          );
+        }
+        rateHeaders = { ...rate.headers, ...wsRate.headers };
+      }
+
+      const parseResult = await parseWithSchema(ProfilePinsPatchSchema, request);
+      if (!parseResult.ok) {
+        return jsonResponse(
+          {
+            error: {
+              code: "BAD_REQUEST",
+              message: parseResult.error,
+              ...(parseResult.details ? { details: parseResult.details } : {}),
+            },
+          },
+          400,
+          rateHeaders,
+        );
+      }
+      const isolationResolution = enforceIsolation(
+        request,
+        env,
+        {
+          user_id: parseResult.data.user_id,
+          scope: parseResult.data.scope,
+          namespace: parseResult.data.namespace,
+          containerTag: parseResult.data.containerTag,
+        },
+        { scopedContainerTag: auth.scopedContainerTag ?? null },
+      );
+      const rateHeadersWithRouting = { ...rateHeaders, ...isolationResolution.responseHeaders };
+      parseResult.data.user_id = isolationResolution.isolation.ownerId;
+      parseResult.data.namespace = isolationResolution.isolation.containerTag;
+
+      const userId = parseResult.data.user_id;
+      const namespace = parseResult.data.namespace;
+      const newIds = [...new Set(parseResult.data.memory_ids)];
+
+      const reserve = await d.reserveQuotaAndMaybeRespond(
+        quota,
+        supabase,
+        auth.workspaceId,
+        d.todayUtc(),
+        {
+          writesDelta: Math.min(24, newIds.length + 12),
+          readsDelta: 1 + newIds.length,
+          embedsDelta: 0,
+          embedTokensDelta: 0,
+          extractionCallsDelta: 0,
+        },
+        rateHeadersWithRouting,
+        env,
+        jsonResponse,
+        { route: "/v1/profile/pins", requestId },
+      );
+      if (reserve.response) return reserve.response;
+      const reservationId = reserve.reservationId;
+
+      try {
+        const pinnedList = await d.performListMemories(
+          auth,
+          {
+            page: 1,
+            page_size: 100,
+            namespace,
+            user_id: userId,
+            filters: { metadata: { pinned: true } },
+          },
+          supabase,
+        );
+
+        const newSet = new Set(newIds);
+        const toUnpin = pinnedList.results.filter((r) => !newSet.has(r.id));
+        const errors: string[] = [];
+
+        for (const row of toUnpin) {
+          const meta = mergeMetadataPinned(row.metadata, false);
+          const { error } = await supabase
+            .from("memories")
+            .update({ metadata: meta })
+            .eq("workspace_id", auth.workspaceId)
+            .eq("id", row.id)
+            .eq("user_id", userId)
+            .eq("namespace", namespace);
+          if (error) errors.push(error.message);
+        }
+
+        for (const id of newIds) {
+          const row = await d.getMemoryByIdScoped(supabase, auth.workspaceId, id);
+          if (!row) {
+            errors.push(`memory ${id} not found`);
+            continue;
+          }
+          if (row.user_id !== userId || row.namespace !== namespace) {
+            errors.push(`memory ${id} not in scope`);
+            continue;
+          }
+          if (row.source_memory_id) {
+            errors.push(`memory ${id} is an extracted child row`);
+            continue;
+          }
+          const meta = mergeMetadataPinned(row.metadata, true);
+          const { error } = await supabase
+            .from("memories")
+            .update({ metadata: meta })
+            .eq("workspace_id", auth.workspaceId)
+            .eq("id", id)
+            .eq("user_id", userId)
+            .eq("namespace", namespace);
+          if (error) errors.push(error.message);
+        }
+
+        if (errors.length > 0) {
+          if (reservationId) {
+            await d.markUsageReservationRefundPending(supabase, reservationId, errors.join("; "));
+          }
+          return jsonResponse(
+            { error: { code: "BAD_REQUEST", message: errors[0] ?? "pin update failed", details: errors } },
+            400,
+            rateHeadersWithRouting,
+          );
+        }
+
+        if (reservationId) {
+          await d.markUsageReservationCommitted(supabase, reservationId);
+        }
+        return jsonResponse(
+          { ok: true, pinned_memory_ids: newIds, unpinned: toUnpin.map((r) => r.id) },
+          200,
+          rateHeadersWithRouting,
+        );
+      } catch (err) {
+        if (reservationId) {
+          await d.markUsageReservationRefundPending(
+            supabase,
+            reservationId,
+            err instanceof Error ? err.message : String(err),
+          );
+        }
+        throw err;
+      }
     },
   };
 }

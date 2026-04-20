@@ -154,6 +154,63 @@ export async function getApiKeySalt(
   return { salt: saltToUse, mismatchFatal: false };
 }
 
+export async function authenticateWorkspaceForWebhook(
+  workspaceId: string,
+  env: Env,
+  supabase: SupabaseClient,
+  auditCtx?: { workspaceId?: string; apiKeyId?: string },
+): Promise<AuthContext> {
+  const stubDb = (supabase as unknown as { __db?: { workspaces?: StubRow[] } }).__db;
+  if (env.SUPABASE_URL === "stub" && stubDb?.workspaces) {
+    const wsRow = stubDb.workspaces.find((w) => w.id === workspaceId);
+    if (!wsRow) {
+      throw createHttpError(401, "UNAUTHORIZED", "Invalid workspace");
+    }
+    const planRaw = (wsRow.plan as string) ?? "pro";
+    const planStatus = normalizePlanStatus(wsRow.plan_status ?? "active") ?? "active";
+    const ctx: AuthContext = {
+      workspaceId,
+      keyHash: `webhook:${workspaceId}`,
+      scopedContainerTag: null,
+      plan: planRaw === "team" ? "team" : "pro",
+      planStatus,
+      keyCreatedAt: null,
+    };
+    if (auditCtx) {
+      auditCtx.workspaceId = workspaceId;
+      auditCtx.apiKeyId = undefined;
+    }
+    return ctx;
+  }
+
+  const { data, error } = await withSupabaseQueryRetry(async () =>
+    supabase.from("workspaces").select("id, plan, plan_status").eq("id", workspaceId).maybeSingle(),
+  );
+  if (error || !data || !(data as { id?: string }).id) {
+    throw createHttpError(401, "UNAUTHORIZED", "Invalid workspace");
+  }
+  const row = data as { plan?: string; plan_status?: AuthContext["planStatus"] };
+  const planRaw = row.plan;
+  const planStatusRaw = normalizePlanStatus(row.plan_status);
+  const plan: AuthContext["plan"] = planRaw === "team" ? "team" : "pro";
+  const ctx: AuthContext = {
+    workspaceId,
+    keyHash: `webhook:${workspaceId}`,
+    scopedContainerTag: null,
+    plan,
+    planStatus: planStatusRaw ?? "past_due",
+    keyCreatedAt: null,
+  };
+  if (shouldBindScopedClient(env)) {
+    bindScopedClient(supabase, await createRequestScopedSupabaseClient(env, ctx));
+  }
+  if (auditCtx) {
+    auditCtx.workspaceId = workspaceId;
+    auditCtx.apiKeyId = undefined;
+  }
+  return ctx;
+}
+
 export async function authenticate(
   request: Request,
   env: Env,
@@ -218,6 +275,20 @@ export async function authenticate(
       auditCtx.apiKeyId = undefined;
     }
     return ctx;
+  }
+
+  const ingestTok = (request.headers.get("x-mn-ingest-internal") ?? "").trim();
+  const expectedIngest = (env.MEMORY_WEBHOOK_INTERNAL_TOKEN ?? "").trim();
+  if (ingestTok && expectedIngest) {
+    const a = Buffer.from(ingestTok);
+    const b = Buffer.from(expectedIngest);
+    if (a.length === b.length && timingSafeEqual(a, b)) {
+      const ws = (request.headers.get("x-mn-webhook-workspace-id") ?? "").trim();
+      if (!ws) {
+        throw createHttpError(401, "UNAUTHORIZED", "Missing workspace for webhook ingest");
+      }
+      return await authenticateWorkspaceForWebhook(ws, env, supabase, auditCtx);
+    }
   }
 
   const rawKey = extractApiKey(request);
