@@ -1,3 +1,12 @@
+## ℹ️ Supporting Documentation
+
+This document is a guide.  
+For exact API behavior, refer to:
+- `docs/external/API_USAGE.md`
+- `docs/external/openapi.yaml` (run `pnpm openapi:gen` to regenerate)
+
+---
+
 # Advanced isolation and routing
 
 This page describes how MemoryNode routes requests internally while keeping public input simple.

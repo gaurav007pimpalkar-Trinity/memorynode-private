@@ -1,3 +1,12 @@
+## ℹ️ Supporting Documentation
+
+This document is a guide.  
+For exact API behavior, refer to:
+- `docs/external/API_USAGE.md`
+- `docs/external/openapi.yaml` (run `pnpm openapi:gen` to regenerate)
+
+---
+
 # Recipe: SMB / high-volume chatbot
 
 **Goal:** WhatsApp- or web-chat bots that talk to **many** end-users, need **cheap, predictable** behavior, and must not **hallucinate** past deals.

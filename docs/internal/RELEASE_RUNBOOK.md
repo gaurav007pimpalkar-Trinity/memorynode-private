@@ -1,3 +1,10 @@
+## ⚠️ Internal Operational Document
+
+This document may not reflect real-time production state.  
+Always verify against actual infrastructure (Cloudflare, Supabase, etc.).
+
+---
+
 # MemoryNode Release Runbook (Canonical)
 
 This is the single source of truth for staging and production releases.

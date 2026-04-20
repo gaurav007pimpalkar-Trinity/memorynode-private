@@ -1,18 +1,28 @@
-# External docs classification (user-facing only)
+## ⚠️ Internal Operational Document
 
-Used to keep `docs/external/` safe for end users. Do not expose internal behaviour, ops, or system mechanics.
+This document may not reflect real-time production state.  
+Always verify against actual infrastructure (Cloudflare, Supabase, etc.).
 
-| Document | Classification | Reason |
-|----------|----------------|--------|
-| **openapi.yaml** | Keep (as-is) | Machine-readable API spec; no prose exposing internals. |
-| **API_REFERENCE.md** | Rewrite | Referenced internal docs (README, RELEASE_RUNBOOK), regeneration/CI, internal plan/limit jargon, PayU verification details. Rewritten to endpoints/auth/shapes and user-facing plans only; errors as “what to try”. |
-| **QUICKSTART.md** | Hub / redirect | Points to `docs/start-here/` for hosted path; no migration manifest (manifest lives in `docs/self-host/LOCAL_DEV.md`). |
-| **start-here/** | Keep | Default public path: hosted API only. Includes `MCP.md` (short Mode-1 MCP pointer). |
-| **build/** | Keep | Advanced API usage; links to external API_USAGE and openapi.yaml. |
-| **self-host/** | Keep | Local dev / contributors; includes CI migration manifest line. |
-| **BETA_ONBOARDING.md** | Rewrite | Operator-only content (admin bootstrap, BILLING_RUNBOOK); internal commands (db:migrate, release:staging:validate, e2e:verify); success metrics. Rewritten to access, concepts, gotchas, support template; no operator actions. |
-| **ARCHITECTURE_CEO.md** | Rewrite (minor) | Internal link to README#plans. Updated to user-facing plans reference only. |
-| **TROUBLESHOOTING_BETA.md** | Rewrite | Supabase/RLS, logs, PayU webhook/BILLING_RUNBOOK, release:staging:validate, e2e:verify. Rewritten to symptom → check input/auth/scope, retry, contact support; no internal tools. |
-| **TRUST.md** | Rewrite | Index of internal/ops docs (INCIDENT_PROCESS, OBSERVABILITY, ALERTS, OPERATIONS, SLOs). Replaced with short user-facing trust page: security summary, data retention; no incident/ops links. |
-| **DATA_RETENTION.md** | Rewrite | DB table names, operational retention details, purge jobs. Rewritten to what we store (plain language), how to delete/export, retention in simple terms. |
-| **TRUST_CHANGELOG.md** | Remove (moved to internal) | Internal ops/security changelog (observability, SLOs, incident process). Moved to `docs/internal/TRUST_CHANGELOG.md`. |
+---
+
+# External docs classification (user-facing)
+
+Guidelines for **`docs/external/`**: safe for integrators and end users; avoid undocumented operator-only procedures. **Canonical API truth:** [../external/API_USAGE.md](../external/API_USAGE.md), [../external/openapi.yaml](../external/openapi.yaml) (generated via `pnpm openapi:gen` from `apps/api/scripts/generate_openapi.mjs`).
+
+## Current files (verify paths exist)
+
+| Document | Role |
+|----------|------|
+| [README.md](../external/README.md) | Hub — links to modes and canonical pages |
+| [API_USAGE.md](../external/API_USAGE.md) | **REST reference** (routes, enums, billing, SDK index) |
+| [openapi.yaml](../external/openapi.yaml) | OpenAPI 3 artifact (CI: `pnpm openapi:check`) |
+| [API_SURFACE_PHASE1.md](../external/API_SURFACE_PHASE1.md) | Smaller “Phase 1 onboarding” surface vs full router |
+| [POSITIONING.md](../external/POSITIONING.md) | ICP, promise, non-goals |
+| [QUICKSTART.md](../external/QUICKSTART.md) | Short redirect to start-here + self-host |
+| [TRUST.md](../external/TRUST.md) | Customer-facing trust summary |
+| [DATA_RETENTION.md](../DATA_RETENTION.md) (parent `docs/`) | Retention / deletion expectations — keep aligned with code + policy |
+| [AUDIENCES_US_IN.md](../external/AUDIENCES_US_IN.md) | Audience notes |
+| [ASSISTANT_WORKSPACE.md](../external/ASSISTANT_WORKSPACE.md), [SAAS_MEMORY_CONSOLE.md](../external/SAAS_MEMORY_CONSOLE.md) | Product flows for console surfaces |
+| [RECIPE_*.md](../external/) | Vertical recipes (support, SaaS copilot, SMB) |
+
+Internal-only material belongs under **`docs/internal/`** (runbooks, deploy, billing ops). The historical note about **TRUST_CHANGELOG** living under internal remains valid — see [TRUST_CHANGELOG.md](./TRUST_CHANGELOG.md).

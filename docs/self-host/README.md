@@ -1,3 +1,12 @@
+## ℹ️ Supporting Documentation
+
+This document is a guide.  
+For exact API behavior, refer to:
+- `docs/external/API_USAGE.md`
+- `docs/external/openapi.yaml` (run `pnpm openapi:gen` to regenerate)
+
+---
+
 # Self-host / run the repo (Mode 3 — advanced)
 
 **You do not need this for most products.** If you only call the hosted API, stay in **[Start here (Mode 1)](../start-here/README.md)**. If you need filters, SDK, and OpenAPI on the hosted API, use **[Build mode (Mode 2)](../external/API_USAGE.md)** first.

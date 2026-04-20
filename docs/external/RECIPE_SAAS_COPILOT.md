@@ -1,3 +1,12 @@
+## ℹ️ Supporting Documentation
+
+This document is a guide.  
+For exact API behavior, refer to:
+- `docs/external/API_USAGE.md`
+- `docs/external/openapi.yaml` (run `pnpm openapi:gen` to regenerate)
+
+---
+
 # Recipe: SaaS copilot (per-tenant, per-user)
 
 **Goal:** Your product has **accounts** and **logged-in users**. The in-app copilot should only recall **that account’s** memories, and optionally only **that user’s** slice.

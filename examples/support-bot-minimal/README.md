@@ -1,3 +1,12 @@
+## ℹ️ Supporting Documentation
+
+This document is a guide.  
+For exact API behavior, refer to:
+- `docs/external/API_USAGE.md`
+- `docs/external/openapi.yaml` (run `pnpm openapi:gen` to regenerate)
+
+---
+
 # Support-bot minimal example
 
 Runnable **insert → search → context** loop with a **`support`** scope (SDK/example env uses `NAMESPACE`) — copy this pattern for WhatsApp or web chat bots.

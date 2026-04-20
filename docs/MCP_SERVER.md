@@ -1,5 +1,17 @@
 # MemoryNode MCP Server
 
+## ⚠️ Source of Truth
+
+This document must reflect actual MCP behavior (`packages/mcp-server`, hosted routes in `apps/api/src/workerApp.ts`, `apps/api/src/mcpHosted.ts`).
+
+If code changes:
+
+→ This document **MUST** be updated in the same PR.
+
+Do not merge changes that break this alignment.
+
+---
+
 MemoryNode exposes MCP in two ways:
 
 1. **stdio package** (`@memorynodeai/mcp-server`) — local process for editors; forwards to REST with env vars.

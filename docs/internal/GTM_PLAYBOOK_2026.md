@@ -1,3 +1,10 @@
+## ⚠️ Internal Operational Document
+
+This document may not reflect real-time production state.  
+Always verify against actual infrastructure (Cloudflare, Supabase, etc.).
+
+---
+
 # GTM playbook 2026 — MemoryNode
 
 Internal playbook for distribution and messaging. Aligns with [external/POSITIONING.md](../external/POSITIONING.md).

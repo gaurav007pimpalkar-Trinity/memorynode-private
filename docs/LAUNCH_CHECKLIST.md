@@ -1,3 +1,10 @@
+## ⚠️ Internal Operational Document
+
+This document may not reflect real-time production state.  
+Always verify against actual infrastructure (Cloudflare, Supabase, etc.).
+
+---
+
 # Launch checklist — confirm before go-live
 
 Use this with **docs/LAUNCH_RUNBOOK.md** for deploy and ops. When all items are done, you’re ready to launch.

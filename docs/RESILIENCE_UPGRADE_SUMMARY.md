@@ -1,5 +1,11 @@
 # Resilience Upgrade Summary
 
+## ⚠️ Historical Snapshot
+
+This document reflects a past state and is NOT a source of truth.
+
+Records a past change batch; repo layout may differ. Prefer `apps/api/src/` and tests as truth.
+
 **Date:** 2026-03-01  
 **Scope:** Correctness → Stability → Resilience (no architecture rewrite, no new infrastructure)
 

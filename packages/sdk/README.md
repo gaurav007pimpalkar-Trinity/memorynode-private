@@ -1,8 +1,20 @@
 # @memorynodeai/sdk
 
-Official JavaScript/TypeScript client for **MemoryNode** — **MemoryNode lets you store, retrieve, and explain why AI remembered something.** Use it from your **backend** (never ship the API key to browsers in production).
+## ⚠️ Source of Truth
 
-Product story and ICP: [POSITIONING.md](https://github.com/gaurav007pimpalkar-Trinity/memorynode/blob/main/docs/external/POSITIONING.md) (monorepo).
+This document must always reflect actual SDK surface (`packages/sdk/src/index.ts`) and HTTP routes.
+
+If code changes:
+
+→ This document **MUST** be updated in the same PR.
+
+Do not merge changes that break this alignment.
+
+---
+
+Official JavaScript/TypeScript client for **MemoryNode**. Use it from your **backend** only (never ship API keys to browsers in production).
+
+**REST reference:** [docs/external/API_USAGE.md](../../docs/external/API_USAGE.md) · **Contracts / routes:** `apps/api/src/contracts/`, `apps/api/src/router.ts`.
 
 ## Install
 
@@ -20,59 +32,57 @@ const client = new MemoryNodeClient({
   baseUrl: "https://api.memorynode.ai",
 });
 
-// Add a memory
 await client.addMemory({
   userId: "user-1",
-  // SDK field `namespace` maps to API `scope`.
-  namespace: "default",
-  text: "Prefers dark mode and keyboard shortcuts",
-  metadata: { source: "settings" },
+  namespace: "default", // maps to API `scope` / `namespace`
+  text: "Prefers dark mode",
 });
 
-// Or use unified ingest / transcript helpers
-await client.ingest({ kind: "memory", body: { userId: "user-1", namespace: "default", text: "Note" } });
-await client.addConversationMemory({
-  userId: "user-1",
-  namespace: "default",
-  messages: [{ role: "user", content: "Hello" }, { role: "assistant", content: "Hi" }],
-});
-
-// Search
 const results = await client.search({
   userId: "user-1",
-  // SDK field `namespace` maps to API `scope`.
   namespace: "default",
-  query: "user preferences",
+  query: "preferences",
   topK: 5,
 });
 
-// Build prompt-ready context
-const context = await client.context({
+const ctx = await client.context({
   userId: "user-1",
-  // SDK field `namespace` maps to API `scope`.
   namespace: "default",
-  query: "What do we know about this user's preferences?",
+  query: "What do we know about preferences?",
   topK: 5,
 });
-
-// Explain ranking decisions (core debugging tool)
-const explain = await client.contextExplain({
-  userId: "user-1",
-  // SDK field `namespace` maps to API `scope`.
-  namespace: "default",
-  query: "What do we know about this user's preferences?",
-  topK: 5,
-});
-
-console.log(results.results[0]);
-console.log(context.context_text);
-console.log(explain.results[0]?.scores, explain.results[0]?.ordering_explanation);
-
-// Optional: import an artifact (paid plans only)
-await client.importMemories("<artifact_base64>", "upsert");
 ```
 
-Get an API key at [console.memorynode.ai](https://console.memorynode.ai). **Quickstart:** [docs/start-here/README.md](../../docs/start-here/README.md).
+## `MemoryNodeClient` methods
+
+All methods use your **`apiKey`** from the constructor unless noted.
+
+| Method | HTTP | Notes |
+|--------|------|------|
+| `health()` | `GET /healthz` | No API key required. |
+| `addMemory` | `POST /v1/memories` | Supports `memory_type`, `extract`, `chunk_profile`, owner fields — see types. |
+| `addConversationMemory` | `POST /v1/memories/conversation` | Transcript or `messages[]`. |
+| `ingest` | `POST /v1/ingest` | Discriminated `kind` + `body`. |
+| `search` | `POST /v1/search` | `searchMode`, `minScore`, `memoryType` filters, `explain`. |
+| `listSearchHistory` | `GET /v1/search/history` | Optional limit. |
+| `replaySearch` | `POST /v1/search/replay` | `queryId` from history. |
+| `context` | `POST /v1/context` | Same options as `search` for query body. |
+| `contextExplain` | `GET /v1/context/explain` | Query-string explain API. |
+| `sendContextFeedback` | `POST /v1/context/feedback` | Retrieval trace feedback. |
+| `getPruningMetrics` | `GET /v1/pruning/metrics` | |
+| `explainAnswer` | `POST /v1/explain/answer` | Question + context text. |
+| `listMemories` | `GET /v1/memories` | Pagination + filters. |
+| `getMemory` | `GET /v1/memories/:id` | |
+| `deleteMemory` | `DELETE /v1/memories/:id` | |
+| `importMemories` | `POST /v1/import` | Paid plans; artifact base64 + mode. |
+| `getUsageToday` | `GET /v1/usage/today` | |
+| `listAuditLog` | `GET /v1/audit/log` | Optional `page`, `limit`. |
+
+**Evals:** `listEvalSets`, `createEvalSet`, `deleteEvalSet`, `listEvalItems`, `createEvalItem`, `deleteEvalItem`, `runEvalSet`.
+
+**Admin (pass `adminToken` per call — `x-admin-token`, not the project API key):** `createWorkspace`, `createApiKey`, `listApiKeys`, `revokeApiKey`.
+
+**Not in SDK:** billing (`/v1/billing/status`, `/v1/billing/checkout`), workspace webhooks, dashboard session cookies, hosted MCP HTTP — use `fetch` or your HTTP client.
 
 ## Links
 

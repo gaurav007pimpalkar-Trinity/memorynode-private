@@ -1,4 +1,13 @@
+## ⚠️ Internal Operational Document
+
+This document may not reflect real-time production state.  
+Always verify against actual infrastructure (Cloudflare, Supabase, etc.).
+
+---
+
 # MemoryNode.ai — Engine Skeleton (Internal Architecture)
+
+> **Supporting reference.** Diagrams mirror the Worker layout; validate handler names and order against `apps/api/src/router.ts` and `workerApp.ts` after refactors.
 
 **Purpose:** A technical view of the product’s “engine” — request pipeline, routing, handlers, and how data flows through the system.
 

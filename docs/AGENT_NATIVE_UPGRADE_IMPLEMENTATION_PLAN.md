@@ -1,5 +1,11 @@
 # Agent-Native Memory SDK Upgrade — Implementation Plan
 
+## ⚠️ Historical Snapshot
+
+This document reflects a past state and is NOT a source of truth.
+
+A design plan; delivery state varies (e.g. MCP and recency exist in other forms). Do not treat as a task list without diffing the repo.
+
 **Scope:** 2026 Builder/Agent SDK edition. Three upgrades only: Episodic Event Store, Recency Weight Decay, MCP Integration.  
 **Out of scope:** Local-first, storage_tier/sync_status, compliance, knowledge graph, summarization pipeline, compression engine.
 

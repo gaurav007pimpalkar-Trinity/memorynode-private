@@ -99,6 +99,8 @@ jobs:
       - name: Validate script syntax
         run: |
           bash -n scripts/verify_e2e.sh
+          node --check scripts/check_docs_drift.mjs
+          node --check scripts/apply_doc_banners.mjs
           node --check scripts/verify_staging.mjs
           node --check scripts/beta_verify.mjs
           node --check scripts/dashboard_build_prod_surfaces.mjs
@@ -146,6 +148,13 @@ jobs:
 
       - name: OpenAPI spec drift check
         run: pnpm openapi:check
+
+      - name: Docs drift guard (truth docs vs API, SDK, MCP, worker)
+        env:
+          DOCS_DRIFT_BASE_SHA: ${{ github.event.pull_request.base.sha || github.event.before }}
+          DOCS_DRIFT_HEAD_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+          PR_BODY: ${{ github.event_name == 'pull_request' && github.event.pull_request.body || '' }}
+        run: node scripts/check_docs_drift.mjs
 
       - name: Test (with coverage)
         env:

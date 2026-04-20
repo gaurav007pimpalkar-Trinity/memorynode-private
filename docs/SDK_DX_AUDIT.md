@@ -1,5 +1,11 @@
 # @memorynodeai/sdk — Developer Experience Audit
 
+## ⚠️ Historical Snapshot
+
+This document reflects a past state and is NOT a source of truth.
+
+Dated DX review; verify current `packages/sdk/src/index.ts` and behavior before relying on specifics.
+
 **Date:** 2026-02-28  
 **Scope:** `packages/sdk` (v0.1.1) — constructor ergonomics, method naming, type safety, error handling, response shape consistency.  
 **Constraint:** Suggestions must not break existing API for a minor/patch release unless explicitly labeled **BREAKING**.

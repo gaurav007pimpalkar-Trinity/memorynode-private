@@ -1,3 +1,10 @@
+## ⚠️ Internal Operational Document
+
+This document may not reflect real-time production state.  
+Always verify against actual infrastructure (Cloudflare, Supabase, etc.).
+
+---
+
 # MemoryNode Launch Runbook
 
 One-page reference for deploy, migrations, health checks, and escalation. Use this before and after launch.

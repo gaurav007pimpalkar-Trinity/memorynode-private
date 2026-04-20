@@ -1,3 +1,10 @@
+## ⚠️ Internal Operational Document
+
+This document may not reflect real-time production state.  
+Always verify against actual infrastructure (Cloudflare, Supabase, etc.).
+
+---
+
 # MemoryNode Alerts
 
 Production alerting mapped 1:1 to the golden metrics in `docs/internal/OBSERVABILITY.md`.

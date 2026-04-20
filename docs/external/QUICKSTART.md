@@ -1,3 +1,12 @@
+## ℹ️ Supporting Documentation
+
+This document is a guide.  
+For exact API behavior, refer to:
+- `docs/external/API_USAGE.md`
+- `docs/external/openapi.yaml` (run `pnpm openapi:gen` to regenerate)
+
+---
+
 # Quickstart (redirect)
 
 **Mode 1 — Just use it:** [docs/start-here/README.md](../start-here/README.md) — API key + four `curl`s (`/v1/memories`, `/v1/search`, `/v1/context`, `/v1/context/explain`), about 10 minutes.

@@ -1,3 +1,12 @@
+## ℹ️ Supporting Documentation
+
+This document is a guide.  
+For exact API behavior, refer to:
+- `docs/external/API_USAGE.md`
+- `docs/external/openapi.yaml` (run `pnpm openapi:gen` to regenerate)
+
+---
+
 # Audiences: United States and India (same product)
 
 MemoryNode is **one product and one API** worldwide. Buyers differ mainly in **what proof they need first** and **how they pay**, not in the core memory loop.

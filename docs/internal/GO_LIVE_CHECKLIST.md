@@ -1,3 +1,10 @@
+## ⚠️ Internal Operational Document
+
+This document may not reflect real-time production state.  
+Always verify against actual infrastructure (Cloudflare, Supabase, etc.).
+
+---
+
 # Go-Live Checklist (one page)
 
 Do these **before** first production traffic. Full details: [PROD_SETUP_CHECKLIST.md](../PROD_SETUP_CHECKLIST.md), [PROD_READY.md](PROD_READY.md), [RELEASE_RUNBOOK.md](RELEASE_RUNBOOK.md).

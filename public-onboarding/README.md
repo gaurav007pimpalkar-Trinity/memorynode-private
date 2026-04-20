@@ -1,3 +1,12 @@
+## ℹ️ Supporting Documentation
+
+This document is a guide.  
+For exact API behavior, refer to:
+- `docs/external/API_USAGE.md`
+- `docs/external/openapi.yaml` (run `pnpm openapi:gen` to regenerate)
+
+---
+
 # MemoryNode
 
 **Reliable per-user memory for customer-facing AI** — support bots, SMB chat, and SaaS copilots need persistent, queryable memory. MemoryNode provides store-and-retrieve memory and semantic search as a single API; embeddings and search infrastructure are managed for you.

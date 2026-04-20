@@ -1,3 +1,10 @@
+## ⚠️ Internal Operational Document
+
+This document may not reflect real-time production state.  
+Always verify against actual infrastructure (Cloudflare, Supabase, etc.).
+
+---
+
 # MemoryNode Incident Runbooks
 
 Canonical response playbooks for high-impact incidents. This document is optimized for first 15 minutes of response, ownership, escalation, and recovery validation.

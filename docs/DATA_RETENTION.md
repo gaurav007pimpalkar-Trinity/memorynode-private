@@ -1,3 +1,12 @@
+## ℹ️ Supporting Documentation
+
+This document is a guide.  
+For exact API behavior, refer to:
+- `docs/external/API_USAGE.md`
+- `docs/external/openapi.yaml` (run `pnpm openapi:gen` to regenerate)
+
+---
+
 # Data retention and lifecycle (customer-facing)
 
 Plain-language summary of what MemoryNode stores, how long it is kept, and how you can **export** or **delete** data. For technical security controls, see [SECURITY.md](./SECURITY.md).

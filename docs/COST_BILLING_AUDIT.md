@@ -1,5 +1,11 @@
 # Cost & Billing Audit — CTO-Level Report
 
+## ⚠️ Historical Snapshot
+
+This document reflects a past state and is NOT a source of truth.
+
+Reconcile all limits, RPCs, and plan codes with `packages/shared/`, `apps/api/src/limits.ts`, and `infra/sql/` in the current tree.
+
 **Date:** 2025-03-05  
 **Scope:** Entire repository — limits, cost-generating operations, retries, enforcement order, bypass paths, plan safety.
 

@@ -1,3 +1,12 @@
+## ℹ️ Supporting Documentation
+
+This document is a guide.  
+For exact API behavior, refer to:
+- `docs/external/API_USAGE.md`
+- `docs/external/openapi.yaml` (run `pnpm openapi:gen` to regenerate)
+
+---
+
 # MemoryNode + MCP (Mode 1)
 
 Use this when you want **Cursor**, **Claude Code**, or another MCP-aware tool to read and write memories **without** writing your own HTTP wrapper.

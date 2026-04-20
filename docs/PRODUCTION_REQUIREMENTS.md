@@ -1,3 +1,10 @@
+## ⚠️ Internal Operational Document
+
+This document may not reflect real-time production state.  
+Always verify against actual infrastructure (Cloudflare, Supabase, etc.).
+
+---
+
 # Production Requirements — No Stubs or Fakes
 
 In **production** (and when `ENVIRONMENT=production` or `staging`), the following must be real. Stub or dev-only modes are **forbidden** and will cause the Worker to return `500 CONFIG_ERROR`.

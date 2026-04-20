@@ -1,6 +1,10 @@
 # Safe Plan v2 — Financial Protection Layer
 
-This document describes the Plan v2 protection layer: migration steps, behavior, and how it protects INR margins under worst-case usage.
+## ⚠️ Historical Snapshot
+
+This document reflects a past state and is NOT a source of truth.
+
+Describes Plan v2 migrations and economics; verify applied migrations and current caps in `infra/sql/`, `packages/shared`, and `apps/api/src/limits.ts` before relying on behavior. Covers migration steps, behavior, and how the layer protects INR margins under worst-case usage.
 
 ## Overview
 

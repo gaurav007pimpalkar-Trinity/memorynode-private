@@ -1,4 +1,13 @@
+## ⚠️ Internal Operational Document
+
+This document may not reflect real-time production state.  
+Always verify against actual infrastructure (Cloudflare, Supabase, etc.).
+
+---
+
 # MemoryNode Monorepo
+
+Verify live configuration and [../external/API_USAGE.md](../external/API_USAGE.md) for API behavior before acting.
 
 ## Layout
 - `apps/api` – Cloudflare Worker API.
@@ -7,6 +16,7 @@
 - `packages/sdk` – lightweight TypeScript SDK.
 - `infra/sql` – SQL migrations and schema (apply in order).
 - `docs` – documentation.
+- `docs/DOCUMENTATION_INDEX.md` – inventory of all top-level docs and mapping to code.
 - `docs/internal/RELEASE_RUNBOOK.md` – canonical staging/prod release, validation, rollback, and kill switches.
 - `docs/internal/PROD_READY.md` – final go/no-go checklist.
 - `docs/internal/ALERTS.md` – lightweight monitoring + alert thresholds and Cloudflare setup notes.

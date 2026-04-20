@@ -1,3 +1,10 @@
+## ⚠️ Internal Operational Document
+
+This document may not reflect real-time production state.  
+Always verify against actual infrastructure (Cloudflare, Supabase, etc.).
+
+---
+
 # Production Deploy Notes (Cloudflare Workers)
 
 Canonical deploy/rollback workflow:

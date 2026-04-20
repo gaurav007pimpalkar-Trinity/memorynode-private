@@ -1,3 +1,10 @@
+## ⚠️ Internal Operational Document
+
+This document may not reflect real-time production state.  
+Always verify against actual infrastructure (Cloudflare, Supabase, etc.).
+
+---
+
 # MemoryNode — Saved Log Queries (§3.1)
 
 Every signal in Phase 3 §3.1 is queryable via these definitions. Use with **Cloudflare Logpush** → your log sink (Datadog, Grafana Cloud, Splunk, etc.) or **Cloudflare Workers Logs** UI.

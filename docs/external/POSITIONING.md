@@ -1,3 +1,12 @@
+## ℹ️ Supporting Documentation
+
+This document is a guide.  
+For exact API behavior, refer to:
+- `docs/external/API_USAGE.md`
+- `docs/external/openapi.yaml` (run `pnpm openapi:gen` to regenerate)
+
+---
+
 # MemoryNode — positioning and ICP
 
 This file is the **canonical product narrative** for MemoryNode. Other READMEs and landing copy should align here or link here so messaging does not drift.

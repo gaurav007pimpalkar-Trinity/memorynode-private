@@ -1,5 +1,11 @@
 # Cloudflare Infrastructure Audit Report
 
+## ⚠️ Historical Snapshot
+
+This document reflects a past state and is NOT a source of truth.
+
+Point-in-time DNS/account export; zones, routes, and Worker names drift. Confirm in the Cloudflare dashboard before acting.
+
 **Date:** 2026-02-27T13:53:34.122Z
 **Method:** Cloudflare API with CLOUDFLARE_API_TOKEN.
 **Important:** No resources were modified or deleted. Analysis only.

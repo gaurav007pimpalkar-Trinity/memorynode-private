@@ -1,3 +1,10 @@
+## ⚠️ Internal Operational Document
+
+This document may not reflect real-time production state.  
+Always verify against actual infrastructure (Cloudflare, Supabase, etc.).
+
+---
+
 # Retrieval Validation Demo (Current API)
 
 This doc uses only active endpoints in the lean dual-ICP product surface.

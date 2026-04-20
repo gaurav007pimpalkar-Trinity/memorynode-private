@@ -1,3 +1,10 @@
+## ⚠️ Internal Operational Document
+
+This document may not reflect real-time production state.  
+Always verify against actual infrastructure (Cloudflare, Supabase, etc.).
+
+---
+
 # Dashboard session setup (Phase 0.2)
 
 Follow these steps after implementing the dashboard session (no API key in browser).

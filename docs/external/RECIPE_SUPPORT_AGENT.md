@@ -1,3 +1,12 @@
+## ℹ️ Supporting Documentation
+
+This document is a guide.  
+For exact API behavior, refer to:
+- `docs/external/API_USAGE.md`
+- `docs/external/openapi.yaml` (run `pnpm openapi:gen` to regenerate)
+
+---
+
 # Recipe: support-style agent memory
 
 **Goal:** When a customer talks to your support bot, it should **remember** ticket facts (order id, prior issue, what was promised) instead of asking the same questions again.

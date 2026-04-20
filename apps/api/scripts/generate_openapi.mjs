@@ -65,12 +65,21 @@ const ErrorResponse = z
 
 // ── Memory schemas ──────────────────────────────────────────────────────────
 const metadataValue = z.union([z.string(), z.number(), z.boolean(), z.null()]);
-const memoryTypeEnum = z.enum(["fact", "preference", "event", "note", "task"]);
+/** Mirrors apps/api/src/contracts/search.ts MEMORY_TYPES */
+const MEMORY_TYPES = ["fact", "preference", "event", "note", "task", "correction", "pin"];
+const memoryTypeEnum = z.enum(MEMORY_TYPES);
 
 const MemoryInsertSchema = z
   .object({
-    user_id: z.string().min(1).openapi({ example: "user_42" }),
+    userId: z.string().min(1).optional().openapi({ example: "user_42" }),
+    user_id: z.string().min(1).optional().openapi({ example: "user_42" }),
+    owner_id: z.string().min(1).optional(),
+    owner_type: z.enum(["user", "team", "app"]).optional(),
+    entity_id: z.string().min(1).optional(),
+    entity_type: z.enum(["user", "team", "app"]).optional(),
+    scope: z.string().optional(),
     namespace: z.string().optional().openapi({ example: "default" }),
+    containerTag: z.string().optional(),
     text: z
       .string()
       .min(1)
@@ -83,7 +92,7 @@ const MemoryInsertSchema = z
     memory_type: memoryTypeEnum
       .optional()
       .openapi({
-        description: "Optional memory type tag: fact, preference, event, note, or task.",
+        description: "Optional memory type tag (see MEMORY_TYPES in apps/api/src/contracts/search.ts).",
       }),
     importance: z
       .number()
@@ -105,6 +114,9 @@ const MemoryInsertSchema = z
         description:
           "When true (default), may run lightweight LLM extraction to child memories when plan and budget allow. Set false to store only the parent memory.",
       }),
+    effective_at: z.string().optional(),
+    replaces_memory_id: z.string().uuid().optional(),
+    idempotency_key: z.string().min(8).max(128).optional(),
   })
   .openapi("MemoryInsertPayload");
 
@@ -182,8 +194,15 @@ const filtersSchema = z
 
 const SearchPayloadSchema = z
   .object({
-    user_id: z.string().min(1).openapi({ example: "user_42" }),
+    userId: z.string().min(1).optional(),
+    user_id: z.string().min(1).optional().openapi({ example: "user_42" }),
+    owner_id: z.string().min(1).optional(),
+    owner_type: z.enum(["user", "team", "app"]).optional(),
+    entity_id: z.string().min(1).optional(),
+    entity_type: z.enum(["user", "team", "app"]).optional(),
+    scope: z.string().optional(),
     namespace: z.string().optional().openapi({ example: "default" }),
+    containerTag: z.string().optional(),
     query: z
       .string()
       .min(1)
@@ -460,12 +479,16 @@ const BillingStatusResponse = z
   })
   .openapi("BillingStatusResponse");
 
+/** Matches CHECKOUT_PLAN_IDS in apps/api/src/handlers/billing.ts — scale_plus is an entitlement tier only (GET /v1/billing/status), not a checkout target. */
 const BillingCheckoutPayload = z
   .object({
     plan: z
-      .enum(["launch", "build", "deploy", "scale", "scale_plus"])
+      .enum(["launch", "build", "deploy", "scale"])
       .optional()
       .openapi({ example: "build" }),
+    firstname: z.string().optional(),
+    email: z.string().optional(),
+    phone: z.string().optional(),
   })
   .openapi("BillingCheckoutPayload");
 
@@ -629,9 +652,14 @@ registry.registerPath({
   request: {
     query: z.object({
       user_id: z.string().optional(),
+      owner_id: z.string().optional(),
+      entity_id: z.string().optional(),
+      owner_type: z.enum(["user", "team", "app"]).optional(),
+      entity_type: z.enum(["user", "team", "app"]).optional(),
       namespace: z.string().optional(),
       page: z.coerce.number().int().min(1).optional(),
       page_size: z.coerce.number().int().min(1).max(100).optional(),
+      memory_type: memoryTypeEnum.optional(),
       metadata: z.string().optional().openapi({ description: "JSON-encoded metadata filter" }),
       start_time: z.string().optional(),
       end_time: z.string().optional(),
@@ -731,9 +759,16 @@ registry.registerPath({
   security: [{ [bearerAuth.name]: [] }],
   request: {
     query: z.object({
-      user_id: z.string().min(1),
-      query: z.string().min(1),
+      userId: z.string().min(1).optional(),
+      user_id: z.string().min(1).optional(),
+      owner_id: z.string().min(1).optional(),
+      owner_type: z.enum(["user", "team", "app"]).optional(),
+      entity_id: z.string().min(1).optional(),
+      entity_type: z.enum(["user", "team", "app"]).optional(),
+      scope: z.string().optional(),
       namespace: z.string().optional(),
+      containerTag: z.string().optional(),
+      query: z.string().min(1),
       top_k: z.coerce.number().int().min(1).max(MAX_TOPK).optional(),
       page: z.coerce.number().int().min(1).optional(),
       page_size: z.coerce.number().int().min(1).max(50).optional(),
@@ -1010,6 +1045,432 @@ registry.registerPath({
   },
 });
 
+const ConversationInsertPayload = z
+  .object({
+    userId: z.string().optional(),
+    user_id: z.string().optional(),
+    transcript: z.string().optional(),
+    messages: z
+      .array(
+        z.object({
+          role: z.enum(["user", "assistant", "system", "tool"]),
+          content: z.string(),
+          at: z.string().optional(),
+        }),
+      )
+      .optional(),
+    namespace: z.string().optional(),
+    scope: z.string().optional(),
+    metadata: z.record(z.string(), metadataValue).optional(),
+    memory_type: memoryTypeEnum.optional(),
+    extract: z.boolean().optional(),
+  })
+  .openapi("ConversationInsertPayload");
+
+const IngestEnvelope = z
+  .object({
+    kind: z.enum(["memory", "conversation", "document", "bundle"]),
+    body: z.record(z.string(), z.unknown()).openapi({
+      description:
+        "Discriminated by kind: memory/conversation/document use MemoryInsertSchema or conversation fields; bundle uses ImportPayload fields.",
+    }),
+  })
+  .openapi("IngestEnvelope");
+
+const MemoryLinkCreatePayload = z
+  .object({
+    to_memory_id: z.string().uuid(),
+    link_type: z.enum(["related_to", "about_ticket", "same_topic"]),
+  })
+  .openapi("MemoryLinkCreatePayload");
+
+const ProfilePinsPatchPayload = z
+  .object({
+    userId: z.string().optional(),
+    user_id: z.string().optional(),
+    scope: z.string().optional(),
+    namespace: z.string().optional(),
+    memory_ids: z.array(z.string().uuid()).max(10),
+  })
+  .openapi("ProfilePinsPatchPayload");
+
+const SearchReplayPayload = z.object({ query_id: z.string().uuid() }).openapi("SearchReplayPayload");
+
+const ContextFeedbackPayload = z
+  .object({
+    trace_id: z.string().min(1),
+    query_id: z.string().optional(),
+    eval_set_id: z.string().optional(),
+    chunk_ids_used: z.array(z.string()).optional(),
+    chunk_ids_unused: z.array(z.string()).optional(),
+  })
+  .openapi("ContextFeedbackPayload");
+
+const ExplainAnswerPayload = z
+  .object({
+    question: z.string().min(1),
+    context: z.string().min(1),
+  })
+  .openapi("ExplainAnswerPayload");
+
+const EvalSetCreatePayload = z.object({ name: z.string().min(1).max(120) }).openapi("EvalSetCreatePayload");
+
+const EvalItemCreatePayload = z
+  .object({
+    eval_set_id: z.string().uuid(),
+    query: z.string().min(1),
+    expected_memory_ids: z.array(z.string().uuid()).default([]),
+  })
+  .openapi("EvalItemCreatePayload");
+
+const EvalRunPayload = z
+  .object({
+    eval_set_id: z.string().uuid(),
+    user_id: z.string().optional(),
+    owner_id: z.string().optional(),
+    namespace: z.string().optional(),
+    top_k: z.number().int().min(1).max(MAX_TOPK).optional(),
+    search_mode: z.enum(["hybrid", "vector", "keyword"]).optional(),
+    min_score: z.number().min(0).max(1).optional(),
+  })
+  .openapi("EvalRunPayload");
+
+const MemoryWebhookPayload = z
+  .object({
+    workspace_id: z.string().min(1),
+  })
+  .passthrough()
+  .openapi({
+    description:
+      "Same fields as POST /v1/memories plus workspace_id. Signed with X-MN-Webhook-Signature (see docs/external/API_USAGE.md).",
+  });
+
+// ── Additional routes (also in apps/api/src/router.ts) ─────────────────────
+
+registry.registerPath({
+  method: "post",
+  path: "/v1/memories/conversation",
+  summary: "Ingest transcript or structured messages as a memory",
+  tags: ["Memories"],
+  security: [{ [bearerAuth.name]: [] }],
+  request: {
+    body: {
+      required: true,
+      content: { "application/json": { schema: ConversationInsertPayload } },
+    },
+  },
+  responses: {
+    200: { description: "Conversation stored", content: { "application/json": { schema: MemoryInsertResponse } } },
+    400: errorRef("Validation error"),
+    401: errorRef("Unauthorized"),
+  },
+});
+
+registry.registerPath({
+  method: "post",
+  path: "/v1/ingest",
+  summary: "Unified ingest dispatcher (memory, conversation, document text, or bundle import)",
+  tags: ["Memories"],
+  security: [{ [bearerAuth.name]: [] }],
+  request: {
+    body: { required: true, content: { "application/json": { schema: IngestEnvelope } } },
+  },
+  responses: {
+    200: { description: "Ingest result (shape varies by kind)" },
+    400: errorRef("Validation error"),
+    401: errorRef("Unauthorized"),
+  },
+});
+
+registry.registerPath({
+  method: "post",
+  path: "/v1/memories/{id}/links",
+  summary: "Create a typed link between two memories",
+  tags: ["Memories"],
+  security: [{ [bearerAuth.name]: [] }],
+  request: {
+    params: z.object({ id: z.string().uuid() }),
+    body: { required: true, content: { "application/json": { schema: MemoryLinkCreatePayload } } },
+  },
+  responses: {
+    200: { description: "Link created" },
+    400: errorRef("Validation error"),
+    401: errorRef("Unauthorized"),
+    402: errorRef("Upgrade required"),
+  },
+});
+
+registry.registerPath({
+  method: "delete",
+  path: "/v1/memories/{id}/links",
+  summary: "Delete a typed link from this memory",
+  tags: ["Memories"],
+  security: [{ [bearerAuth.name]: [] }],
+  request: {
+    params: z.object({ id: z.string().uuid() }),
+    query: z.object({
+      to_memory_id: z.string().uuid(),
+      link_type: z.enum(["related_to", "about_ticket", "same_topic"]),
+    }),
+  },
+  responses: {
+    200: { description: "Link removed" },
+    400: errorRef("Validation error"),
+    401: errorRef("Unauthorized"),
+  },
+});
+
+registry.registerPath({
+  method: "get",
+  path: "/v1/search/history",
+  summary: "Recent search queries for the workspace",
+  tags: ["Retrieval"],
+  security: [{ [bearerAuth.name]: [] }],
+  request: {
+    query: z.object({
+      limit: z.coerce.number().int().min(1).max(100).optional(),
+    }),
+  },
+  responses: {
+    200: { description: "Search history rows" },
+    401: errorRef("Unauthorized"),
+  },
+});
+
+registry.registerPath({
+  method: "post",
+  path: "/v1/search/replay",
+  summary: "Replay a stored search by query_id",
+  tags: ["Retrieval"],
+  security: [{ [bearerAuth.name]: [] }],
+  request: {
+    body: { required: true, content: { "application/json": { schema: SearchReplayPayload } } },
+  },
+  responses: {
+    200: { description: "Replay results" },
+    400: errorRef("Validation error"),
+    401: errorRef("Unauthorized"),
+  },
+});
+
+registry.registerPath({
+  method: "patch",
+  path: "/v1/profile/pins",
+  summary: "Replace pinned memories (metadata.pinned) for a user/namespace",
+  tags: ["Retrieval"],
+  security: [{ [bearerAuth.name]: [] }],
+  request: {
+    body: { required: true, content: { "application/json": { schema: ProfilePinsPatchPayload } } },
+  },
+  responses: {
+    200: { description: "Pins updated" },
+    400: errorRef("Validation error"),
+    401: errorRef("Unauthorized"),
+  },
+});
+
+registry.registerPath({
+  method: "post",
+  path: "/v1/context/feedback",
+  summary: "Submit retrieval feedback for a trace",
+  tags: ["Retrieval"],
+  security: [{ [bearerAuth.name]: [] }],
+  request: {
+    body: { required: true, content: { "application/json": { schema: ContextFeedbackPayload } } },
+  },
+  responses: {
+    200: { description: "Feedback accepted", content: { "application/json": { schema: z.object({ accepted: z.boolean() }) } } },
+    400: errorRef("Validation error"),
+    401: errorRef("Unauthorized"),
+  },
+});
+
+registry.registerPath({
+  method: "get",
+  path: "/v1/pruning/metrics",
+  summary: "Workspace pruning / dedupe counters",
+  tags: ["Usage"],
+  security: [{ [bearerAuth.name]: [] }],
+  responses: {
+    200: { description: "Metrics" },
+    401: errorRef("Unauthorized"),
+  },
+});
+
+registry.registerPath({
+  method: "post",
+  path: "/v1/explain/answer",
+  summary: "Explain an answer from question + retrieved context text",
+  tags: ["Retrieval"],
+  security: [{ [bearerAuth.name]: [] }],
+  request: {
+    body: { required: true, content: { "application/json": { schema: ExplainAnswerPayload } } },
+  },
+  responses: {
+    200: { description: "Generated explanation" },
+    400: errorRef("Validation error"),
+    401: errorRef("Unauthorized"),
+  },
+});
+
+registry.registerPath({
+  method: "post",
+  path: "/v1/webhooks/memory",
+  summary: "Signed memory ingest webhook (not the project API-key path; uses HMAC + optional internal forward token)",
+  tags: ["Webhooks"],
+  request: {
+    body: { required: true, content: { "application/json": { schema: MemoryWebhookPayload } } },
+  },
+  responses: {
+    200: { description: "Accepted" },
+    400: errorRef("Invalid signature or body"),
+    401: errorRef("Unauthorized"),
+  },
+});
+
+registry.registerPath({
+  method: "get",
+  path: "/v1/evals/sets",
+  summary: "List evaluation sets",
+  tags: ["Evals"],
+  security: [{ [bearerAuth.name]: [] }],
+  responses: { 200: { description: "Eval sets" }, 401: errorRef("Unauthorized") },
+});
+
+registry.registerPath({
+  method: "post",
+  path: "/v1/evals/sets",
+  summary: "Create an evaluation set",
+  tags: ["Evals"],
+  security: [{ [bearerAuth.name]: [] }],
+  request: {
+    body: { required: true, content: { "application/json": { schema: EvalSetCreatePayload } } },
+  },
+  responses: { 200: { description: "Created" }, 400: errorRef("Validation error"), 401: errorRef("Unauthorized") },
+});
+
+registry.registerPath({
+  method: "delete",
+  path: "/v1/evals/sets/{eval_set_id}",
+  summary: "Delete an evaluation set",
+  tags: ["Evals"],
+  security: [{ [bearerAuth.name]: [] }],
+  request: { params: z.object({ eval_set_id: z.string().uuid() }) },
+  responses: { 200: { description: "Deleted" }, 401: errorRef("Unauthorized") },
+});
+
+registry.registerPath({
+  method: "get",
+  path: "/v1/evals/items",
+  summary: "List eval items for a set",
+  tags: ["Evals"],
+  security: [{ [bearerAuth.name]: [] }],
+  request: {
+    query: z.object({ eval_set_id: z.string().uuid() }),
+  },
+  responses: { 200: { description: "Items" }, 401: errorRef("Unauthorized") },
+});
+
+registry.registerPath({
+  method: "post",
+  path: "/v1/evals/items",
+  summary: "Create an eval item (query + expected memory IDs)",
+  tags: ["Evals"],
+  security: [{ [bearerAuth.name]: [] }],
+  request: {
+    body: { required: true, content: { "application/json": { schema: EvalItemCreatePayload } } },
+  },
+  responses: { 200: { description: "Created" }, 400: errorRef("Validation error"), 401: errorRef("Unauthorized") },
+});
+
+registry.registerPath({
+  method: "delete",
+  path: "/v1/evals/items/{eval_item_id}",
+  summary: "Delete an eval item",
+  tags: ["Evals"],
+  security: [{ [bearerAuth.name]: [] }],
+  request: { params: z.object({ eval_item_id: z.string().uuid() }) },
+  responses: { 200: { description: "Deleted" }, 401: errorRef("Unauthorized") },
+});
+
+registry.registerPath({
+  method: "post",
+  path: "/v1/evals/run",
+  summary: "Run precision/recall evaluation for a set",
+  tags: ["Evals"],
+  security: [{ [bearerAuth.name]: [] }],
+  request: {
+    body: { required: true, content: { "application/json": { schema: EvalRunPayload } } },
+  },
+  responses: { 200: { description: "Eval metrics" }, 400: errorRef("Validation error"), 401: errorRef("Unauthorized") },
+});
+
+registry.registerPath({
+  method: "post",
+  path: "/v1/dashboard/session",
+  summary: "Establish dashboard browser session (cookie + CSRF); implemented in workerApp.ts",
+  tags: ["Dashboard"],
+  request: {
+    body: {
+      required: true,
+      content: {
+        "application/json": {
+          schema: z.object({
+            access_token: z.string(),
+            workspace_id: z.string(),
+          }),
+        },
+      },
+    },
+  },
+  responses: {
+    200: { description: "Session established; sets cookies and returns csrf_token when applicable" },
+    401: errorRef("Unauthorized"),
+  },
+});
+
+registry.registerPath({
+  method: "post",
+  path: "/v1/dashboard/logout",
+  summary: "Clear dashboard session cookie",
+  tags: ["Dashboard"],
+  responses: {
+    200: { description: "Logout acknowledged", content: { "application/json": { schema: z.object({ ok: z.literal(true) }) } } },
+    403: errorRef("Invalid CSRF"),
+    429: errorRef("Rate limited"),
+  },
+});
+
+registry.registerPath({
+  method: "get",
+  path: "/v1/mcp",
+  summary: "Hosted Streamable MCP (also served as /mcp); Authorization: Bearer API key",
+  tags: ["MCP"],
+  security: [{ [bearerAuth.name]: [] }],
+  responses: {
+    200: { description: "MCP capability response (SSE/streamable HTTP)" },
+    426: { description: "Upgrade required for WebSocket legacy clients" },
+  },
+});
+
+registry.registerPath({
+  method: "post",
+  path: "/v1/mcp",
+  summary: "Hosted MCP POST (JSON-RPC / streamable)",
+  tags: ["MCP"],
+  security: [{ [bearerAuth.name]: [] }],
+  responses: { 200: { description: "MCP response" } },
+});
+
+registry.registerPath({
+  method: "delete",
+  path: "/v1/mcp",
+  summary: "Terminate MCP session when applicable",
+  tags: ["MCP"],
+  security: [{ [bearerAuth.name]: [] }],
+  responses: { 200: { description: "Session cleared" } },
+});
+
 // ── Generate document ───────────────────────────────────────────────────────
 const generator = new OpenApiGeneratorV3(registry.definitions);
 
@@ -1020,8 +1481,12 @@ const doc = generator.generateDocument({
     version: "1.0.0",
     description:
       "MemoryNode — reliable per-user memory for customer-facing AI (support bots, SMB chat, SaaS copilots). " +
-      "Store, search, and prompt-ready context over HTTPS; hybrid retrieval is server-managed. " +
-      "This spec is auto-generated from Zod schemas in apps/api/src/contracts/.",
+      "Store, search, and prompt-ready context over HTTPS; hybrid retrieval is server-managed.\n\n" +
+      "This file is produced by `pnpm openapi:gen` from `apps/api/scripts/generate_openapi.mjs` (schemas aligned with `apps/api/src/contracts/`).\n\n" +
+      "**Also implemented in the Worker but omitted or summarized here:** `/healthz`, `/ready`, `/mcp`, PayU `/v1/billing/webhook`, " +
+      "admin cron endpoints (`/admin/*`), read-only `/v1/admin/*`, and `/v1/admin/founder/phase1`. See `apps/api/src/router.ts` and `workerApp.ts`.",
+    "x-doc-governance":
+      "SOURCE_OF_TRUTH: Regenerate via `pnpm openapi:gen` when `apps/api/scripts/generate_openapi.mjs`, `apps/api/src/contracts/`, or `apps/api/src/router.ts` change. Same PR as behavioral API changes. Human prose: `docs/external/API_USAGE.md`.",
   },
   servers: [
     { url: "https://api.memorynode.ai", description: "Production" },
@@ -1029,7 +1494,18 @@ const doc = generator.generateDocument({
   ],
 });
 
-const yamlOutput = yamlStringify(doc, { lineWidth: 120 });
+const OPENAPI_FILE_PREAMBLE = `# -----------------------------------------------------------------------------
+# Source of Truth (OpenAPI artifact)
+#
+# This file MUST reflect actual HTTP behavior. Regenerate with: pnpm openapi:gen
+# If apps/api/src/router.ts, apps/api/src/contracts/, or packages/sdk/src/ change
+# API behavior → update apps/api/scripts/generate_openapi.mjs and/or docs, then
+# commit the regenerated openapi.yaml in the SAME PR (see scripts/check_docs_drift.mjs).
+# -----------------------------------------------------------------------------
+
+`;
+
+const yamlOutput = OPENAPI_FILE_PREAMBLE + yamlStringify(doc, { lineWidth: 120 });
 
 // ── Write or check ──────────────────────────────────────────────────────────
 const isCheck = process.argv.includes("--check");

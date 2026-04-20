@@ -1,10 +1,31 @@
+# -----------------------------------------------------------------------------
+# Source of Truth (OpenAPI artifact)
+#
+# This file MUST reflect actual HTTP behavior. Regenerate with: pnpm openapi:gen
+# If apps/api/src/router.ts, apps/api/src/contracts/, or packages/sdk/src/ change
+# API behavior → update apps/api/scripts/generate_openapi.mjs and/or docs, then
+# commit the regenerated openapi.yaml in the SAME PR (see scripts/check_docs_drift.mjs).
+# -----------------------------------------------------------------------------
+
 openapi: 3.0.3
 info:
   title: MemoryNode API
   version: 1.0.0
-  description: MemoryNode — reliable per-user memory for customer-facing AI (support bots, SMB chat, SaaS copilots).
-    Store, search, and prompt-ready context over HTTPS; hybrid retrieval is server-managed. This spec is auto-generated
-    from Zod schemas in apps/api/src/contracts/.
+  description: >-
+    MemoryNode — reliable per-user memory for customer-facing AI (support bots, SMB chat, SaaS copilots). Store, search,
+    and prompt-ready context over HTTPS; hybrid retrieval is server-managed.
+
+
+    This file is produced by `pnpm openapi:gen` from `apps/api/scripts/generate_openapi.mjs` (schemas aligned with
+    `apps/api/src/contracts/`).
+
+
+    **Also implemented in the Worker but omitted or summarized here:** `/healthz`, `/ready`, `/mcp`, PayU
+    `/v1/billing/webhook`, admin cron endpoints (`/admin/*`), read-only `/v1/admin/*`, and `/v1/admin/founder/phase1`.
+    See `apps/api/src/router.ts` and `workerApp.ts`.
+  x-doc-governance: "SOURCE_OF_TRUTH: Regenerate via `pnpm openapi:gen` when `apps/api/scripts/generate_openapi.mjs`,
+    `apps/api/src/contracts/`, or `apps/api/src/router.ts` change. Same PR as behavioral API changes. Human prose:
+    `docs/external/API_USAGE.md`."
 servers:
   - url: https://api.memorynode.ai
     description: Production
@@ -119,13 +140,39 @@ components:
     MemoryInsertPayload:
       type: object
       properties:
+        userId:
+          type: string
+          minLength: 1
+          example: user_42
         user_id:
           type: string
           minLength: 1
           example: user_42
+        owner_id:
+          type: string
+          minLength: 1
+        owner_type:
+          type: string
+          enum:
+            - user
+            - team
+            - app
+        entity_id:
+          type: string
+          minLength: 1
+        entity_type:
+          type: string
+          enum:
+            - user
+            - team
+            - app
+        scope:
+          type: string
         namespace:
           type: string
           example: default
+        containerTag:
+          type: string
         text:
           type: string
           minLength: 1
@@ -151,7 +198,9 @@ components:
             - event
             - note
             - task
-          description: "Optional memory type tag: fact, preference, event, note, or task."
+            - correction
+            - pin
+          description: Optional memory type tag (see MEMORY_TYPES in apps/api/src/contracts/search.ts).
         importance:
           type: number
           minimum: 0.01
@@ -169,8 +218,16 @@ components:
           default: true
           description: When true (default), may run lightweight LLM extraction to child memories when plan and budget allow. Set
             false to store only the parent memory.
+        effective_at:
+          type: string
+        replaces_memory_id:
+          type: string
+          format: uuid
+        idempotency_key:
+          type: string
+          minLength: 8
+          maxLength: 128
       required:
-        - user_id
         - text
     SearchResultItem:
       type: object
@@ -237,13 +294,38 @@ components:
     SearchPayload:
       type: object
       properties:
+        userId:
+          type: string
+          minLength: 1
         user_id:
           type: string
           minLength: 1
           example: user_42
+        owner_id:
+          type: string
+          minLength: 1
+        owner_type:
+          type: string
+          enum:
+            - user
+            - team
+            - app
+        entity_id:
+          type: string
+          minLength: 1
+        entity_type:
+          type: string
+          enum:
+            - user
+            - team
+            - app
+        scope:
+          type: string
         namespace:
           type: string
           example: default
+        containerTag:
+          type: string
         query:
           type: string
           minLength: 1
@@ -316,7 +398,6 @@ components:
             - recall
             - precision
       required:
-        - user_id
         - query
     ContextResponse:
       type: object
@@ -789,8 +870,13 @@ components:
             - build
             - deploy
             - scale
-            - scale_plus
           example: build
+        firstname:
+          type: string
+        email:
+          type: string
+        phone:
+          type: string
     CreateWorkspacePayload:
       type: object
       properties:
@@ -823,6 +909,200 @@ components:
           example: key_abc123
       required:
         - api_key_id
+    ConversationInsertPayload:
+      type: object
+      properties:
+        userId:
+          type: string
+        user_id:
+          type: string
+        transcript:
+          type: string
+        messages:
+          type: array
+          items:
+            type: object
+            properties:
+              role:
+                type: string
+                enum:
+                  - user
+                  - assistant
+                  - system
+                  - tool
+              content:
+                type: string
+              at:
+                type: string
+            required:
+              - role
+              - content
+        namespace:
+          type: string
+        scope:
+          type: string
+        metadata:
+          type: object
+          additionalProperties:
+            anyOf:
+              - type: string
+              - type: number
+              - type: boolean
+              - nullable: true
+              - nullable: true
+        memory_type:
+          type: string
+          enum: *a1
+        extract:
+          type: boolean
+    IngestEnvelope:
+      type: object
+      properties:
+        kind:
+          type: string
+          enum:
+            - memory
+            - conversation
+            - document
+            - bundle
+        body:
+          type: object
+          additionalProperties:
+            nullable: true
+          description: "Discriminated by kind: memory/conversation/document use MemoryInsertSchema or conversation fields; bundle
+            uses ImportPayload fields."
+      required:
+        - kind
+        - body
+    MemoryLinkCreatePayload:
+      type: object
+      properties:
+        to_memory_id:
+          type: string
+          format: uuid
+        link_type:
+          type: string
+          enum:
+            - related_to
+            - about_ticket
+            - same_topic
+      required:
+        - to_memory_id
+        - link_type
+    SearchReplayPayload:
+      type: object
+      properties:
+        query_id:
+          type: string
+          format: uuid
+      required:
+        - query_id
+    ProfilePinsPatchPayload:
+      type: object
+      properties:
+        userId:
+          type: string
+        user_id:
+          type: string
+        scope:
+          type: string
+        namespace:
+          type: string
+        memory_ids:
+          type: array
+          items:
+            type: string
+            format: uuid
+          maxItems: 10
+      required:
+        - memory_ids
+    ContextFeedbackPayload:
+      type: object
+      properties:
+        trace_id:
+          type: string
+          minLength: 1
+        query_id:
+          type: string
+        eval_set_id:
+          type: string
+        chunk_ids_used:
+          type: array
+          items:
+            type: string
+        chunk_ids_unused:
+          type: array
+          items:
+            type: string
+      required:
+        - trace_id
+    ExplainAnswerPayload:
+      type: object
+      properties:
+        question:
+          type: string
+          minLength: 1
+        context:
+          type: string
+          minLength: 1
+      required:
+        - question
+        - context
+    EvalSetCreatePayload:
+      type: object
+      properties:
+        name:
+          type: string
+          minLength: 1
+          maxLength: 120
+      required:
+        - name
+    EvalItemCreatePayload:
+      type: object
+      properties:
+        eval_set_id:
+          type: string
+          format: uuid
+        query:
+          type: string
+          minLength: 1
+        expected_memory_ids:
+          type: array
+          items:
+            type: string
+            format: uuid
+          default: []
+      required:
+        - eval_set_id
+        - query
+    EvalRunPayload:
+      type: object
+      properties:
+        eval_set_id:
+          type: string
+          format: uuid
+        user_id:
+          type: string
+        owner_id:
+          type: string
+        namespace:
+          type: string
+        top_k:
+          type: integer
+          minimum: 1
+          maximum: 20
+        search_mode:
+          type: string
+          enum:
+            - hybrid
+            - vector
+            - keyword
+        min_score:
+          type: number
+          minimum: 0
+          maximum: 1
+      required:
+        - eval_set_id
   parameters: {}
 paths:
   /healthz:
@@ -987,6 +1267,34 @@ paths:
         - schema:
             type: string
           required: false
+          name: owner_id
+          in: query
+        - schema:
+            type: string
+          required: false
+          name: entity_id
+          in: query
+        - schema:
+            type: string
+            enum:
+              - user
+              - team
+              - app
+          required: false
+          name: owner_type
+          in: query
+        - schema:
+            type: string
+            enum:
+              - user
+              - team
+              - app
+          required: false
+          name: entity_type
+          in: query
+        - schema:
+            type: string
+          required: false
           name: namespace
           in: query
         - schema:
@@ -1001,6 +1309,12 @@ paths:
             maximum: 100
           required: false
           name: page_size
+          in: query
+        - schema:
+            type: string
+            enum: *a1
+          required: false
+          name: memory_type
           in: query
         - schema:
             type: string
@@ -1157,19 +1471,65 @@ paths:
         - schema:
             type: string
             minLength: 1
-          required: true
+          required: false
+          name: userId
+          in: query
+        - schema:
+            type: string
+            minLength: 1
+          required: false
           name: user_id
+          in: query
+        - schema:
+            type: string
+            minLength: 1
+          required: false
+          name: owner_id
+          in: query
+        - schema:
+            type: string
+            enum:
+              - user
+              - team
+              - app
+          required: false
+          name: owner_type
+          in: query
+        - schema:
+            type: string
+            minLength: 1
+          required: false
+          name: entity_id
+          in: query
+        - schema:
+            type: string
+            enum:
+              - user
+              - team
+              - app
+          required: false
+          name: entity_type
+          in: query
+        - schema:
+            type: string
+          required: false
+          name: scope
+          in: query
+        - schema:
+            type: string
+          required: false
+          name: namespace
+          in: query
+        - schema:
+            type: string
+          required: false
+          name: containerTag
           in: query
         - schema:
             type: string
             minLength: 1
           required: true
           name: query
-          in: query
-        - schema:
-            type: string
-          required: false
-          name: namespace
           in: query
         - schema:
             type: integer
@@ -1591,3 +1951,598 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/ErrorResponse"
+  /v1/memories/conversation:
+    post:
+      summary: Ingest transcript or structured messages as a memory
+      tags:
+        - Memories
+      security:
+        - BearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ConversationInsertPayload"
+      responses:
+        "200":
+          description: Conversation stored
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/MemoryInsertResponse"
+        "400":
+          description: Validation error
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "401":
+          description: Unauthorized
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+  /v1/ingest:
+    post:
+      summary: Unified ingest dispatcher (memory, conversation, document text, or bundle import)
+      tags:
+        - Memories
+      security:
+        - BearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/IngestEnvelope"
+      responses:
+        "200":
+          description: Ingest result (shape varies by kind)
+        "400":
+          description: Validation error
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "401":
+          description: Unauthorized
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+  /v1/memories/{id}/links:
+    post:
+      summary: Create a typed link between two memories
+      tags:
+        - Memories
+      security:
+        - BearerAuth: []
+      parameters:
+        - schema:
+            type: string
+            format: uuid
+          required: true
+          name: id
+          in: path
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/MemoryLinkCreatePayload"
+      responses:
+        "200":
+          description: Link created
+        "400":
+          description: Validation error
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "401":
+          description: Unauthorized
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "402":
+          description: Upgrade required
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+    delete:
+      summary: Delete a typed link from this memory
+      tags:
+        - Memories
+      security:
+        - BearerAuth: []
+      parameters:
+        - schema:
+            type: string
+            format: uuid
+          required: true
+          name: id
+          in: path
+        - schema:
+            type: string
+            format: uuid
+          required: true
+          name: to_memory_id
+          in: query
+        - schema:
+            type: string
+            enum:
+              - related_to
+              - about_ticket
+              - same_topic
+          required: true
+          name: link_type
+          in: query
+      responses:
+        "200":
+          description: Link removed
+        "400":
+          description: Validation error
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "401":
+          description: Unauthorized
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+  /v1/search/history:
+    get:
+      summary: Recent search queries for the workspace
+      tags:
+        - Retrieval
+      security:
+        - BearerAuth: []
+      parameters:
+        - schema:
+            type: integer
+            minimum: 1
+            maximum: 100
+          required: false
+          name: limit
+          in: query
+      responses:
+        "200":
+          description: Search history rows
+        "401":
+          description: Unauthorized
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+  /v1/search/replay:
+    post:
+      summary: Replay a stored search by query_id
+      tags:
+        - Retrieval
+      security:
+        - BearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/SearchReplayPayload"
+      responses:
+        "200":
+          description: Replay results
+        "400":
+          description: Validation error
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "401":
+          description: Unauthorized
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+  /v1/profile/pins:
+    patch:
+      summary: Replace pinned memories (metadata.pinned) for a user/namespace
+      tags:
+        - Retrieval
+      security:
+        - BearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ProfilePinsPatchPayload"
+      responses:
+        "200":
+          description: Pins updated
+        "400":
+          description: Validation error
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "401":
+          description: Unauthorized
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+  /v1/context/feedback:
+    post:
+      summary: Submit retrieval feedback for a trace
+      tags:
+        - Retrieval
+      security:
+        - BearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ContextFeedbackPayload"
+      responses:
+        "200":
+          description: Feedback accepted
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  accepted:
+                    type: boolean
+                required:
+                  - accepted
+        "400":
+          description: Validation error
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "401":
+          description: Unauthorized
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+  /v1/pruning/metrics:
+    get:
+      summary: Workspace pruning / dedupe counters
+      tags:
+        - Usage
+      security:
+        - BearerAuth: []
+      responses:
+        "200":
+          description: Metrics
+        "401":
+          description: Unauthorized
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+  /v1/explain/answer:
+    post:
+      summary: Explain an answer from question + retrieved context text
+      tags:
+        - Retrieval
+      security:
+        - BearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ExplainAnswerPayload"
+      responses:
+        "200":
+          description: Generated explanation
+        "400":
+          description: Validation error
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "401":
+          description: Unauthorized
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+  /v1/webhooks/memory:
+    post:
+      summary: Signed memory ingest webhook (not the project API-key path; uses HMAC + optional internal forward token)
+      tags:
+        - Webhooks
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                workspace_id:
+                  type: string
+                  minLength: 1
+              required:
+                - workspace_id
+              description: Same fields as POST /v1/memories plus workspace_id. Signed with X-MN-Webhook-Signature (see
+                docs/external/API_USAGE.md).
+      responses:
+        "200":
+          description: Accepted
+        "400":
+          description: Invalid signature or body
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "401":
+          description: Unauthorized
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+  /v1/evals/sets:
+    get:
+      summary: List evaluation sets
+      tags:
+        - Evals
+      security:
+        - BearerAuth: []
+      responses:
+        "200":
+          description: Eval sets
+        "401":
+          description: Unauthorized
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+    post:
+      summary: Create an evaluation set
+      tags:
+        - Evals
+      security:
+        - BearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/EvalSetCreatePayload"
+      responses:
+        "200":
+          description: Created
+        "400":
+          description: Validation error
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "401":
+          description: Unauthorized
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+  /v1/evals/sets/{eval_set_id}:
+    delete:
+      summary: Delete an evaluation set
+      tags:
+        - Evals
+      security:
+        - BearerAuth: []
+      parameters:
+        - schema:
+            type: string
+            format: uuid
+          required: true
+          name: eval_set_id
+          in: path
+      responses:
+        "200":
+          description: Deleted
+        "401":
+          description: Unauthorized
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+  /v1/evals/items:
+    get:
+      summary: List eval items for a set
+      tags:
+        - Evals
+      security:
+        - BearerAuth: []
+      parameters:
+        - schema:
+            type: string
+            format: uuid
+          required: true
+          name: eval_set_id
+          in: query
+      responses:
+        "200":
+          description: Items
+        "401":
+          description: Unauthorized
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+    post:
+      summary: Create an eval item (query + expected memory IDs)
+      tags:
+        - Evals
+      security:
+        - BearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/EvalItemCreatePayload"
+      responses:
+        "200":
+          description: Created
+        "400":
+          description: Validation error
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "401":
+          description: Unauthorized
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+  /v1/evals/items/{eval_item_id}:
+    delete:
+      summary: Delete an eval item
+      tags:
+        - Evals
+      security:
+        - BearerAuth: []
+      parameters:
+        - schema:
+            type: string
+            format: uuid
+          required: true
+          name: eval_item_id
+          in: path
+      responses:
+        "200":
+          description: Deleted
+        "401":
+          description: Unauthorized
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+  /v1/evals/run:
+    post:
+      summary: Run precision/recall evaluation for a set
+      tags:
+        - Evals
+      security:
+        - BearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/EvalRunPayload"
+      responses:
+        "200":
+          description: Eval metrics
+        "400":
+          description: Validation error
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "401":
+          description: Unauthorized
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+  /v1/dashboard/session:
+    post:
+      summary: Establish dashboard browser session (cookie + CSRF); implemented in workerApp.ts
+      tags:
+        - Dashboard
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                access_token:
+                  type: string
+                workspace_id:
+                  type: string
+              required:
+                - access_token
+                - workspace_id
+      responses:
+        "200":
+          description: Session established; sets cookies and returns csrf_token when applicable
+        "401":
+          description: Unauthorized
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+  /v1/dashboard/logout:
+    post:
+      summary: Clear dashboard session cookie
+      tags:
+        - Dashboard
+      responses:
+        "200":
+          description: Logout acknowledged
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  ok:
+                    type: boolean
+                    enum:
+                      - true
+                required:
+                  - ok
+        "403":
+          description: Invalid CSRF
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "429":
+          description: Rate limited
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+  /v1/mcp:
+    get:
+      summary: "Hosted Streamable MCP (also served as /mcp); Authorization: Bearer API key"
+      tags:
+        - MCP
+      security:
+        - BearerAuth: []
+      responses:
+        "200":
+          description: MCP capability response (SSE/streamable HTTP)
+        "426":
+          description: Upgrade required for WebSocket legacy clients
+    post:
+      summary: Hosted MCP POST (JSON-RPC / streamable)
+      tags:
+        - MCP
+      security:
+        - BearerAuth: []
+      responses:
+        "200":
+          description: MCP response
+    delete:
+      summary: Terminate MCP session when applicable
+      tags:
+        - MCP
+      security:
+        - BearerAuth: []
+      responses:
+        "200":
+          description: Session cleared

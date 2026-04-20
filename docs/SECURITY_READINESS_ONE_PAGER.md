@@ -1,6 +1,15 @@
+## ⚠️ Internal Operational Document
+
+This document may not reflect real-time production state.  
+Always verify against actual infrastructure (Cloudflare, Supabase, etc.).
+
+---
+
 # Security Readiness One-Pager
 
-Purpose: single source of truth for release-critical secrets and the final steps to keep production safe.
+Secret names and required sets change with releases. Cross-check `apps/api/src/env.js`, `wrangler.toml`, and your Cloudflare/Supabase dashboards before go-live.
+
+Purpose: checklist for release-critical secrets and steps to keep production safe (not a substitute for live env audit).
 
 ## 1) Required Secrets and Config by Environment
 

@@ -1,3 +1,10 @@
+## ⚠️ Internal Operational Document
+
+This document may not reflect real-time production state.  
+Always verify against actual infrastructure (Cloudflare, Supabase, etc.).
+
+---
+
 # Least-Privilege Roadmap (Phase A Startup-Safe)
 
 This roadmap tracks a pragmatic migration from service-role-heavy request paths to stronger DB-enforced isolation, optimized for a solo/small team.

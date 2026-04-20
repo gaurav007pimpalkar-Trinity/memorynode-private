@@ -1,5 +1,11 @@
 # MEMORYNODE – COST DISCIPLINE & ABUSE CONTROL REVIEW
 
+## ⚠️ Historical Snapshot
+
+This document reflects a past state and is NOT a source of truth.
+
+Analytical review; enforcement order and RPC behavior may have changed. Verify in `apps/api/src/`, `auth.js`, and Supabase functions.
+
 **Scope:** apps/*, packages/*, limits, usage tracking, rate limit DO, billing, plans, extraction, embedding, chunking, body/import/export limits, usage_daily, circuit breaker, retries, eval routes.  
 **Rules:** No startup optimism; no system rewrite; no new infrastructure; Worker + Supabase only; solo-founder margin safety.
 

@@ -1,3 +1,12 @@
+## ℹ️ Supporting Documentation
+
+This document is a guide.  
+For exact API behavior, refer to:
+- `docs/external/API_USAGE.md`
+- `docs/external/openapi.yaml` (run `pnpm openapi:gen` to regenerate)
+
+---
+
 # API Surface (Phase 1)
 
 This page defines the public API surface exposed in Phase 1 so developers and SaaS teams see only the stable paths needed for first value.
@@ -53,3 +62,5 @@ This check validates that each Phase 1 endpoint exists in both:
 
 - `apps/api/src/router.ts`
 - `docs/external/openapi.yaml`
+
+**Billing nuance:** `POST /v1/billing/checkout` accepts only `plan` ∈ `launch` \| `build` \| `deploy` \| `scale` (see `CHECKOUT_PLAN_IDS` in `apps/api/src/handlers/billing.ts`). Higher tiers such as **`scale_plus`** may appear as **`effective_plan`** on **`GET /v1/billing/status`** after entitlements reconcile — they are **not** selectable PayU checkout plan IDs.

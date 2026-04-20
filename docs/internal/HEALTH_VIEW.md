@@ -1,3 +1,10 @@
+## ⚠️ Internal Operational Document
+
+This document may not reflect real-time production state.  
+Always verify against actual infrastructure (Cloudflare, Supabase, etc.).
+
+---
+
 # Health View — "Is the API Healthy?" (<2 min)
 
 Single dashboard for on-call. Open this view in **<2 minutes** to assess production health.

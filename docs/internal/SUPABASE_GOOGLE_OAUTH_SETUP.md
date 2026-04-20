@@ -1,3 +1,10 @@
+## ⚠️ Internal Operational Document
+
+This document may not reflect real-time production state.  
+Always verify against actual infrastructure (Cloudflare, Supabase, etc.).
+
+---
+
 # Supabase Google OAuth (console only)
 
 Use this when **Continue with Google** fails with Supabase `400` / `validation_failed` and **`Unsupported provider: provider is not enabled`**, or when redirects are rejected.

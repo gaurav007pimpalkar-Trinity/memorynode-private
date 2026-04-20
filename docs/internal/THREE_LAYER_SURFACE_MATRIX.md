@@ -1,3 +1,10 @@
+## ⚠️ Internal Operational Document
+
+This document may not reflect real-time production state.  
+Always verify against actual infrastructure (Cloudflare, Supabase, etc.).
+
+---
+
 # Three-Layer Surface Matrix
 
 Single source mapping for API routes, dashboard surfaces, and docs surfaces.

@@ -1,0 +1,40 @@
+---
+description: Documentation source-of-truth and drift prevention for MemoryNode
+alwaysApply: true
+---
+
+# Documentation governance
+
+## Source of truth (human + machine)
+
+These define **actual** HTTP/SDK/MCP behavior. Any behavior change in code **must** land with updates here in the **same PR**:
+
+- `docs/external/API_USAGE.md`
+- `docs/external/openapi.yaml` (regenerate: `pnpm openapi:gen` from `apps/api/scripts/generate_openapi.mjs`)
+- `packages/sdk/README.md`
+- `docs/MCP_SERVER.md`
+
+Do not phrase other Markdown as overriding these for API facts. In guides, point to `API_USAGE.md` and OpenAPI.
+
+## CI enforcement
+
+- `pnpm openapi:check` — generated OpenAPI matches the generator.
+- `pnpm check:docs-drift` — mapped triggers + fallback + large-PR gate + heuristics (see `scripts/check_docs_drift.mjs`).
+  - **HTTP / contracts / handlers** (+ strict diff heuristics under `apps/api/src`) → `API_USAGE.md` or `openapi.yaml`
+  - **SDK** (`packages/sdk/src/**`) → `packages/sdk/README.md`
+  - **MCP** (`packages/mcp-server/**`, hosted MCP sources, heuristics) → `docs/MCP_SERVER.md`
+  - **`workerApp.ts`** → `API_USAGE.md` or `docs/MCP_SERVER.md` (openapi alone does not satisfy)
+  - **Dashboard** (`apps/dashboard/**`, excluding common static assets) → `API_USAGE.md` or `packages/sdk/README.md`
+  - **Shared** (`packages/shared/**`) → `API_USAGE.md` or `openapi.yaml`
+  - **Infra** (`**/wrangler.toml`, `**/workers.toml`) → `API_USAGE.md`
+  - **Worker entry** (`apps/api/src/index.ts`) → `API_USAGE.md`
+  - **Fallback:** any change under `apps/api/src/**`, `packages/mcp-server/**`, or `packages/shared/**` (tests excluded from mapping where noted) requires **at least one** truth doc in the same PR.
+  - **Large PR:** default ≥10 non-`docs/` files (excluding lockfiles) with **no** truth doc touched → fail (`DOCS_DRIFT_LARGE_THRESHOLD`, `0` disables).
+  - **Override:** `DOCS_DRIFT_ALLOW=1` skips failure (logs warning; CI passes `PR_BODY` for audit). Prefer updating docs over bypassing.
+  - Optional: `DOCS_DRIFT_STRICT=0` disables strict diff heuristics (avoid in CI).
+
+## Other docs
+
+- **Internal / operational** (`docs/internal/`, ops runbooks): infrastructure may drift; never treat as live Cloudflare/Supabase truth without verification.
+- **Supporting** (start-here, recipes, positioning): illustrative only.
+- **Historical**: audits and dated plans are not authoritative.

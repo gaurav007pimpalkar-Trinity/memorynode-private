@@ -1,5 +1,11 @@
 # MemoryNode.ai — Full Technical & Product Audit
 
+## ⚠️ Historical Snapshot
+
+This document reflects a past state and is NOT a source of truth.
+
+Point-in-time audit (**2026-02-28**). For current behavior use `apps/api/src/router.ts`, `apps/api/src/workerApp.ts`, `apps/api/src/contracts/`, `infra/sql/`, and [docs/external/API_USAGE.md](./external/API_USAGE.md). Database migration count and file sizes drift over time.
+
 **Role:** Senior external CTO performing code-validated audit  
 **Scope:** Repository + git history; documentation not assumed correct  
 **Date:** 2026-02-28
@@ -15,7 +21,7 @@
 | **Frontend** | React 18, Vite 6 | `apps/dashboard` | SPA; Cloudflare Pages (`memorynode-dashboard`). Supabase Auth (magic link, GitHub OAuth). MemoryNode API via session cookie + CSRF. |
 | **Backend API** | Cloudflare Worker (Node compat) | `apps/api` | Single Worker `memorynode-api`. Entry: `src/index.ts` → `handleRequest()` in `workerApp.ts`. No Express/Fastify. |
 | **Workers / jobs** | None in Worker | — | No cron in `wrangler.toml`. Session cleanup, webhook reprocess, memory hygiene are **HTTP endpoints** called by **external** GitHub Action (`memory-hygiene.yml` weekly) or manually. |
-| **Database** | PostgreSQL (Supabase) | External | Schema in `infra/sql/` (27 migrations). Worker uses `@supabase/supabase-js` (service role). Migrations: `scripts/db_migrate.mjs`; `pnpm deploy:prod` runs `db:check` (migrate + verify). |
+| **Database** | PostgreSQL (Supabase) | External | Schema in `infra/sql/` (numbered migration `*.sql` files; count grows over time — see repo). Worker uses `@supabase/supabase-js` (service role). Migrations: `scripts/db_migrate.mjs`; `pnpm deploy:prod` runs `db:check` (migrate + verify). |
 | **Rate limiting** | Durable Object | `apps/api/src/rateLimitDO.ts` | Bound as `RATE_LIMIT_DO`. Per-key limits (default 60/min; new keys 15/min for 48h). |
 | **External integrations** | OpenAI, PayU, Supabase Auth | Env | Embeddings: OpenAI (or `stub`). Billing: PayU (India); webhook signature; verify-before-grant. Dashboard auth: Supabase Auth + `dashboard_sessions`. |
 | **Auth** | Dual path | `auth.ts`, `dashboardSession.ts` | (1) API key: `x-api-key` or `Bearer`; hashed with salt; lookup in `api_keys`. (2) Dashboard: cookie `mn_dash_session` + `x-csrf-token`; production requires `ALLOWED_ORIGINS`. |

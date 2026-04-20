@@ -1,3 +1,10 @@
+## ⚠️ Internal Operational Document
+
+This document may not reflect real-time production state.  
+Always verify against actual infrastructure (Cloudflare, Supabase, etc.).
+
+---
+
 # First-Run Flow — Sign Up to First Search in <10 Minutes
 
 Streamlined path for new users. Success = sign up -> project -> API key -> ingest one memory -> run one search.

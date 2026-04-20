@@ -1,3 +1,12 @@
+## ℹ️ Supporting Documentation
+
+This document is a guide.  
+For exact API behavior, refer to:
+- `docs/external/API_USAGE.md`
+- `docs/external/openapi.yaml` (run `pnpm openapi:gen` to regenerate)
+
+---
+
 # MemoryNode.ai
 
 **MemoryNode lets you store, retrieve, and explain why AI remembered something.**
@@ -120,4 +129,6 @@ Only if you chose **Self-host** above or you contribute to this repo:
 | `docs/external`       | Mode 2 — advanced usage         |
 | `docs/self-host`      | Mode 3 — local / private deploy |
 
-Internal runbooks: [docs/internal/README.md](docs/internal/README.md).
+Internal runbooks: [docs/internal/README.md](docs/internal/README.md). **Doc inventory:** [docs/DOCUMENTATION_INDEX.md](docs/DOCUMENTATION_INDEX.md).
+
+**Docs CI:** `pnpm openapi:check` keeps OpenAPI in sync with the generator; `pnpm check:docs-drift` enforces truth-doc updates for mapped surfaces (API, SDK, MCP, dashboard, shared, worker entry, wrangler/workers), a fallback for changes under `apps/api/src/**`, `packages/mcp-server/**`, and `packages/shared/**`, diff heuristics (routes, MCP tools, shared exports), and a large-PR safeguard. Override only when justified: `DOCS_DRIFT_ALLOW=1` (CI logs `PR_BODY`). Details: `scripts/check_docs_drift.mjs`.
