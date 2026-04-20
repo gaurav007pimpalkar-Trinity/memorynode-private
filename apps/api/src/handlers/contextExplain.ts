@@ -124,8 +124,8 @@ export function createContextExplainHandlers(
 
       const url = new URL(request.url);
       const parse = QuerySchema.safeParse({
-        user_id: url.searchParams.get("user_id"),
-        owner_id: url.searchParams.get("owner_id") ?? url.searchParams.get("entity_id"),
+        user_id: url.searchParams.get("user_id") ?? undefined,
+        owner_id: (url.searchParams.get("owner_id") ?? url.searchParams.get("entity_id")) ?? undefined,
         owner_type: url.searchParams.get("owner_type") ?? url.searchParams.get("entity_type") ?? undefined,
         query: url.searchParams.get("query"),
         namespace: url.searchParams.get("namespace") ?? undefined,
