@@ -48,11 +48,11 @@ fields @timestamp, @message
 |------------|--------|-------------|
 | `api_4xx_rate` | `event_name="request_completed"` AND `status>=400` AND `status<500` | `count()` by `route_group`, `status` |
 
-### A5. Rate-limit (429) per tenant
+### A5. Rate-limit (429) per project
 
 | Query name | Filter | Aggregation |
 |------------|--------|-------------|
-| `api_429_per_tenant` | `event_name="request_completed"` AND `error_code="rate_limited"` | `count()` by `workspace_id_redacted` |
+| `api_429_per_project` | `event_name="request_completed"` AND `error_code="rate_limited"` | `count()` by `workspace_id_redacted` |
 | `api_429_total` | `event_name="request_completed"` AND `error_code="rate_limited"` | `count()` |
 
 ### A6. Queue / backlog (deferred webhooks)
@@ -104,26 +104,26 @@ fields @timestamp, @message
 |------------|--------|
 | `webhook_failed` | `event_name="webhook_failed"` — group by `error` or `event_type` |
 | `signature_invalid` | `event_name="billing_webhook_signature_invalid"` |
-| `workspace_not_found` | `event_name="billing_endpoint_error"` or `billing_webhook_workspace_not_found` |
+| `project_mapping_not_found` | `event_name="billing_endpoint_error"` or `billing_webhook_workspace_not_found` |
 
 ---
 
 ## C. Tenancy Signals
 
-### C1. Top N noisy tenants
+### C1. Top N noisy projects
 
 | Query name | Filter | Aggregation |
 |------------|--------|-------------|
-| `top_tenants_by_requests` | `event_name="request_completed"` | `count()` by `workspace_id_redacted` — top 10 |
-| `top_tenants_by_429` | `event_name="request_completed"` AND `error_code="rate_limited"` | `count()` by `workspace_id_redacted` — top 10 |
-| `top_tenants_cap_exceeded` | `event_name="cap_exceeded"` | `count()` by `workspace_id_redacted` |
+| `top_projects_by_requests` | `event_name="request_completed"` | `count()` by `workspace_id_redacted` — top 10 |
+| `top_projects_by_429` | `event_name="request_completed"` AND `error_code="rate_limited"` | `count()` by `workspace_id_redacted` — top 10 |
+| `top_projects_cap_exceeded` | `event_name="cap_exceeded"` | `count()` by `workspace_id_redacted` |
 
 ### C2. Abuse detection
 
 | Query name | Filter | Purpose |
 |------------|--------|---------|
 | `spike_401_403_per_key` | `event_name="request_completed"` AND `status IN (401, 403)` | Group by `api_key_id` or `workspace_id`; alert if burst |
-| `burst_failed_webhooks_per_workspace` | `event_name="webhook_failed"` | Group by `workspace_id`; alert if ≥N in short window |
+| `burst_failed_webhooks_per_project` | `event_name="webhook_failed"` | Group by `workspace_id`; alert if >=N in short window |
 
 ---
 

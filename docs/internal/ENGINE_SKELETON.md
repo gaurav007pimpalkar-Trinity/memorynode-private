@@ -112,7 +112,7 @@ flowchart LR
 | Context         | `POST /v1/context`           | `handlers/context.ts` |
 | Usage           | `GET /v1/usage/today`        | `handlers/usage.ts`  |
 | Billing         | checkout, portal, webhook    | `handlers/billing.ts` |
-| Dashboard       | `/v1/dashboard/*`            | session, workspaces, apiKeys |
+| Dashboard       | `/v1/dashboard/*`            | session, projects (internal workspaces), apiKeys |
 | Admin / Export / Import / Eval | various | respective handlers |
 
 ---
@@ -228,7 +228,7 @@ flowchart TB
 | Entry       | `apps/api/src/index.ts` | Worker `fetch`, exports `RateLimitDO` |
 | Pipeline    | `apps/api/src/workerApp.ts` | CORS, auth, Supabase, rate limit, **route()**, handler wiring |
 | Routing     | `apps/api/src/router.ts` | Path+method → handler |
-| Auth        | `apps/api/src/auth.ts` | API key → workspace; dashboard session |
+| Auth        | `apps/api/src/auth.ts` | API key -> project context (internal workspace); dashboard session |
 | Handlers    | `apps/api/src/handlers/*.ts` | Memories, search, context, usage, billing, admin, export, import, workspaces, apiKeys, eval, webhooks |
 | Embeddings  | Inline in `workerApp.ts` | `embedText()` → OpenAI or stub |
 | Rate limit  | `apps/api/src/rateLimitDO.ts` | Durable Object |

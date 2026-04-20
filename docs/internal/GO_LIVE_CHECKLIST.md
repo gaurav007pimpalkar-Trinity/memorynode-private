@@ -37,7 +37,7 @@ Production vars: [ ] `ENVIRONMENT=production`, [ ] `EMBEDDINGS_MODE=openai`, [ ]
 - [ ] Log sink + alerts: configure from [ALERTS.md](ALERTS.md); run 60s health checklist from [OBSERVABILITY.md](OBSERVABILITY.md) §3.
 - [ ] Billing: if enabled, send test PayU callback; confirm `webhook_verified` / `webhook_processed` in Worker logs.
 - [ ] (Recommended) Schedule dashboard session cleanup: `POST /admin/sessions/cleanup` (e.g. daily cron). See [OPERATIONS.md](../OPERATIONS.md) §F.
-- [ ] (Recommended) Schedule memory hygiene dry-run: `POST /admin/memory-hygiene?workspace_id=<UUID>&dry_run=true` (e.g. weekly). See [OPERATIONS.md](../OPERATIONS.md) §G. When ready to persist duplicates, run with `dry_run=false`.
+- [ ] (Recommended) Schedule memory hygiene dry-run: `POST /admin/memory-hygiene?workspace_id=<UUID>&dry_run=true` (project ID; e.g. weekly). See [OPERATIONS.md](../OPERATIONS.md) §G. When ready to persist duplicates, run with `dry_run=false`.
 
 ---
 

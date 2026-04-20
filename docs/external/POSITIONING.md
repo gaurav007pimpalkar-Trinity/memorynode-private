@@ -15,7 +15,7 @@ Primary:
 - **AI agents / applications** — use MemoryNode as a hosted memory layer for structured recall across sessions.
 - **Support and success copilots** — bots that must remember ticket context, prior promises, and account facts.
 - **SMB and messaging-channel bots** — high-volume chat where repeating questions erodes trust.
-- **B2B SaaS copilots** — in-app assistants scoped per account or per owner (`owner_id` + `namespace`).
+- **B2B SaaS copilots** — in-app assistants scoped per account with `userId` + optional `scope`.
 
 Secondary:
 
@@ -24,12 +24,12 @@ Secondary:
 
 ## What MemoryNode is
 
-- A **hosted API** plus **console** for workspaces, API keys, usage, and billing.
+- A **hosted API** plus **console** for projects, API keys, usage, and billing.
 - **Long-lived memories** you define (text and optional metadata), chunked and embedded server-side, retrieved with **hybrid search** and **prompt-ready context** (`POST /v1/context`).
 - **Deterministic ranking system:** types (e.g. fact, preference), dedupe hooks, recency-aware ranking, and importance/retrieval signals — not “dumb storage with a vector bolt-on.”
 - **Core debugging visibility:** explainability (`GET /v1/context/explain`), query history, and replay so teams can see **which chunks scored how** and stop guessing when context is wrong.
-- **Tenant boundary:** workspaces organize access and billing. They do not own memories.
-- **Ownership model:** every memory has an owner (`owner_id` + `owner_type`) where `owner_type` is `user`, `team`, or `app`. Legacy `user_id` and `entity_*` aliases remain supported.
+- **Tenant boundary:** projects organize access and billing. They do not own memories.
+- **Ownership model:** most apps use `userId` + optional `scope`; internal owner semantics remain supported. Legacy `user_id` and `entity_*` aliases remain supported.
 
 ## Who can own memory?
 

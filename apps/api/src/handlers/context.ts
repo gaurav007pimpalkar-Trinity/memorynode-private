@@ -22,6 +22,7 @@ import type { HandlerDeps } from "../router.js";
 import type { SearchHandlerDeps } from "./search.js";
 import { SearchPayloadSchema, parseWithSchema } from "../contracts/index.js";
 import { requireWorkspaceId } from "../supabaseScoped.js";
+import { enforceIsolation } from "../middleware/isolation.js";
 
 export type ContextHandlerDeps = SearchHandlerDeps;
 
@@ -228,6 +229,22 @@ export function createContextHandlers(
           rateHeaders,
         );
       }
+      const isolationResolution = enforceIsolation(
+        request,
+        env,
+        {
+          userId: parseResult.data.userId,
+          user_id: parseResult.data.user_id,
+          scope: parseResult.data.scope,
+          namespace: parseResult.data.namespace,
+          containerTag: parseResult.data.containerTag,
+        },
+        { scopedContainerTag: auth.scopedContainerTag ?? null },
+      );
+      const rateHeadersWithRouting = { ...rateHeaders, ...isolationResolution.responseHeaders };
+      parseResult.data.user_id = isolationResolution.isolation.ownerId;
+      parseResult.data.owner_id = isolationResolution.isolation.ownerId;
+      parseResult.data.namespace = isolationResolution.isolation.containerTag;
 
       const searchMode = parseResult.data.search_mode ?? "hybrid";
       const stage = (env.ENVIRONMENT ?? env.NODE_ENV ?? "dev").toLowerCase();
@@ -241,7 +258,7 @@ export function createContextHandlers(
             },
           },
           503,
-          rateHeaders,
+          rateHeadersWithRouting,
         );
       }
       const embedsDelta = searchMode === "keyword" ? 0 : 1;
@@ -252,10 +269,10 @@ export function createContextHandlers(
         return jsonResponse(
           { error: { code: "rate_limited", message: "Workspace in-flight concurrency limit exceeded" } },
           429,
-          { ...rateHeaders, ...concurrency.headers },
+          { ...rateHeadersWithRouting, ...concurrency.headers },
         );
       }
-      const concurrencyHeaders = { ...rateHeaders, ...concurrency.headers };
+      const concurrencyHeaders = { ...rateHeadersWithRouting, ...concurrency.headers };
       try {
       const reserveResult = await d.reserveQuotaAndMaybeRespond(
         quota,

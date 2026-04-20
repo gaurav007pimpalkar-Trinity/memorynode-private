@@ -8,7 +8,7 @@ Internal playbook for distribution and messaging. Aligns with [external/POSITION
 
 ## Elevator (three sentences)
 
-1. Chatbots and copilots fail when they **forget** the customer — MemoryNode stores facts and retrieves the right ones for each `user_id`.
+1. Chatbots and copilots fail when they **forget** the customer — MemoryNode stores facts and retrieves the right ones for each `userId`.
 2. You integrate with **REST or MCP**; we run **hybrid search** and embeddings.
 3. We are **narrow on purpose** — not a “sync every SaaS tool” platform — so setup stays fast and pricing stays understandable.
 
@@ -22,7 +22,7 @@ Internal playbook for distribution and messaging. Aligns with [external/POSITION
 
 **Problem:** Clients want AI that **remembers** users across sessions; teams do not want to run pgvector and embedding pipelines.
 
-**Solution:** MemoryNode — `POST /v1/memories` then `POST /v1/context` with the same `user_id` / `namespace`.
+**Solution:** MemoryNode — `POST /v1/memories` then `POST /v1/context` with the same `userId` / `scope`.
 
 **Integration:** 1) Get API key from [console.memorynode.ai](https://console.memorynode.ai). 2) Server-side only for keys. 3) Wire one insert + one context call per turn.
 
@@ -49,7 +49,7 @@ Store facts per user, retrieve the right context for support bots, SaaS copilots
 
 **Three bullets:**
 
-- **Per-user memory** — scoped by workspace and the ids you choose.
+- **Per-user memory** — scoped by project and the ids you choose.
 - **Hybrid search + prompt-ready context** — one API for save and retrieve.
 - **Built for builders** — REST, TypeScript SDK, and MCP for tools.
 
@@ -64,8 +64,8 @@ Track manually if needed:
 
 | Metric | Why |
 |--------|-----|
-| New workspaces with **≥1 memory write** in 7 days | Activation |
-| New workspaces with **≥1 search or context** in 7 days | Real integration |
+| New projects with **>=1 memory write** in 7 days | Activation |
+| New projects with **>=1 search or context** in 7 days | Real integration |
 | **Support tickets** mentioning “first call” / 401 / CORS | Docs friction |
 | **Inbound** demos or agency intros | Pipeline |
 | **Docs clicks** from console “Next steps” | Onboarding funnel (if wired in analytics later) |

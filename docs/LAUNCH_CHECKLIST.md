@@ -7,7 +7,7 @@ Use this with **docs/LAUNCH_RUNBOOK.md** for deploy and ops. When all items are 
 ## Code and runbook (done)
 
 - [x] **OpenAI embeddings retry** — Up to 2 retries with backoff on 5xx, 429, or network errors. (`workerApp.ts`: `fetchWithRetry` + `embedText`)
-- [x] **Supabase retries** — Critical path (auth salt, API key lookup, dashboard session read/create, workspace plan, /ready probe) use `withSupabaseQueryRetry`. (`supabaseRetry.ts`, `auth.ts`, `dashboardSession.ts`, `workerApp.ts`)
+- [x] **Supabase retries** — Critical path (auth salt, API key lookup, dashboard session read/create, project plan lookup, /ready probe) use `withSupabaseQueryRetry`. (`supabaseRetry.ts`, `auth.ts`, `dashboardSession.ts`, `workerApp.ts`)
 - [x] **Supabase Auth verify retry** — Up to 2 retries for `verifySupabaseAccessToken`. (`dashboardSession.ts`)
 - [x] **Launch runbook** — `docs/LAUNCH_RUNBOOK.md`
 - [x] **Migration verify script** — `pnpm db:migrate:verify`
@@ -27,7 +27,7 @@ Do these yourself; they cannot be automated in the repo.
 | 4 | **Deploy** | `DEPLOY_CONFIRM=memorynode-prod pnpm deploy:prod` (with required env set). |
 | 5 | **Health/ready** | After deploy: `GET https://api.memorynode.ai/healthz` and `GET https://api.memorynode.ai/ready` both return 200. |
 | 6 | **Post-deploy smoke** | `BASE_URL=https://api.memorynode.ai pnpm prod:smoke` (with secrets set). |
-| 7 | **One manual E2E** | Sign in to dashboard → create workspace → create API key → add memory → search. See **docs/E2E_CRITICAL_PATH.md** for the exact flow. |
+| 7 | **One manual E2E** | Sign in to dashboard -> create project -> create API key -> add memory -> search. See **docs/E2E_CRITICAL_PATH.md** for the exact flow. |
 | 8 | **PayU (if using billing)** | Confirm webhook URL and secret in PayU; trigger a test and verify entitlement/plan in dashboard. |
 
 ---

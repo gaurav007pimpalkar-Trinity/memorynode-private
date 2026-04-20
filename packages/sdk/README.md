@@ -23,6 +23,7 @@ const client = new MemoryNodeClient({
 // Add a memory
 await client.addMemory({
   userId: "user-1",
+  // SDK field `namespace` maps to API `scope`.
   namespace: "default",
   text: "Prefers dark mode and keyboard shortcuts",
   metadata: { source: "settings" },
@@ -31,6 +32,7 @@ await client.addMemory({
 // Search
 const results = await client.search({
   userId: "user-1",
+  // SDK field `namespace` maps to API `scope`.
   namespace: "default",
   query: "user preferences",
   topK: 5,
@@ -39,6 +41,7 @@ const results = await client.search({
 // Build prompt-ready context
 const context = await client.context({
   userId: "user-1",
+  // SDK field `namespace` maps to API `scope`.
   namespace: "default",
   query: "What do we know about this user's preferences?",
   topK: 5,
@@ -47,6 +50,7 @@ const context = await client.context({
 // Explain ranking decisions (core debugging tool)
 const explain = await client.contextExplain({
   userId: "user-1",
+  // SDK field `namespace` maps to API `scope`.
   namespace: "default",
   query: "What do we know about this user's preferences?",
   topK: 5,

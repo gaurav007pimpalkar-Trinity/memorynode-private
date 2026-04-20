@@ -7,15 +7,19 @@ import type { HandlerDeps } from "../router.js";
 import type { SearchHandlerDeps } from "./search.js";
 import { requireWorkspaceId } from "../supabaseScoped.js";
 import { createHttpError } from "../http.js";
+import { enforceIsolation } from "../middleware/isolation.js";
 
 export type ContextExplainHandlerDeps = SearchHandlerDeps;
 
 const QuerySchema = z.object({
+  userId: z.string().min(1).optional(),
   user_id: z.string().min(1).optional(),
   owner_id: z.string().min(1).optional(),
   owner_type: z.enum(["user", "team", "app", "agent"]).optional(),
   query: z.string().min(1),
+  scope: z.string().optional(),
   namespace: z.string().optional(),
+  containerTag: z.string().optional(),
   top_k: z.number().int().min(1).max(20).optional(),
   page: z.number().int().min(1).optional(),
   page_size: z.number().int().min(1).max(50).optional(),
@@ -23,16 +27,9 @@ const QuerySchema = z.object({
   min_score: z.number().min(0).max(1).optional(),
   retrieval_profile: z.enum(["balanced", "recall", "precision"]).optional(),
 }).superRefine((value, ctx) => {
-  const userId = value.user_id?.trim() ?? "";
+  const userId = value.userId?.trim() ?? value.user_id?.trim() ?? "";
   const ownerId = value.owner_id?.trim() ?? "";
   const ids = [userId, ownerId].filter(Boolean);
-  if (ids.length === 0) {
-    ctx.addIssue({
-      code: z.ZodIssueCode.custom,
-      message: "user_id or owner_id is required",
-      path: ["user_id"],
-    });
-  }
   const resolved = ids[0] ?? "";
   if (ids.some((id) => id !== resolved)) {
     ctx.addIssue({
@@ -42,7 +39,7 @@ const QuerySchema = z.object({
     });
   }
 }).transform((value) => {
-  const resolvedId = (value.user_id?.trim() || value.owner_id?.trim()) as string;
+  const resolvedId = (value.userId?.trim() || value.user_id?.trim() || value.owner_id?.trim() || "shared_app") as string;
   const rawOwnerType = value.owner_type ?? "user";
   const ownerType = rawOwnerType === "agent" ? "app" : rawOwnerType;
   return {
@@ -50,6 +47,7 @@ const QuerySchema = z.object({
     user_id: resolvedId,
     owner_id: resolvedId,
     owner_type: ownerType,
+    namespace: value.containerTag?.trim() || value.namespace?.trim() || value.scope?.trim() || "default",
   };
 });
 
@@ -124,11 +122,14 @@ export function createContextExplainHandlers(
 
       const url = new URL(request.url);
       const parse = QuerySchema.safeParse({
+        userId: url.searchParams.get("userId") ?? undefined,
         user_id: url.searchParams.get("user_id") ?? undefined,
         owner_id: (url.searchParams.get("owner_id") ?? url.searchParams.get("entity_id")) ?? undefined,
         owner_type: url.searchParams.get("owner_type") ?? url.searchParams.get("entity_type") ?? undefined,
         query: url.searchParams.get("query"),
+        scope: url.searchParams.get("scope") ?? undefined,
         namespace: url.searchParams.get("namespace") ?? undefined,
+        containerTag: url.searchParams.get("containerTag") ?? undefined,
         top_k: toNumberOrUndefined(url.searchParams.get("top_k")),
         page: toNumberOrUndefined(url.searchParams.get("page")),
         page_size: toNumberOrUndefined(url.searchParams.get("page_size")),
@@ -150,8 +151,24 @@ export function createContextExplainHandlers(
         );
       }
 
+      const isolationResolution = enforceIsolation(
+        request,
+        env,
+        {
+          userId: parse.data.userId,
+          user_id: parse.data.user_id,
+          scope: parse.data.scope,
+          namespace: parse.data.namespace,
+          containerTag: parse.data.containerTag,
+        },
+        { scopedContainerTag: auth.scopedContainerTag ?? null },
+      );
+      const rateHeadersWithRouting = { ...rateHeaders, ...isolationResolution.responseHeaders };
       const payload = {
         ...parse.data,
+        user_id: isolationResolution.isolation.ownerId,
+        owner_id: isolationResolution.isolation.ownerId,
+        namespace: isolationResolution.isolation.containerTag,
         explain: true,
       };
       const searchMode = payload.search_mode ?? "hybrid";
@@ -170,7 +187,7 @@ export function createContextExplainHandlers(
           embedTokensDelta,
           extractionCallsDelta: 0,
         },
-        rateHeaders,
+        rateHeadersWithRouting,
         env,
         jsonResponse,
         { route: "/v1/context/explain", requestId },
@@ -291,7 +308,7 @@ export function createContextExplainHandlers(
           has_more: outcome.has_more,
         },
         200,
-        rateHeaders,
+        rateHeadersWithRouting,
       );
     },
   };

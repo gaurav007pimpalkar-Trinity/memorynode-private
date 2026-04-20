@@ -18,7 +18,7 @@
 
 API default local URL: `http://127.0.0.1:8787`
 
-## Bootstrap workspace + API key (optional)
+## Bootstrap project + API key (optional)
 
 When `MASTER_ADMIN_TOKEN` is set and the API is running:
 

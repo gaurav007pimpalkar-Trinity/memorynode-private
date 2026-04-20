@@ -16,7 +16,7 @@ Production operations guide for PayU billing webhook/callback incidents:
 - Processing status lifecycle in DB (`payu_webhook_events.status`):
   - `processing`
   - `processed`
-  - `deferred` (workspace mapping missing or verify failed; safe to retry)
+  - `deferred` (project mapping missing or verify failed; safe to retry)
   - `ignored_stale` (older than current billing cursor)
   - `failed` (safe to retry/replay)
 - Ordering cursor on `workspaces`:
@@ -63,7 +63,7 @@ select * from payu_webhook_events where event_id = '...';
 select * from payu_webhook_events where txn_id = '...';
 ```
 
-Workspace billing cursor:
+Project billing cursor (internal `workspaces` table):
 ```sql
 select id, plan, plan_status,
   payu_txn_id, payu_payment_id, payu_last_status, payu_last_plan,
@@ -99,7 +99,7 @@ Recommended filters:
 
 1. Confirm the webhook row in `payu_webhook_events`:
    - If status is `processed` or `ignored_stale`, do **not** manually mutate billing state.
-   - If status is `deferred`, fix mapping (e.g. workspace for the payment) and replay or call admin reprocess.
+   - If status is `deferred`, fix mapping (e.g. project for the payment) and replay or call admin reprocess.
    - If status is `failed`, replay is safe (same event_id is retried).
 2. Fix root cause (hash/secret mismatch, DB outage, mapping gap, PayU verify API unreachable, etc.).
 3. Resend from PayU: Use PayU merchant dashboard to resend the callback to your webhook URL if supported; or use admin reprocess (below).
@@ -117,9 +117,9 @@ Recommended filters:
    - Symptoms: HTTP 400, `webhook_failed`, `billing_webhook_signature_invalid`.
    - Fix: Verify `PAYU_MERCHANT_KEY` and `PAYU_MERCHANT_SALT`, endpoint URL, and ensure raw body is unmodified (no re-parsing that changes field order).
 
-2. **Workspace not found**
+2. **Project mapping not found**
    - Symptoms: `billing_webhook_workspace_not_found`, `webhook_deferred`, HTTP 202 with deferred.
-   - Fix: Ensure the payment/callback is associated with a workspace (e.g. via udf/merchant param); backfill mapping if needed, then replay or call `/admin/webhooks/reprocess?status=deferred`.
+   - Fix: Ensure the payment/callback is associated with a project (e.g. via udf/merchant param); backfill mapping if needed, then replay or call `/admin/webhooks/reprocess?status=deferred`.
 
 3. **Out-of-order events**
    - Symptoms: Older callback delivered after newer one.

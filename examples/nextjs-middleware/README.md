@@ -21,8 +21,8 @@ This folder shows a minimal pattern for chat memory integration:
    - `BASE_URL`
    - `API_KEY`
 4. Call your API route with:
-   - `user_id`
-   - optional `namespace`
+   - `userId` (preferred; `user_id` still supported)
+   - optional `scope` (preferred; `namespace` still supported)
    - `message`
 
 ## Run the demo quickly

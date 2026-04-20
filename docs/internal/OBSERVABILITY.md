@@ -27,7 +27,7 @@ Every metric below is emitted as a structured JSON log line. No additional agent
 | --- | --- | --- |
 | Cap exceeded (402) | `event_name="cap_exceeded"` | Daily plan limits hit. Carries `workspace_id_redacted`, `effective_plan`, `plan_status`. |
 | Rate limited (429) | `request_completed` with `error_code="rate_limited"` | Per-key rate limit exceeded. |
-| Top rejecting keys | Group `cap_exceeded` / `rate_limited` by `workspace_id_redacted` | Identify noisiest consumers. |
+| Top rejecting keys | Group `cap_exceeded` / `rate_limited` by `workspace_id_redacted` | Identify noisiest projects (internal workspace IDs). |
 
 ### 1c) Search Latency & Embed Latency
 
@@ -44,11 +44,11 @@ Every metric below is emitted as a structured JSON log line. No additional agent
 | Webhook verified | `event_name="webhook_verified"` | Hash verification passed. |
 | Webhook processed | `event_name="webhook_processed"` | Side-effects applied successfully. |
 | Webhook replayed | `event_name="webhook_replayed"` | Duplicate `event_id` safely ignored. |
-| Webhook deferred | `event_name="webhook_deferred"` | Workspace mapping missing; parked for retry. Track queue depth as count of deferred events. |
+| Webhook deferred | `event_name="webhook_deferred"` | Project mapping missing; parked for retry. Track queue depth as count of deferred events. |
 | Webhook reconciled | `event_name="webhook_reconciled"` | PayU verify API resolved ambiguous ordering. |
 | Webhook failed | `event_name="webhook_failed"` | Verification or processing threw. |
 | Signature invalid | `event_name="billing_webhook_signature_invalid"` | PayU hash validation failed. |
-| Workspace not found | `event_name="billing_webhook_workspace_not_found"` | Webhook customer cannot be mapped to a workspace. |
+| Project mapping not found | `event_name="billing_webhook_workspace_not_found"` | Webhook customer cannot be mapped to a project context. |
 | Billing endpoint error | `event_name="billing_endpoint_error"` | Status/checkout/portal handlers failed. |
 
 **Reconcile backlog / deferred queue depth**: count of `webhook_deferred` minus `webhook_reconciled` events within your rolling window.
@@ -215,7 +215,7 @@ Every signal in §3.1 is queryable via these definitions. Use with **Cloudflare 
 
 **A4. 4xx rate (optional):** Filter `event_name="request_completed"` AND status 400–499; count by `route_group`, `status`.
 
-**A5. Rate-limit (429) per tenant:** Filter `event_name="request_completed"` AND `error_code="rate_limited"`; count by `workspace_id_redacted` or total.
+**A5. Rate-limit (429) per project:** Filter `event_name="request_completed"` AND `error_code="rate_limited"`; count by `workspace_id_redacted` or total.
 
 **A6. Queue / backlog:** `webhook_deferred_count`, `webhook_reconciled_count`, deferred_backlog = deferred − reconciled in window.
 
@@ -223,11 +223,11 @@ Every signal in §3.1 is queryable via these definitions. Use with **Cloudflare 
 
 ### B. Billing (PayU) signals
 
-Webhook verify/process timings; dedup hit rate (webhook_received vs webhook_replayed); replay success; failure reasons (webhook_failed, signature_invalid, workspace_not_found).
+Webhook verify/process timings; dedup hit rate (webhook_received vs webhook_replayed); replay success; failure reasons (webhook_failed, signature_invalid, project_mapping_not_found).
 
 ### C. Tenancy signals
 
-Top N by requests, by 429, cap_exceeded; spike_401_403_per_key; burst_failed_webhooks_per_workspace.
+Top N by requests, by 429, cap_exceeded; spike_401_403_per_key; burst_failed_webhooks_per_project.
 
 ### D. Health view — single dashboard
 

@@ -123,7 +123,7 @@ curl -X POST "https://api.memorynode.ai/admin/usage/reconcile?limit=200" \
 
 - Entitlement DB outages use Launch-plan fallback and block paid-only expensive paths until entitlement reads recover.
 
-This hits `/healthz`, creates a workspace, creates an API key, and optionally checks usage. If you use a custom production API URL, set `BASE_URL` to it.
+This hits `/healthz`, creates a project (internal workspace), creates an API key, and optionally checks usage. If you use a custom production API URL, set `BASE_URL` to it.
 
 ---
 
@@ -165,7 +165,7 @@ curl -X POST "https://api.memorynode.ai/admin/sessions/cleanup" \
 
 ---
 
-## Diagnosing "Invalid API key" on workspace / API key create
+## Diagnosing "Invalid API key" on project / API key create
 
 If `POST /v1/workspaces` or `POST /v1/api-keys` returns `DB_ERROR` with message like "Invalid API key", the error comes from **Supabase** (wrong or mismatched credentials), not from the admin token.
 
@@ -202,7 +202,7 @@ Before going live:
 4. Deploy with `DEPLOY_CONFIRM=memorynode-prod pnpm deploy:prod` (or `prod:release-check`).
 5. Verify `GET https://api.memorynode.ai/healthz` and `GET https://api.memorynode.ai/ready` return 200.
 6. Run `pnpm prod:smoke` with `BASE_URL=https://api.memorynode.ai`.
-7. Do one manual E2E: sign in to dashboard → create workspace → create API key → add memory → search.
+7. Do one manual E2E: sign in to dashboard -> create project -> create API key -> add memory -> search.
 
 ---
 

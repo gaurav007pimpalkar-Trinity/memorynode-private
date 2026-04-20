@@ -225,7 +225,7 @@ BASE_URL=https://api.memorynode.ai API_KEY=mn_live_xxx pnpm release:validate
 
 ## 8) Dashboard Deploy
 
-Dashboard (`apps/dashboard`) — workspace, API keys, memories. See `docs/internal/DASHBOARD_DEPLOY.md`.
+Dashboard (`apps/dashboard`) — project, API keys, memories. See `docs/internal/DASHBOARD_DEPLOY.md`.
 
 ```bash
 pnpm --filter @memorynode/dashboard build

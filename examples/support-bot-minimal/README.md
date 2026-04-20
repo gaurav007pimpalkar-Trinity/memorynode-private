@@ -1,6 +1,6 @@
 # Support-bot minimal example
 
-Runnable **insert → search → context** loop with a **`support`** namespace — copy this pattern for WhatsApp or web chat bots.
+Runnable **insert → search → context** loop with a **`support`** scope (SDK/example env uses `NAMESPACE`) — copy this pattern for WhatsApp or web chat bots.
 
 ## Prerequisites
 
@@ -18,7 +18,7 @@ export USER_ID="demo-customer-1"
 node examples/support-bot-minimal/index.mjs
 ```
 
-Optional: override `NAMESPACE` (default `support`).
+Optional: override `NAMESPACE` (maps to API `scope`; default `support`).
 
 ## What it demonstrates
 

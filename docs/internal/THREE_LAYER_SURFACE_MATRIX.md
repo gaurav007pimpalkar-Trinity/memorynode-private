@@ -60,6 +60,6 @@ Single source mapping for API routes, dashboard surfaces, and docs surfaces.
 | `packages/sdk/README.md` | Developer | SDK method usage and examples |
 | `docs/external/API_SURFACE_PHASE1.md` | Developer + SaaS | Public API visibility boundary |
 | `docs/start-here/FOUNDER_PATH.md` | SaaS | Founder/operator onboarding path |
-| `docs/external/ASSISTANT_WORKSPACE.md` | Assistant | No-code assistant workspace flow |
+| `docs/external/ASSISTANT_WORKSPACE.md` | Assistant | No-code assistant flow |
 | `docs/MCP_SERVER.md`, `docs/start-here/MCP.md` | Assistant | MCP technical setup for tool-host integrations |
 | `docs/internal/*` | Internal | Operations and release controls |

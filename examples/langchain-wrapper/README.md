@@ -33,6 +33,7 @@ const llm = new ChatOpenAI({ model: "gpt-4o-mini" });
 const memory = new MemoryNodeContextAdapter({
   baseUrl: process.env.BASE_URL,
   apiKey: process.env.API_KEY,
+  // Adapter field `namespace` maps to API `scope`.
   namespace: "chat-prod",
 });
 

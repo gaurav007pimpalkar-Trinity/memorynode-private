@@ -4,8 +4,8 @@
 
 ## Model
 
-- **`user_id`:** phone number id, CRM id, or opaque id per chatter (stable across days).
-- **`namespace`:** e.g. `whatsapp` or `storefront` so you can split campaigns.
+- **`userId`:** phone number id, CRM id, or opaque id per chatter (stable across days).
+- **`scope`:** e.g. `whatsapp` or `storefront` so you can split campaigns.
 
 ## 1. Minimal loop (same as core quickstart)
 
@@ -37,4 +37,6 @@ export BASE_URL="https://api.memorynode.ai"
 node index.mjs
 ```
 
-That script uses a `support` namespace pattern you can copy for chatbots.
+That script uses a `support` scope pattern you can copy for chatbots.
+
+Legacy aliases (`user_id`, `namespace`) remain supported for compatibility.

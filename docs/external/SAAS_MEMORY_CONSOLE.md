@@ -14,7 +14,7 @@ Show, in under 2 minutes: **“This user was remembered.”**
 
 1. Open the dashboard and switch to **SaaS Memory Console**.
 2. Open **Continuity**.
-3. Enter `user_id` (example: `user_123`).
+3. Enter `userId` (example: `user_123`).
 4. Keep demo memory text (`User prefers dark mode`) or edit it.
 5. Click **Run continuity demo**.
 6. Confirm all three outputs appear:
@@ -33,19 +33,19 @@ export USER_ID=user_123
 curl -sS -X POST "https://api.memorynode.ai/v1/memories" \
   -H "Authorization: Bearer $API_KEY" \
   -H "Content-Type: application/json" \
-  -d '{"user_id":"'"$USER_ID"'","namespace":"saas-demo","text":"User prefers dark mode"}'
+  -d '{"userId":"'"$USER_ID"'","scope":"saas-demo","text":"User prefers dark mode"}'
 
 # Step 2: simulate returning user and fetch context
 curl -sS -X POST "https://api.memorynode.ai/v1/context" \
   -H "Authorization: Bearer $API_KEY" \
   -H "Content-Type: application/json" \
-  -d '{"user_id":"'"$USER_ID"'","namespace":"saas-demo","query":"What do we know about this user preferences?"}'
+  -d '{"userId":"'"$USER_ID"'","scope":"saas-demo","query":"What do we know about this user preferences?"}'
 
 # Optional: inspect latest memory for this user
 curl -sS -G "https://api.memorynode.ai/v1/memories" \
   -H "Authorization: Bearer $API_KEY" \
-  --data-urlencode "user_id=$USER_ID" \
-  --data-urlencode "namespace=saas-demo" \
+  --data-urlencode "userId=$USER_ID" \
+  --data-urlencode "scope=saas-demo" \
   --data-urlencode "page=1" \
   --data-urlencode "page_size=1"
 ```
@@ -54,3 +54,5 @@ curl -sS -G "https://api.memorynode.ai/v1/memories" \
 
 - Primary: continuity proof only.
 - Secondary metrics and advanced personalization controls are intentionally out of the central SaaS flow for now.
+
+Legacy aliases (`user_id`, `namespace`) remain supported for compatibility.

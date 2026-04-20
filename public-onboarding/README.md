@@ -34,7 +34,7 @@ You send text and optional metadata; you get back relevant memories. No vector D
 ## Get an API key
 
 1. Sign up at **[console.memorynode.ai](https://console.memorynode.ai)**.
-2. Create a workspace and an API key.
+2. Create a project and an API key.
 3. Use it as the `API_KEY` environment variable below.
 
 ---
@@ -51,7 +51,7 @@ export API_KEY=your_api_key_here
 npm start
 ```
 
-**From the MemoryNode monorepo root** (uses workspace `pnpm`):
+**From the MemoryNode monorepo root** (uses `pnpm` workspaces):
 
 ```bash
 pnpm install
@@ -79,6 +79,7 @@ const client = new MemoryNodeClient({
 // Store a memory
 await client.addMemory({
   userId: "quickstart-user",
+  // SDK field `namespace` maps to API `scope`.
   namespace: "default",
   text: "MemoryNode quickstart ran at " + new Date().toISOString(),
   metadata: { source: "quickstart" },
@@ -87,6 +88,7 @@ await client.addMemory({
 // Semantic search
 const results = await client.search({
   userId: "quickstart-user",
+  // SDK field `namespace` maps to API `scope`.
   namespace: "default",
   query: "quickstart",
   topK: 5,

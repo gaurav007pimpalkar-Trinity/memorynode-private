@@ -6,8 +6,8 @@
 
 ## Model
 
-- **`user_id`:** use a stable id for the **end customer** (your CRM user id, or `support:{email}` hashed if you must).
-- **`namespace`:** e.g. `support` or `support:acme` so product memory does not mix with marketing chat.
+- **`userId`:** use a stable id for the **end customer** (your CRM user id, or `support:{email}` hashed if you must).
+- **`scope`:** e.g. `support` or `support:acme` so product memory does not mix with marketing chat.
 
 ## 1. Save a fact after each resolved turn (or on ticket close)
 
@@ -16,8 +16,8 @@ curl -sS -X POST "https://api.memorynode.ai/v1/memories" \
   -H "Authorization: Bearer YOUR_API_KEY" \
   -H "Content-Type: application/json" \
   -d '{
-    "user_id": "cust_42",
-    "namespace": "support",
+    "userId": "cust_42",
+    "scope": "support",
     "text": "Ticket T-9012: shipping address corrected to Mumbai; promised refund in 3–5 days on 2026-04-10.",
     "metadata": { "ticket": "T-9012", "channel": "email" }
   }'
@@ -30,8 +30,8 @@ curl -sS -X POST "https://api.memorynode.ai/v1/search" \
   -H "Authorization: Bearer YOUR_API_KEY" \
   -H "Content-Type: application/json" \
   -d '{
-    "user_id": "cust_42",
-    "namespace": "support",
+    "userId": "cust_42",
+    "scope": "support",
     "query": "refund shipping address T-9012",
     "top_k": 5
   }'
@@ -44,8 +44,8 @@ curl -sS -X POST "https://api.memorynode.ai/v1/context" \
   -H "Authorization: Bearer YOUR_API_KEY" \
   -H "Content-Type: application/json" \
   -d '{
-    "user_id": "cust_42",
-    "namespace": "support",
+    "userId": "cust_42",
+    "scope": "support",
     "query": "What did we promise this customer about refunds?",
     "top_k": 8
   }'
@@ -57,6 +57,8 @@ Use `context_text` in your system or developer message; use `citations` if you w
 
 - **Write short, factual strings** — easier to retrieve than huge transcripts.
 - **On escalation**, store a one-line summary so the human agent inherits the same memory id space.
-- **Multi-tenant B2B:** encode tenant in `user_id` or `namespace` so workspaces never leak (e.g. `user_id`: `tenantA:u42`).
+- **Multi-tenant B2B:** encode tenant in `userId` or `scope` so project memory never mixes (e.g. `userId`: `tenantA:u42`).
 
 See also: [Node quickstart example](../../examples/node-quickstart/README.md) for a runnable script pattern.
+
+Legacy aliases (`user_id`, `namespace`) remain supported for compatibility.

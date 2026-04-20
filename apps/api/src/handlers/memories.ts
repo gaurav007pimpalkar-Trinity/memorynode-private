@@ -34,6 +34,7 @@ import {
 import { checkGlobalCostGuard, AIBudgetExceededError } from "../costGuard.js";
 import { decideExtraction, type ExtractionSkipReason } from "../memories/extractionPolicy.js";
 import { logger } from "../logger.js";
+import { enforceIsolation } from "../middleware/isolation.js";
 
 export type { MemoryInsertPayload } from "../contracts/index.js";
 
@@ -497,10 +498,24 @@ export function createMemoryHandlers(
         );
       }
 
-      const { user_id, owner_id, owner_type, text, metadata, namespace, memory_type, extract, importance, chunk_profile } = parseResult.data;
-      const ownerId = owner_id ?? user_id;
+      const isolationResolution = enforceIsolation(
+        request,
+        env,
+        {
+          userId: parseResult.data.userId,
+          user_id: parseResult.data.user_id,
+          scope: parseResult.data.scope,
+          namespace: parseResult.data.namespace,
+          containerTag: parseResult.data.containerTag,
+        },
+        { scopedContainerTag: auth.scopedContainerTag ?? null },
+      );
+      rateHeaders = { ...rateHeaders, ...isolationResolution.responseHeaders };
+
+      const { owner_type, text, metadata, memory_type, extract, importance, chunk_profile } = parseResult.data;
+      const ownerId = isolationResolution.isolation.ownerId;
       const ownerType = owner_type ?? "user";
-      const namespaceVal = namespace ?? DEFAULT_NAMESPACE;
+      const namespaceVal = isolationResolution.isolation.containerTag ?? DEFAULT_NAMESPACE;
       const strictAutosaveMode = metadata?.autosave_mode === "strict";
       const attachmentType = typeof metadata?.attachment_type === "string" ? metadata.attachment_type.toLowerCase() : null;
       if (attachmentType && !ALLOWED_ATTACHMENT_TYPES.has(attachmentType)) {

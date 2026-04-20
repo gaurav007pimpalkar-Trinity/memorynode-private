@@ -42,7 +42,7 @@ components:
           type: string
           enum:
             - skipped_due_to_budget
-          description: Present when the memory row was saved but vector embedding was skipped (e.g. workspace AI budget). Search
+          description: Present when the memory row was saved but vector embedding was skipped (e.g. project AI budget). Search
             may not return this text until re-embedded.
         extraction:
           type: object
@@ -123,9 +123,11 @@ components:
           type: string
           minLength: 1
           example: user_42
+          description: End-user identifier. Public alias `userId` is preferred; `user_id` remains for compatibility.
         namespace:
           type: string
           example: default
+          description: Optional scope for separation within a user. Public alias `scope` is preferred; `namespace` remains for compatibility.
         text:
           type: string
           minLength: 1
@@ -241,9 +243,11 @@ components:
           type: string
           minLength: 1
           example: user_42
+          description: End-user identifier. Public alias `userId` is preferred; `user_id` remains for compatibility.
         namespace:
           type: string
           example: default
+          description: Optional scope for separation within a user. Public alias `scope` is preferred; `namespace` remains for compatibility.
         query:
           type: string
           minLength: 1
@@ -365,9 +369,11 @@ components:
           properties:
             user_id:
               type: string
+              description: End-user identifier (`userId` alias preferred).
             namespace:
               type: string
               nullable: true
+              description: Optional scope (`scope` alias preferred).
             query:
               type: string
             top_k:
@@ -718,7 +724,7 @@ components:
         name:
           type: string
           minLength: 1
-          example: My Workspace
+          example: My Project
       required:
         - name
     CreateApiKeyPayload:
@@ -728,6 +734,7 @@ components:
           type: string
           minLength: 1
           example: ws_abc123
+          description: Project ID (internal key name is `workspace_id`).
         name:
           type: string
           minLength: 1
@@ -902,11 +909,13 @@ paths:
       parameters:
         - schema:
             type: string
+            description: End-user identifier (`userId` alias preferred).
           required: false
           name: user_id
           in: query
         - schema:
             type: string
+            description: Optional scope (`scope` alias preferred).
           required: false
           name: namespace
           in: query
@@ -1078,6 +1087,7 @@ paths:
         - schema:
             type: string
             minLength: 1
+            description: End-user identifier (`userId` alias preferred).
           required: true
           name: user_id
           in: query
@@ -1089,6 +1099,7 @@ paths:
           in: query
         - schema:
             type: string
+            description: Optional scope (`scope` alias preferred).
           required: false
           name: namespace
           in: query
@@ -1221,7 +1232,7 @@ paths:
                 $ref: "#/components/schemas/ErrorResponse"
   /v1/dashboard/overview-stats:
     get:
-      summary: "Console overview aggregates for the authenticated workspace. Optional query: range=1d|7d|30d|all (default all)."
+      summary: "Console overview aggregates for the authenticated project (internal workspace). Optional query: range=1d|7d|30d|all (default all)."
       tags:
         - Dashboard
       security:
@@ -1351,7 +1362,7 @@ paths:
                 $ref: "#/components/schemas/ErrorResponse"
   /v1/workspaces:
     post:
-      summary: Create a workspace (admin only)
+      summary: Create a project (internal workspace) (admin only)
       tags:
         - Admin
       security:
@@ -1373,7 +1384,7 @@ paths:
                 $ref: "#/components/schemas/ErrorResponse"
   /v1/api-keys:
     post:
-      summary: Create an API key for a workspace (admin only)
+      summary: Create an API key for a project (internal workspace) (admin only)
       tags:
         - Admin
       security:
@@ -1394,7 +1405,7 @@ paths:
               schema:
                 $ref: "#/components/schemas/ErrorResponse"
     get:
-      summary: List masked API keys for a workspace (admin only)
+      summary: List masked API keys for a project (internal workspace) (admin only)
       tags:
         - Admin
       security:
@@ -1403,6 +1414,7 @@ paths:
         - schema:
             type: string
             example: ws_abc123
+            description: Project ID (internal key name is `workspace_id`).
           required: true
           name: workspace_id
           in: query

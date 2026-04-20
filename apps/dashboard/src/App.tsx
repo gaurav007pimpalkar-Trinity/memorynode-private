@@ -61,7 +61,7 @@ const DEVELOPER_SIDEBAR_GROUPS: SidebarGroup[] = [
   },
   {
     section: "Account",
-    entries: [{ tab: "workspaces", label: "Workspaces" }],
+    entries: [{ tab: "workspaces", label: "Projects" }],
   },
 ];
 
@@ -72,7 +72,7 @@ const SAAS_SIDEBAR_GROUPS: SidebarGroup[] = [
       { tab: "overview", label: "Overview" },
       { tab: "continuity", label: "Continuity" },
       { tab: "usage", label: "Usage" },
-      { tab: "workspaces", label: "Workspaces" },
+      { tab: "workspaces", label: "Projects" },
       { tab: "billing", label: "Billing" },
     ],
   },
@@ -145,6 +145,14 @@ function seatCapForPlan(planCode: string | null | undefined): number {
     return 25;
   }
   return 10;
+}
+
+async function sha256Hex(input: string): Promise<string> {
+  const enc = new TextEncoder();
+  const digest = await crypto.subtle.digest("SHA-256", enc.encode(input));
+  return Array.from(new Uint8Array(digest))
+    .map((b) => b.toString(16).padStart(2, "0"))
+    .join("");
 }
 
 function userInitials(session: Session): string {
@@ -339,17 +347,17 @@ export function App(): JSX.Element {
           if (cancelled) return;
           setWorkspaceId(existingWorkspaceId);
           persistWorkspaceId(existingWorkspaceId);
-          setAlert("We selected your latest workspace so you can continue.");
+          setAlert("We selected your latest project so you can continue.");
           return;
         }
 
-        const { data: created, error: createError } = await supabase.rpc("create_workspace", { p_name: "My Workspace" });
+        const { data: created, error: createError } = await supabase.rpc("create_workspace", { p_name: "My Project" });
         if (createError) throw createError;
         const createdWorkspaceId = (created?.[0] as { workspace_id?: string } | undefined)?.workspace_id?.trim() ?? "";
         if (!createdWorkspaceId || cancelled) return;
         setWorkspaceId(createdWorkspaceId);
         persistWorkspaceId(createdWorkspaceId);
-        setAlert("Your first workspace is ready. You're good to go.");
+        setAlert("Your first project is ready. You're good to go.");
       } catch {
         if (!cancelled) {
           setAlert("We couldn't finish setup automatically. You can complete it below.");
@@ -452,7 +460,7 @@ export function App(): JSX.Element {
     setOnUnauthorized(() => {
       workspaceBootstrapAttemptedRef.current = false;
       setSessionReady(false);
-      setSessionError("Session expired or access denied. Please sign in again or select workspace.");
+      setSessionError("Session expired or access denied. Please sign in again or select project.");
       persistWorkspaceId("");
       setWorkspaceId("");
     });
@@ -492,20 +500,20 @@ export function App(): JSX.Element {
     () =>
       surface === "developer"
         ? [
-            { key: "workspace", label: "Choose your memory space", done: workspaceReady },
+            { key: "workspace", label: "Choose your project", done: workspaceReady },
             { key: "workspace-bind", label: "Connect this browser", done: Boolean(workspaceClaim?.trim() || workspaceId.trim()) },
             { key: "api-key", label: "Create your first API key", done: firstApiKeyCreated },
             { key: "team", label: "Invite collaborators (optional)", done: false },
           ]
         : surface === "assistant"
           ? [
-              { key: "workspace", label: "Choose your memory space", done: workspaceReady },
+              { key: "workspace", label: "Choose your project", done: workspaceReady },
               { key: "workspace-bind", label: "Connect this browser", done: Boolean(workspaceClaim?.trim() || workspaceId.trim()) },
               { key: "remember", label: "Remember something for a user", done: workspaceReady },
               { key: "recall", label: "Ask what the assistant knows", done: workspaceReady },
             ]
         : [
-            { key: "workspace", label: "Choose your memory space", done: workspaceReady },
+            { key: "workspace", label: "Choose your project", done: workspaceReady },
             { key: "workspace-bind", label: "Connect this browser", done: Boolean(workspaceClaim?.trim() || workspaceId.trim()) },
             { key: "usage", label: "Verify usage metrics", done: workspaceReady && sessionReady },
             { key: "billing", label: "Confirm plan and billing", done: planBadge !== "FREE" },
@@ -556,7 +564,7 @@ export function App(): JSX.Element {
     if (celebrationShown) return;
     if (firstApiKeyCreated && workspaceReady) {
       setCelebrationShown(true);
-      setCelebrationMessage("Great job - your workspace is live. Your first API key is ready.");
+      setCelebrationMessage("Great job - your project is live. Your first API key is ready.");
     }
   }, [firstApiKeyCreated, workspaceReady, celebrationShown]);
 
@@ -715,7 +723,7 @@ export function App(): JSX.Element {
                         i === paletteIndex ? "console-search-item console-search-item--active" : "console-search-item"
                       }
                       disabled={locked}
-                      title={locked ? "Finish workspace setup to open this page." : c.label}
+                      title={locked ? "Finish project setup to open this page." : c.label}
                       onMouseEnter={() => setPaletteIndex(i)}
                       onClick={() => runPaletteSelect(c.tab)}
                     >
@@ -741,7 +749,7 @@ export function App(): JSX.Element {
                       type="button"
                       className={tab === entry.tab ? "console-nav-item console-nav-item--active" : "console-nav-item"}
                       disabled={locked}
-                      title={locked ? "Finish workspace setup to open this section." : entry.label}
+                      title={locked ? "Finish project setup to open this section." : entry.label}
                       onClick={() => selectTab(entry.tab)}
                     >
                       <span className="console-nav-item-label">{entry.label}</span>
@@ -784,7 +792,7 @@ export function App(): JSX.Element {
             </div>
             <div className="console-header-sub muted small">
               <strong>{SIDEBAR_SURFACE_SHORT[surface]} surface.</strong>{" "}
-              {workspaceReady ? "Workspace connected." : "Finish setup below to unlock all sections."}
+              {workspaceReady ? "Project connected." : "Finish setup below to unlock all sections."}
             </div>
           </div>
           <div className="console-header-actions">
@@ -842,27 +850,27 @@ export function App(): JSX.Element {
               <div className="panel-body">
                 <div className="muted small">We keep setup short so you can start quickly.</div>
                 <label className="field">
-                  <span>Workspace ID (optional)</span>
+                  <span>Project ID (optional)</span>
                   <input
                     value={workspaceId}
                     onChange={(e) => setWorkspaceId(e.target.value)}
-                    placeholder="Paste an existing workspace ID"
+                    placeholder="Paste an existing project ID"
                   />
                 </label>
                 <div className="row">
                   <button type="button" onClick={saveWorkspaceId} disabled={!workspaceId || workspaceSaving}>
-                    {workspaceSaving ? "Connecting…" : "Connect workspace"}
+                    {workspaceSaving ? "Connecting…" : "Connect project"}
                   </button>
                   <button type="button" className="ghost" onClick={() => setWorkspaceId(loadWorkspaceId())}>
-                    Use last saved workspace
+                    Use last saved project
                   </button>
                 </div>
                 {alert && <div className="badge">{alert}</div>}
-                <div className="muted small">Current workspace: {workspaceClaim || workspaceId || "Not selected yet"}</div>
+                <div className="muted small">Current project: {workspaceClaim || workspaceId || "Not selected yet"}</div>
                 {workspaceReady && (
                   <details className="console-advanced-details">
                     <summary className="muted small">Advanced details</summary>
-                    <div className="muted small mt-sm">Workspace ID: {effectiveWorkspaceId}</div>
+                    <div className="muted small mt-sm">Project ID: {effectiveWorkspaceId}</div>
                   </details>
                 )}
                 {workspaceReady && (
@@ -916,7 +924,7 @@ export function App(): JSX.Element {
                   onSelectWorkspace={(id) => {
                     setWorkspaceId(id);
                     persistWorkspaceId(id);
-                    setAlert("Workspace selected. Click Connect workspace to finish.");
+                    setAlert("Project selected. Click Connect project to finish.");
                   }}
                 />
               )}
@@ -951,7 +959,7 @@ function AuthLanding() {
             <div className="auth-chip">MemoryNode</div>
             <h1>Memory for customer-facing AI</h1>
             <p className="muted">
-              Sign in to manage workspaces, API keys, and billing — so your support bots, chat apps, and copilots remember users without running vector search yourself.
+              Sign in to manage projects, API keys, and billing — so your support bots, chat apps, and copilots remember users without running vector search yourself.
             </p>
             <AuthPanel />
             <p className="auth-terms muted small">
@@ -1085,7 +1093,7 @@ function OverviewView({
       <p className="overview-range-hint muted small">
         Counts for <strong>{range === "all" ? "all time" : range}</strong>
         {!workspaceReady || !sessionReady
-          ? " — set a workspace to load live numbers."
+          ? " — set a project to load live numbers."
           : " — numbers update for this selected time range."}
       </p>
       {error && (
@@ -1106,7 +1114,7 @@ function OverviewView({
             </>
           ) : (
             <>
-              No continuity activity in this range yet. Connect a workspace data source in <strong>Continuity</strong> and verify reads/writes from live traffic.
+              No continuity activity in this range yet. Connect a project data source in <strong>Continuity</strong> and verify reads/writes from live traffic.
             </>
           )}
         </div>
@@ -1258,7 +1266,7 @@ function SaasContinuityView({ workspaceId }: { workspaceId: string }): JSX.Eleme
   if (!workspaceId?.trim()) {
     return (
       <Panel title="Continuity">
-        <div className="badge">Set your workspace first to run the continuity demo.</div>
+        <div className="badge">Set your project first to run the continuity demo.</div>
       </Panel>
     );
   }
@@ -1352,20 +1360,26 @@ function AssistantMemoryView(): JSX.Element {
     const targetUserId = userId.trim();
     const text = rememberText.trim();
     if (!targetUserId || !text) {
-      setMessage("Enter user_id and memory text first.");
+      setMessage("Enter userId and memory text first.");
       return;
     }
     setBusy(true);
     setMessage(null);
     try {
       await apiPost("/v1/memories", {
-        user_id: targetUserId,
-        namespace: "assistant-demo",
+        userId: targetUserId,
+        scope: "assistant-demo",
         text,
       });
+      const retrieval = await apiPost<{ context_text?: string }>("/v1/context", {
+        userId: targetUserId,
+        scope: "assistant-demo",
+        query: `What do we know about this user? ${text.slice(0, 120)}`,
+      });
+      setContextText(retrieval.context_text ?? "");
       await loadMemories(targetUserId);
       setLastInteractionAt(new Date().toISOString());
-      setMessage("Memory saved.");
+      setMessage("Memory saved and retrieved. Input -> stored -> recalled.");
     } catch (err: unknown) {
       setMessage(userFacingErrorMessage(err));
     } finally {
@@ -1376,15 +1390,15 @@ function AssistantMemoryView(): JSX.Element {
   const recall = async () => {
     const targetUserId = userId.trim();
     if (!targetUserId || !recallQuery.trim()) {
-      setMessage("Enter user_id and recall query first.");
+      setMessage("Enter userId and recall query first.");
       return;
     }
     setBusy(true);
     setMessage(null);
     try {
       const res = await apiPost<{ context_text?: string }>("/v1/context", {
-        user_id: targetUserId,
-        namespace: "assistant-demo",
+        userId: targetUserId,
+        scope: "assistant-demo",
         query: recallQuery.trim(),
       });
       setContextText(res.context_text ?? "");
@@ -1770,7 +1784,7 @@ ${Object.entries(res.fields).map(([k, v]) => `<input type="hidden" name="${k}" v
   return (
     <div className="list">
       {message && <div className="badge">{message}</div>}
-      {!workspaceId && <div className="badge">Set your workspace first to checkout a plan.</div>}
+      {!workspaceId && <div className="badge">Set your project first to checkout a plan.</div>}
       <div className="pricing-grid">
         {plans.map((plan) => (
           <div key={plan.id} className="card">
@@ -1986,20 +2000,20 @@ function WorkspacesView({
   };
 
   return (
-    <Panel title="Workspaces">
+    <Panel title="Projects">
       <p className="muted small">
-        Create a workspace or pick one you already belong to.
+        Create a project or pick one you already belong to.
       </p>
       <div className="row">
-        <input value={newName} onChange={(e) => setNewName(e.target.value)} placeholder="New workspace name" />
+        <input value={newName} onChange={(e) => setNewName(e.target.value)} placeholder="New project name" />
         <button onClick={create} disabled={!newName.trim()}>
-          Create workspace
+          Create project
         </button>
       </div>
       {!hasWorkspaceSwitcher && list.length === 1 && (
-        <div className="muted small">You have one workspace. Create another only if you need separate teams or environments.</div>
+        <div className="muted small">You have one project. Create another only if you need separate teams or environments.</div>
       )}
-      {hasWorkspaceSwitcher && <div className="muted small">Switching appears because you now have multiple workspaces.</div>}
+      {hasWorkspaceSwitcher && <div className="muted small">Switching appears because you now have multiple projects.</div>}
       {loading && <div>Loading…</div>}
       {error && <div className="badge">{error}</div>}
       <ul className="list">
@@ -2010,7 +2024,7 @@ function WorkspacesView({
                 <strong>{w.name}</strong>
                 <details className="console-advanced-details">
                   <summary className="muted small">Advanced details</summary>
-                  <div className="muted small mt-sm">Workspace ID: {w.id}</div>
+                  <div className="muted small mt-sm">Project ID: {w.id}</div>
                 </details>
               </div>
               <div className="row">
@@ -2030,15 +2044,73 @@ function WorkspacesView({
                     onSelectWorkspace(w.id);
                   }}
                 >
-                  Use this workspace
+                  Use this project
                 </button>
               </div>
             </div>
           </li>
         ))}
       </ul>
+      <RoutingPreviewCard />
       <MembersView workspaceId={workspaceId} currentUserId={sessionUserId} />
     </Panel>
+  );
+}
+
+function RoutingPreviewCard(): JSX.Element {
+  const [userId, setUserId] = useState("user_123");
+  const [scope, setScope] = useState("default");
+  const [preview, setPreview] = useState<{ routingMode: string; resolvedContainerTag: string; explanation: string }>({
+    routingMode: "derived",
+    resolvedContainerTag: "",
+    explanation: "Using userId + scope -> internal isolation key.",
+  });
+
+  useEffect(() => {
+    let cancelled = false;
+    const run = async () => {
+      const normalizedUserId = userId.trim();
+      const normalizedScope = (scope.trim() || "default").toLowerCase().replace(/[^a-z0-9_.:-]/g, "_").slice(0, 96) || "default";
+      if (!normalizedUserId) {
+        if (!cancelled) {
+          setPreview({
+            routingMode: "shared_default",
+            resolvedContainerTag: "st:app|sid:shared_app|sc:shared",
+            explanation: "No userId provided -> shared app bucket.",
+          });
+        }
+        return;
+      }
+
+      const subjectId = (await sha256Hex(`user|${normalizedUserId}`)).slice(0, 26);
+      const sid = (await sha256Hex(subjectId)).slice(0, 20);
+      if (!cancelled) {
+        setPreview({
+          routingMode: "derived",
+          resolvedContainerTag: `st:u|sid:${sid}|sc:${normalizedScope}`,
+          explanation: "Using userId + scope -> internal isolation key.",
+        });
+      }
+    };
+    void run();
+    return () => {
+      cancelled = true;
+    };
+  }, [userId, scope]);
+
+  return (
+    <div className="card mt-lg">
+      <strong>Memory Routing Preview</strong>
+      <div className="muted small mt-sm">Preview how userId + scope map into an internal isolation key.</div>
+      <div className="row mt-sm">
+        <input value={userId} onChange={(e) => setUserId(e.target.value)} placeholder="user_123" aria-label="Routing preview userId" />
+        <input value={scope} onChange={(e) => setScope(e.target.value)} placeholder="default" aria-label="Routing preview scope" />
+      </div>
+      <div className="muted small mt-sm">Mode: {preview.routingMode}</div>
+      <div className="muted small">Scoped API keys override this derived route.</div>
+      <code className="code-block">{preview.resolvedContainerTag}</code>
+      <div className="muted small">{preview.explanation}</div>
+    </div>
   );
 }
 
@@ -2109,7 +2181,7 @@ function ApiKeysView({
 
   return (
     <Panel title="API Keys">
-      {!workspaceId && <div className="muted small">Connect a workspace to load keys.</div>}
+      {!workspaceId && <div className="muted small">Connect a project to load keys.</div>}
       <div className="muted small">Create an API key for your app. You can revoke keys anytime.</div>
       <div className="row">
         <input
@@ -2262,8 +2334,8 @@ function MemoryBrowserView({
   if (!workspaceId?.trim()) {
     return (
       <Panel title="Memory Browser">
-        <div className="badge">Set your workspace first to search and open memories.</div>
-        <div className="muted small">Tip: Choose a workspace in the Workspaces section, then click Use this workspace.</div>
+        <div className="badge">Set your project first to search and open memories.</div>
+        <div className="muted small">Tip: Choose a project in the Projects section, then click Use this project.</div>
       </Panel>
     );
   }
@@ -2949,9 +3021,9 @@ function UsageView({ workspaceId, embedded = false }: { workspaceId: string; emb
   const [error, setError] = useState<string | null>(null);
 
   if (!workspaceId?.trim()) {
-    return embedded ? <div className="badge">Set your workspace first to view usage and limits.</div> : (
+    return embedded ? <div className="badge">Set your project first to view usage and limits.</div> : (
       <Panel title="Usage">
-        <div className="badge">Set your workspace first to view usage and limits.</div>
+        <div className="badge">Set your project first to view usage and limits.</div>
       </Panel>
     );
   }

@@ -9,8 +9,8 @@ Run this flow once before launch to confirm the full user journey works.
 1. **Sign in to dashboard**  
    Open the dashboard URL (e.g. `https://console.memorynode.ai`). Sign in with Supabase (magic link or GitHub OAuth).
 
-2. **Create or select workspace**  
-   Create a workspace or pick an existing one. Ensure you’re in a workspace before creating an API key.
+2. **Create or select project**  
+   Create a project or pick an existing one. Ensure you’re in a project before creating an API key.
 
 3. **Create API key**  
    In the API Keys tab, create a new API key. Copy and store it (it’s shown only once).
@@ -22,7 +22,7 @@ Run this flow once before launch to confirm the full user journey works.
      curl -X POST "https://api.memorynode.ai/v1/memories" \
        -H "x-api-key: YOUR_API_KEY" \
        -H "content-type: application/json" \
-       -d '{"user_id":"user-1","text":"My favorite color is blue."}'
+       -d '{"userId":"user-1","scope":"default","text":"My favorite color is blue."}'
      ```
 
 5. **Search**  
@@ -32,7 +32,7 @@ Run this flow once before launch to confirm the full user journey works.
      curl -X POST "https://api.memorynode.ai/v1/search" \
        -H "x-api-key: YOUR_API_KEY" \
        -H "content-type: application/json" \
-       -d '{"user_id":"user-1","query":"favorite color"}'
+       -d '{"userId":"user-1","scope":"default","query":"favorite color"}'
      ```
    Confirm you get the memory you added (or relevant results).
 
@@ -43,7 +43,7 @@ Run this flow once before launch to confirm the full user journey works.
 
 ## Quick API-only check (no dashboard UI)
 
-If you already have a workspace and API key (e.g. from staging or admin):
+If you already have a project and API key (e.g. from staging or admin):
 
 ```bash
 # Set your production API key
@@ -56,13 +56,13 @@ curl -s "https://api.memorynode.ai/healthz" | jq .
 curl -s -X POST "https://api.memorynode.ai/v1/memories" \
   -H "x-api-key: $MEMORYNODE_API_KEY" \
   -H "content-type: application/json" \
-  -d '{"user_id":"e2e-user","text":"E2E test memory added at '"$(date -Iseconds)"'"}' | jq .
+  -d '{"userId":"e2e-user","scope":"default","text":"E2E test memory added at '"$(date -Iseconds)"'"}' | jq .
 
 # Search
 curl -s -X POST "https://api.memorynode.ai/v1/search" \
   -H "x-api-key: $MEMORYNODE_API_KEY" \
   -H "content-type: application/json" \
-  -d '{"user_id":"e2e-user","query":"E2E test"}' | jq .
+  -d '{"userId":"e2e-user","scope":"default","query":"E2E test"}' | jq .
 ```
 
 On Windows PowerShell, use `$env:MEMORYNODE_API_KEY = "mn_live_..."` and run the same `curl` commands.
@@ -71,7 +71,7 @@ On Windows PowerShell, use `$env:MEMORYNODE_API_KEY = "mn_live_..."` and run the
 
 ## Automated smoke (staging/production)
 
-For a scripted smoke that creates workspace + key + memory + search, use:
+For a scripted smoke that creates project + key + memory + search, use:
 
 ```bash
 BASE_URL=https://api.memorynode.ai pnpm prod:smoke

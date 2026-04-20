@@ -16,14 +16,14 @@ Response includes `embedding_model` (for example `text-embedding-3-small` or `st
 curl -X POST "$BASE/v1/memories" \
   -H "Authorization: Bearer $API_KEY" \
   -H "Content-Type: application/json" \
-  -d '{"user_id":"u1","namespace":"default","text":"Q1 roadmap finalized with launch deadline on March 31"}'
+  -d '{"userId":"u1","scope":"default","text":"Q1 roadmap finalized with launch deadline on March 31"}'
 ```
 
 ```bash
 curl -X POST "$BASE/v1/memories" \
   -H "Authorization: Bearer $API_KEY" \
   -H "Content-Type: application/json" \
-  -d '{"user_id":"u1","namespace":"default","text":"Customer asked for weekly usage digest emails"}'
+  -d '{"userId":"u1","scope":"default","text":"Customer asked for weekly usage digest emails"}'
 ```
 
 ## 3. Run retrieval search
@@ -32,7 +32,7 @@ curl -X POST "$BASE/v1/memories" \
 curl -X POST "$BASE/v1/search" \
   -H "Authorization: Bearer $API_KEY" \
   -H "Content-Type: application/json" \
-  -d '{"user_id":"u1","namespace":"default","query":"roadmap deadline","top_k":5}'
+  -d '{"userId":"u1","scope":"default","query":"roadmap deadline","top_k":5}'
 ```
 
 Verify that:
@@ -46,7 +46,7 @@ Verify that:
 curl -X POST "$BASE/v1/context" \
   -H "Authorization: Bearer $API_KEY" \
   -H "Content-Type: application/json" \
-  -d '{"user_id":"u1","namespace":"default","query":"What was the launch deadline?","top_k":5}'
+  -d '{"userId":"u1","scope":"default","query":"What was the launch deadline?","top_k":5}'
 ```
 
 Verify that:
@@ -73,6 +73,8 @@ Use MCP with:
 - `MEMORYNODE_BASE_URL`
 - `MEMORYNODE_USER_ID`
 - `MEMORYNODE_NAMESPACE`
+
+(`MEMORYNODE_NAMESPACE` maps to API `scope`.)
 
 Then verify:
 - `memory_search` returns relevant snippets.

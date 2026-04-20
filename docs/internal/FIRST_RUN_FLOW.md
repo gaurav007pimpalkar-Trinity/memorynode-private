@@ -1,13 +1,13 @@
 # First-Run Flow — Sign Up to First Search in <10 Minutes
 
-Streamlined path for new users. Success = sign up → workspace → API key → ingest one memory → run one search.
+Streamlined path for new users. Success = sign up -> project -> API key -> ingest one memory -> run one search.
 
 ---
 
 ## Flow (dashboard)
 
 1. **Sign up** — GitHub OAuth or magic link via Supabase Auth.
-2. **Create or select workspace** — Workspaces tab → "Create workspace" or pick existing.
+2. **Create or select project** — Projects tab -> "Create project" or pick existing.
 3. **Get API key** — API Keys tab → "Create key" → copy plaintext (shown once). Store securely.
 4. **Ingest one memory** — Use curl or your app; see QUICKSTART §7.
 5. **Run one search** — Memory Browser tab or API.
@@ -16,15 +16,15 @@ Streamlined path for new users. Success = sign up → workspace → API key → 
 
 ## Success metrics
 
-- **First-run success rate** — % of new signups who complete: workspace → key → ingest → search within 10 min.
+- **First-run success rate** — % of new signups who complete: project -> key -> ingest -> search within 10 min.
 - **Measurable via** — Activation events (`first_ingest_success`, `first_search_success`); optional in-app funnel tracking.
 
 ---
 
 ## In-app hints (optional)
 
-- After signup: "Create a workspace to get started."
-- After workspace: "Create an API key to call the API."
+- After signup: "Create a project to get started."
+- After project: "Create an API key to call the API."
 - After key: "Ingest a memory, then search in Memory Browser."
 
 ---

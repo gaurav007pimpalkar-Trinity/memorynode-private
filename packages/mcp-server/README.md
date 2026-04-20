@@ -32,9 +32,9 @@ After `pnpm build` in this package (or when consuming the published package), th
 
 | Variable               | Required | Description                                           |
 | ---------------------- | -------- | ----------------------------------------------------- |
-| `MEMORYNODE_API_KEY`   | Yes      | Workspace API key (`mn_live_...`).                    |
+| `MEMORYNODE_API_KEY`   | Yes      | Project API key (`mn_live_...`).                    |
 | `MEMORYNODE_BASE_URL`  | Yes      | e.g. `https://api.memorynode.ai` (no trailing slash). |
-| `MEMORYNODE_CONTAINER_TAG` | No   | Default container tag / namespace for tools.          |
+| `MEMORYNODE_CONTAINER_TAG` | No   | Default container tag / scope for tools.          |
 | `MEMORYNODE_NAMESPACE` | No       | Legacy alias for `MEMORYNODE_CONTAINER_TAG`.          |
 
 Details and examples: **[docs/MCP_SERVER.md](../../docs/MCP_SERVER.md)**.

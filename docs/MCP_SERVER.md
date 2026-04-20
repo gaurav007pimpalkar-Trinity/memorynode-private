@@ -3,7 +3,11 @@
 MemoryNode exposes MCP in two ways:
 
 1. **stdio package** (`@memorynodeai/mcp-server`) — local process for editors; forwards to REST with env vars.
-2. **Hosted Streamable HTTP** on the API worker — recommended URL **`https://mcp.memorynode.ai/mcp`** (dedicated host; routes in `apps/api/wrangler.toml`). Same MCP is also available at **`https://api.memorynode.ai/v1/mcp`**. Uses your **workspace API key** (`Authorization: Bearer …` or `x-api-key`). Optional header: **`x-mn-container-tag`** (default `default`, maps to MemoryNode `namespace`). Tooling calls REST on **`api.memorynode.ai`** automatically when the MCP request hits `mcp.memorynode.ai` (override with Worker var **`MEMORYNODE_REST_ORIGIN`** if needed). Canonical tools are **`memory`**, **`recall`**, **`context`**, **`whoAmI`**. Alias tools (`memory_search`, `memory_insert`, `memory_context`) are maintained for migration with deprecated metadata. No Supabase in the MCP layer—only REST.
+2. **Hosted Streamable HTTP** on the API worker — recommended URL **`https://mcp.memorynode.ai/mcp`** (dedicated host; routes in `apps/api/wrangler.toml`). Same MCP is also available at **`https://api.memorynode.ai/v1/mcp`**. Uses your **project API key** (`Authorization: Bearer …` or `x-api-key`). Routing precedence is:
+   1) scoped API key lock
+   2) explicit `x-mn-container-tag`
+   3) derived from `x-mn-user-id` + optional `x-mn-scope`.
+   Tooling calls REST on **`api.memorynode.ai`** automatically when the MCP request hits `mcp.memorynode.ai` (override with Worker var **`MEMORYNODE_REST_ORIGIN`** if needed). Canonical tools are **`memory`**, **`recall`**, **`context`**, **`whoAmI`**. Alias tools (`memory_search`, `memory_insert`, `memory_context`) are maintained for migration with deprecated metadata. No Supabase in the MCP layer—only REST.
 
 ## Canonical MCP tool contracts
 
@@ -33,7 +37,9 @@ All tool denials use a uniform refusal envelope:
 }
 ```
 
-All ranking and workspace isolation stay server-side; the MCP adapter only forwards requests with your API key.
+All ranking and memory isolation stay server-side; the MCP adapter only forwards requests with your API key.
+
+Advanced routing details: [start-here/ADVANCED_ISOLATION.md](./start-here/ADVANCED_ISOLATION.md).
 
 ## Hosted MCP (Cursor, Claude, VS Code, etc.)
 
@@ -78,11 +84,38 @@ Optional container tag slice (same as setting `MEMORYNODE_CONTAINER_TAG` on the 
 }
 ```
 
+User-first routing headers (recommended default):
+
+```json
+{
+  "mcpServers": {
+    "memorynode": {
+      "url": "https://mcp.memorynode.ai/mcp",
+      "headers": {
+        "Authorization": "Bearer mn_live_xxx",
+        "x-mn-user-id": "user_123",
+        "x-mn-scope": "support"
+      }
+    }
+  }
+}
+```
+
 Per-tool **`containerTag`** overrides the namespace for that call. Sessions use **`mcp-session-id`** after `initialize` (Streamable HTTP); the worker keeps sessions in memory until idle expiry or `DELETE`.
 
 Scoped API keys can be restricted to a single container tag using the `api_keys.scoped_container_tag` field. When present, hosted MCP forces that container tag for all tool calls.
 
 Authentication is **API key only** on this path (no OAuth on the MCP URL yet).
+
+### Routing debug headers
+
+Set `x-mn-debug-routing: 1` to request routing diagnostics. In non-production environments,
+routing debug headers are emitted by default. Key headers:
+
+- `x-mn-resolved-container-tag`
+- `x-mn-routing-mode`
+- `x-mn-scope-override` (when scoped key override is applied)
+- `x-mn-routing-fallback` (when fallback routing is used)
 
 ## Guardrails and defaults
 

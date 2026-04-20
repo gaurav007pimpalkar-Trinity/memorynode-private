@@ -6,7 +6,7 @@ Shared frontend codebase for:
 - `console.memorynode.ai` -> customer console
 - `app.memorynode.ai/founder` -> founder dashboard
 
-The console uses Supabase Auth (Google + GitHub OAuth + magic link) and workspace-scoped dashboard sessions. The founder app uses admin-token access only.
+The console uses Supabase Auth (Google + GitHub OAuth + magic link) and project-scoped dashboard sessions (internal key remains `workspace_id`). The founder app uses admin-token access only.
 
 ## Run locally
 
@@ -38,15 +38,15 @@ Use the **anon** (not service-role) key so browser traffic is RLS-enforced. Foun
 - `VITE_APP_SURFACE=app` renders the founder app and owns `/founder` on `app.memorynode.ai`
 - `VITE_CONSOLE_BASE_URL` controls the “Open customer console” link from the founder app
 
-## Workspace scoping / RLS
+## Project scoping / RLS
 
 - RLS enforces membership via `workspace_members`; claims alone are not sufficient.
 - Set `workspace_id` from the UI for convenience, but access still requires membership.
-- Creating a workspace calls the `create_workspace` RPC, which inserts the workspace and adds you as `owner`.
+- Creating a project calls the `create_workspace` RPC, which inserts the internal workspace row and adds you as `owner`.
 
 ## Usage tab
 
-- Usage is workspace-scoped and loaded through dashboard session auth.
+- Usage is project-scoped and loaded through dashboard session auth.
 - Data is fetched from Worker API `/v1/usage/today`; shows reads/writes/embed consumption and plan limits with friendly errors.
 
 ## Import tab (paid)

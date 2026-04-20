@@ -9,18 +9,18 @@ MemoryNode is a **hosted API** that remembers across owners: you **save** what w
 | **Without memory** | **With MemoryNode** |
 |--------------------|------------------------|
 | Your AI tends to give **generic** answers — it forgets what this user said last week. | Your AI can **remember** user preferences and details and answer **personally**. |
-| Every session feels like starting from zero. | The same **`user_id`** keeps a **durable thread** of what matters across sessions. |
+| Every session feels like starting from zero. | The same **`userId`** keeps a **durable thread** of what matters across sessions. |
 
 ## 1. Get an API key
 
 1. Open your MemoryNode console and sign in.  
-2. Create a memory space (workspace) and an API key. Copy it once (it looks like `mn_live_...`).
+2. Create a project and an API key. Copy it once (it looks like `mn_live_...`).
 
 Memory ownership is explicit. You can send:
 
-- `user_id` (backward-compatible default)
-- or `owner_id` + `owner_type` where `owner_type` is `user`, `team`, or `app`
-- `entity_id` + `entity_type` still works as a deprecated alias for compatibility
+- `userId` (recommended)
+- optional `scope` (for extra separation within a user)
+- `user_id` / `namespace` still work as backward-compatible aliases
 
 ## Who can own memory?
 
@@ -43,10 +43,10 @@ Memory ownership is explicit. You can send:
 curl -sS -X POST "https://api.memorynode.ai/v1/memories" \
   -H "Authorization: Bearer YOUR_API_KEY" \
   -H "Content-Type: application/json" \
-  -d '{"user_id":"user-123","namespace":"myapp","text":"User prefers dark mode"}'
+  -d '{"userId":"user-123","scope":"myapp","text":"User prefers dark mode"}'
 ```
 
-Use the same `user_id` (and `namespace`, if you use one) when you search.
+Use the same `userId` (and `scope`, if you use one) when you search.
 
 ## 3. Search
 
@@ -56,7 +56,7 @@ Use the same `user_id` (and `namespace`, if you use one) when you search.
 curl -sS -X POST "https://api.memorynode.ai/v1/search" \
   -H "Authorization: Bearer YOUR_API_KEY" \
   -H "Content-Type: application/json" \
-  -d '{"user_id":"user-123","namespace":"myapp","query":"theme preference","top_k":5}'
+  -d '{"userId":"user-123","scope":"myapp","query":"theme preference","top_k":5}'
 ```
 
 ## 4. Prompt-ready context
@@ -67,7 +67,7 @@ curl -sS -X POST "https://api.memorynode.ai/v1/search" \
 curl -sS -X POST "https://api.memorynode.ai/v1/context" \
   -H "Authorization: Bearer YOUR_API_KEY" \
   -H "Content-Type: application/json" \
-  -d '{"user_id":"user-123","namespace":"myapp","query":"What do we know about theme preferences?"}'
+  -d '{"userId":"user-123","scope":"myapp","query":"What do we know about theme preferences?"}'
 ```
 
 ## What this feels like
@@ -91,7 +91,8 @@ MemoryNode retrieval improves using recency and usage signals, plus relevance fr
 ```json
 POST /v1/memories
 {
-  "user_id": "user-123",
+  "userId": "user-123",
+  "scope": "myapp",
   "text": "User prefers dark mode and lives in Mumbai"
 }
 ```
@@ -109,8 +110,8 @@ If operational limits are ever hit, MemoryNode **still stores your note** and ma
 ```bash
 curl -sS -G "https://api.memorynode.ai/v1/context/explain" \
   -H "Authorization: Bearer YOUR_API_KEY" \
-  --data-urlencode "user_id=user-123" \
-  --data-urlencode "namespace=myapp" \
+  --data-urlencode "userId=user-123" \
+  --data-urlencode "scope=myapp" \
   --data-urlencode "query=What do we know about theme preferences?" \
   --data-urlencode "top_k=5"
 ```
@@ -139,7 +140,12 @@ Example interpretation (using each result’s `scores`):
 
 **Step 3 — Give your model the recap**
 
-`POST /v1/context` with the same `user_id` / `namespace` and a natural-language question. Put the returned `context_text` in your prompt so the model answers with **what you stored earlier** in mind.
+`POST /v1/context` with the same `userId` / `scope` and a natural-language question. Put the returned `context_text` in your prompt so the model answers with **what you stored earlier** in mind.
+
+## Missing `userId` behavior
+
+If `userId` is omitted, MemoryNode uses a **shared app bucket** (`shared_default`) instead of per-user isolation.  
+Use this for global app memory, not personalized memory.
 
 **Step 4 — Inspect ranking behavior**
 
@@ -151,12 +157,18 @@ Example interpretation (using each result’s `scores`):
 - A successful save returns **`"stored": true`** so you always know the note was kept. A small `extraction` field may appear in the JSON; you can ignore it until you care.  
 - If you ever see a technical value like **`"embedding": "skipped_due_to_budget"`** in the response, read it simply as: **some advanced processing was skipped while limits were tight** — your text was still saved (`"stored": true`). Integrators keep the exact field; this is the human meaning.
 
-## Next steps
+## Learn in this order
 
-- **Founder checklist (no repo):** [FOUNDER_PATH.md](./FOUNDER_PATH.md)  
-- **Use MemoryNode from an AI editor:** [MCP.md](./MCP.md)
+1. **Per-user memory (default product path):** [PER_USER_MEMORY.md](./PER_USER_MEMORY.md)
+2. **Scopes (separate memory streams within a user):** [SCOPES.md](./SCOPES.md)
+3. **Advanced isolation/routing internals:** [ADVANCED_ISOLATION.md](./ADVANCED_ISOLATION.md)
+4. **Full API reference:** [../external/API_USAGE.md](../external/API_USAGE.md)
+5. **MCP in editors (Cursor/Claude):** [MCP.md](./MCP.md)
 
-**Need more control?** → [Build mode](../external/API_USAGE.md)
+## Other entry points
+
+- **Founder checklist (no repo):** [FOUNDER_PATH.md](./FOUNDER_PATH.md)
+- **Build mode:** [../external/API_USAGE.md](../external/API_USAGE.md)
 
 Public endpoint boundary for Phase 1: [../external/API_SURFACE_PHASE1.md](../external/API_SURFACE_PHASE1.md)
 

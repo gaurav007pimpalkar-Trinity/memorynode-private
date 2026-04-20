@@ -13,6 +13,7 @@ import type { HandlerDeps } from "../router.js";
 import { SearchPayloadSchema, parseWithSchema, type SearchPayload } from "../contracts/index.js";
 import { requireWorkspaceId } from "../supabaseScoped.js";
 import type { QuotaResolutionLike } from "./memories.js";
+import { enforceIsolation } from "../middleware/isolation.js";
 
 export type { SearchPayload } from "../contracts/index.js";
 
@@ -203,6 +204,22 @@ export function createSearchHandlers(
           rateHeaders,
         );
       }
+      const isolationResolution = enforceIsolation(
+        request,
+        env,
+        {
+          userId: parseResult.data.userId,
+          user_id: parseResult.data.user_id,
+          scope: parseResult.data.scope,
+          namespace: parseResult.data.namespace,
+          containerTag: parseResult.data.containerTag,
+        },
+        { scopedContainerTag: auth.scopedContainerTag ?? null },
+      );
+      rateHeaders = { ...rateHeaders, ...isolationResolution.responseHeaders };
+      parseResult.data.user_id = isolationResolution.isolation.ownerId;
+      parseResult.data.owner_id = isolationResolution.isolation.ownerId;
+      parseResult.data.namespace = isolationResolution.isolation.containerTag;
 
       const resolvedSearchMode = parseResult.data.search_mode ?? "hybrid";
       const stage = (env.ENVIRONMENT ?? env.NODE_ENV ?? "dev").toLowerCase();
@@ -465,7 +482,7 @@ export function createSearchHandlers(
         owner_id: ownerId,
         owner_type: ownerType,
         query: String(row.query ?? ""),
-        namespace: typeof params.namespace === "string" ? params.namespace : undefined,
+        namespace: typeof params.namespace === "string" ? params.namespace : "default",
         top_k: typeof params.top_k === "number" ? params.top_k : undefined,
         page: typeof params.page === "number" ? params.page : 1,
         page_size: typeof params.page_size === "number" ? params.page_size : undefined,

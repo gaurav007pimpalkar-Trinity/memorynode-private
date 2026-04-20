@@ -11,12 +11,15 @@ export type EntityType = OwnerType;
 export const EntityTypeSchema = OwnerTypeSchema;
 
 export type OwnerIdentityInput = {
+  userId?: string;
   user_id?: string;
   owner_id?: string;
   owner_type?: OwnerType | "agent";
   entity_id?: string;
   entity_type?: EntityType | "agent";
 };
+
+const SHARED_APP_USER_ID = "shared_app";
 
 export type OwnerIdentity = {
   user_id: string;
@@ -30,7 +33,10 @@ export function normalizeOwnerIdentity(
   input: OwnerIdentityInput,
   fieldName = "user_id, owner_id, or entity_id",
 ): OwnerIdentity {
-  const userId = typeof input.user_id === "string" ? input.user_id.trim() : "";
+  const userId =
+    typeof input.userId === "string"
+      ? input.userId.trim()
+      : (typeof input.user_id === "string" ? input.user_id.trim() : "");
   const ownerId = typeof input.owner_id === "string" ? input.owner_id.trim() : "";
   const entityId = typeof input.entity_id === "string" ? input.entity_id.trim() : "";
   const normalizedOwnerType = input.owner_type && input.owner_type === "agent" ? "app" : input.owner_type;
@@ -40,7 +46,13 @@ export function normalizeOwnerIdentity(
   const resolvedId = ids[0] ?? "";
 
   if (!resolvedId) {
-    throw new Error(`${fieldName} is required`);
+    return {
+      user_id: SHARED_APP_USER_ID,
+      owner_id: SHARED_APP_USER_ID,
+      owner_type: "app",
+      entity_id: SHARED_APP_USER_ID,
+      entity_type: "app",
+    };
   }
   if (ids.some((id) => id !== resolvedId)) {
     throw new Error("user_id, owner_id, and entity_id must match when provided together");

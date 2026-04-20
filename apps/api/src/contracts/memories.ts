@@ -23,6 +23,7 @@ export function chunkParamsForProfile(profile: ChunkProfile | undefined): { chun
 }
 
 export const MemoryInsertSchema = z.object({
+  userId: z.string().min(1).optional(),
   user_id: z.string().min(1).optional(),
   owner_id: z.string().min(1).optional(),
   owner_type: OwnerTypeInputSchema.optional(),
@@ -30,7 +31,9 @@ export const MemoryInsertSchema = z.object({
   entity_id: z.string().min(1).optional(),
   /** @deprecated use owner_type */
   entity_type: OwnerTypeInputSchema.optional(),
+  scope: z.string().optional(),
   namespace: z.string().optional(),
+  containerTag: z.string().optional(),
   text: z.string().min(1, "text is required").max(MAX_TEXT_CHARS, `text exceeds ${MAX_TEXT_CHARS} chars`),
   metadata: z.record(z.string(), z.union([z.string(), z.number(), z.boolean(), z.null()])).optional(),
   /** Optional retrieval ranking multiplier (default 1). Applied in vector/text match RPCs. */
@@ -45,17 +48,10 @@ export const MemoryInsertSchema = z.object({
    */
   extract: z.boolean().default(true),
 }).superRefine((value, ctx) => {
-  const userId = value.user_id?.trim() ?? "";
+  const userId = value.userId?.trim() ?? value.user_id?.trim() ?? "";
   const ownerId = value.owner_id?.trim() ?? "";
   const entityId = value.entity_id?.trim() ?? "";
   const ids = [userId, ownerId, entityId].filter(Boolean);
-  if (ids.length === 0) {
-    ctx.addIssue({
-      code: z.ZodIssueCode.custom,
-      message: "user_id, owner_id, or entity_id is required",
-      path: ["user_id"],
-    });
-  }
   const resolved = ids[0] ?? "";
   if (ids.some((id) => id !== resolved)) {
     ctx.addIssue({
@@ -65,13 +61,20 @@ export const MemoryInsertSchema = z.object({
     });
   }
 }).transform((value) => {
-  const resolvedId = (value.user_id?.trim() || value.owner_id?.trim() || value.entity_id?.trim()) as string;
+  const resolvedId = (
+    value.userId?.trim() ||
+    value.user_id?.trim() ||
+    value.owner_id?.trim() ||
+    value.entity_id?.trim() ||
+    "shared_app"
+  ) as string;
   const ownerType = (value.owner_type ?? value.entity_type ?? "user") as "user" | "team" | "app";
   return {
     ...value,
     user_id: resolvedId,
     owner_id: resolvedId,
     owner_type: ownerType,
+    namespace: value.containerTag?.trim() || value.namespace?.trim() || value.scope?.trim() || "default",
   };
 });
 

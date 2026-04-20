@@ -33,7 +33,7 @@ Execution guardrails to keep the roadmap strict and avoid backend rewrites.
 
 ### Must be fully complete
 
-- Assistant workspace is no-code usable for connect, remember, recall, edit, and delete flows.
+- Assistant surface is no-code usable for connect, remember, recall, edit, and delete flows.
 - All three layers have distinct entry points and first-success tests.
 - Shared Memory Engine remains the single backend path.
 

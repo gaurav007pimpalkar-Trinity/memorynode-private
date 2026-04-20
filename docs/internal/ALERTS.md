@@ -22,7 +22,7 @@ Every golden metric has exactly one alert definition. Alerts reference the struc
 | --- | --- | --- | --- | --- |
 | B1 | **Cap exceeded (402)** | `event_name="cap_exceeded"` | ≥50 in 5 min | ≥150 in 5 min |
 | B2 | **Rate-limit denials (429)** | `request_completed` with `error_code="rate_limited"` | ≥50 in 5 min | ≥150 in 5 min |
-| B3 | **Top rejecting workspaces** | Group B1+B2 by `workspace_id_redacted` | Any single workspace >30 rejects in 5 min | Any single workspace >100 rejects in 5 min |
+| B3 | **Top rejecting projects** | Group B1+B2 by `workspace_id_redacted` | Any single project >30 rejects in 5 min | Any single project >100 rejects in 5 min |
 
 ### C. Search & Embed Latency
 
@@ -37,7 +37,7 @@ Every golden metric has exactly one alert definition. Alerts reference the struc
 | --- | --- | --- | --- | --- |
 | D1 | **Webhook failures** | `event_name IN ("webhook_failed","billing_endpoint_error")` | ≥5 in 10 min | ≥20 in 10 min |
 | D2 | **Signature invalid** | `event_name="billing_webhook_signature_invalid"` | ≥1 in 10 min | ≥5 in 10 min |
-| D3 | **Workspace not found** | `event_name="billing_webhook_workspace_not_found"` | ≥3 in 10 min | ≥10 in 10 min |
+| D3 | **Project mapping not found** | `event_name="billing_webhook_workspace_not_found"` | >=3 in 10 min | >=10 in 10 min |
 | D4 | **Deferred backlog** | `event_name="webhook_deferred"` count − `event_name="webhook_reconciled"` count | ≥5 net deferred in 1 hour | ≥15 net deferred in 1 hour |
 
 ### E. DB Latency & RPC Failures
@@ -59,13 +59,13 @@ Each alert ID maps to a first-action triage step.
 | **A2** (auth spike) | Validate `MASTER_ADMIN_TOKEN` and API key/salt state; check if keys were recently rotated. |
 | **A3** (latency) | Inspect route-level distribution (`route_group`, `method`); check Supabase status, OpenAI API status, and embed latency (C1). |
 | **B1/B2** (rejections) | Investigate abuse patterns; confirm `RATE_LIMIT_DO` health; tune limits if needed; check if plan caps need adjustment. |
-| **B3** (hot workspace) | Contact workspace owner if legitimate; consider temporary block if abuse. |
+| **B3** (hot project) | Contact project owner if legitimate; consider temporary block if abuse. |
 | **C1** (embed slow) | Check OpenAI status page; verify `OPENAI_API_KEY` is valid; consider fallback or queue. |
 | **C2** (search slow) | Decompose: is it embed latency (C1) or DB latency (E1)? Fix the bottleneck. |
 | **D1** (webhook fail) | Verify `PAYU_MERCHANT_KEY`/`PAYU_MERCHANT_SALT` + endpoint; check `docs/internal/BILLING_RUNBOOK.md` for replay. |
 | **D2** (sig invalid) | Possible secret rotation needed or replay attack; verify PayU dashboard webhook config. See `docs/SECURITY.md`. |
-| **D3** (ws not found) | Check workspace provisioning pipeline; may need manual workspace mapping. |
-| **D4** (deferred backlog) | Run `POST /admin/webhooks/reprocess` to drain deferred queue; investigate root cause of missing workspace mappings. |
+| **D3** (project mapping not found) | Check project provisioning pipeline; may need manual workspace mapping reconciliation. |
+| **D4** (deferred backlog) | Run `POST /admin/webhooks/reprocess` to drain deferred queue; investigate root cause of missing project mappings. |
 | **E1** (DB slow) | Check Supabase dashboard for query performance; verify connection pool; check for index drift. |
 | **E2** (DB errors) | Validate Supabase status/credentials; run `pnpm db:verify-rls`, `pnpm db:drift:test`. |
 

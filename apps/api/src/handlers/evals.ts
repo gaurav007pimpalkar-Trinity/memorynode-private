@@ -404,7 +404,7 @@ export function createEvalHandlers(
                 owner_id: parseResult.data.owner_id,
                 owner_type: parseResult.data.owner_type,
                 query: item.query,
-                namespace: parseResult.data.namespace,
+                namespace: parseResult.data.namespace ?? "default",
                 top_k: topK,
                 page: 1,
                 page_size: topK,

@@ -81,7 +81,7 @@ If you use a tunnel (e.g. ngrok) with HTTPS for local dev, the cookie will be Se
 ## 4. How it works (recap)
 
 - **API keys** are still created in the dashboard via Supabase RPC (`create_api_key`). The plaintext key is shown **once**; the dashboard does **not** store or send it.
-- **Dashboard ↔ Worker:** All calls use the **session cookie** only (`mn_dash_session`). The dashboard calls `POST /v1/dashboard/session` with Supabase `access_token` and `workspace_id`; the Worker checks membership, creates a row in `dashboard_sessions`, and sets the httpOnly cookie. Later requests send that cookie; the Worker resolves the session and uses the linked workspace.
+- **Dashboard ↔ Worker:** All calls use the **session cookie** only (`mn_dash_session`). The dashboard calls `POST /v1/dashboard/session` with Supabase `access_token` and `workspace_id`; the Worker checks membership, creates a row in `dashboard_sessions`, and sets the httpOnly cookie. Later requests send that cookie; the Worker resolves the session and uses the linked project context (internal workspace).
 - **Sign out:** The dashboard calls `POST /v1/dashboard/logout` (and Supabase sign out). The Worker deletes the session and clears the cookie.
 
 No long-lived API keys are stored in the browser; CI gate G2 enforces that.

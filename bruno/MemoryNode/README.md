@@ -10,16 +10,16 @@ Git-friendly API collection for beta onboarding and support reproduction.
    - `base_url`
    - `admin_token`
    - `api_key`
-   - `workspace_id`
-   - `user_id`
-   - `namespace`
+   - `workspace_id` (project ID in admin routes)
+   - `user_id` (preferred public input: `userId`)
+   - `namespace` (preferred public input: `scope`)
    - `query_id` (from Search History response)
    - `eval_set_id` (from List/Create Eval Set response)
 
 ## Run order
 
 1. `Healthz`
-2. `Admin Create Workspace` (copy `workspace_id` into variable)
+2. `Admin Create Workspace` (creates project; copy `workspace_id` into variable)
 3. `Admin Create API Key` (copy `api_key` into variable)
 4. `Usage Today`
 5. `Ingest Memory`

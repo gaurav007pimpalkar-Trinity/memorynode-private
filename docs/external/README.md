@@ -17,6 +17,9 @@ User-facing documentation for MemoryNode.
 | Audience | Link |
 |----------|------|
 | Default (everyone) | [../start-here/README.md](../start-here/README.md) |
+| Per-user setup | [../start-here/PER_USER_MEMORY.md](../start-here/PER_USER_MEMORY.md) |
+| Scope strategy | [../start-here/SCOPES.md](../start-here/SCOPES.md) |
+| Isolation internals | [../start-here/ADVANCED_ISOLATION.md](../start-here/ADVANCED_ISOLATION.md) |
 | Founders (no repo) | [../start-here/FOUNDER_PATH.md](../start-here/FOUNDER_PATH.md) |
 | Advanced usage | [../external/API_USAGE.md](../external/API_USAGE.md) |
 | Self-host / contributors | [../self-host/README.md](../self-host/README.md) |

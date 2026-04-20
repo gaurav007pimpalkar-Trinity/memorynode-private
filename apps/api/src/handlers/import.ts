@@ -18,6 +18,7 @@ import type { HandlerDeps } from "../router.js";
 import { ImportPayloadSchema, parseWithSchema } from "../contracts/index.js";
 import type { ImportMode, ImportPayload } from "../contracts/index.js";
 import type { QuotaResolutionLike } from "./memories.js";
+import { enforceIsolation } from "../middleware/isolation.js";
 
 export type { ImportMode, ImportPayload };
 export type ImportPayloadLike = ImportPayload;
@@ -145,7 +146,17 @@ export function createImportHandlers(
           { ...rate.headers, ...wsRate.headers },
         );
       }
-      const rateHeaders = { ...rate.headers, ...wsRate.headers };
+      const isolationResolution = enforceIsolation(
+        request,
+        env,
+        {
+          userId: request.headers.get("x-mn-user-id"),
+          scope: request.headers.get("x-mn-scope"),
+          containerTag: request.headers.get("x-mn-container-tag"),
+        },
+        { scopedContainerTag: auth.scopedContainerTag ?? null },
+      );
+      const rateHeaders = { ...rate.headers, ...wsRate.headers, ...isolationResolution.responseHeaders };
       const stage = (env.ENVIRONMENT ?? env.NODE_ENV ?? "dev").toLowerCase();
       const enforceDegradedBlocks = stage === "production" || stage === "prod" || stage === "staging";
       if (enforceDegradedBlocks && quota.degradedEntitlements) {

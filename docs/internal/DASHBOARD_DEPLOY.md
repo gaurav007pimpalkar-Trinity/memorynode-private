@@ -111,7 +111,7 @@ The console Overview calls **`GET /v1/dashboard/overview-stats`**, which uses th
 - [ ] `https://console.memorynode.ai` loads
 - [ ] `https://app.memorynode.ai/founder` loads
 - [ ] Sign in works (Supabase Auth); for Google, follow [SUPABASE_GOOGLE_OAUTH_SETUP.md](./SUPABASE_GOOGLE_OAUTH_SETUP.md) and confirm **Continue with Google** → Google consent → return signed in
-- [ ] Session → workspace → API key flow works
+- [ ] Session -> project -> API key flow works
 - [ ] API calls succeed (session cookie, CSRF)
 - [ ] Founder app requires valid admin token to load metrics
 - [ ] **Overview** tab shows numeric metrics (not a persistent error); timeframe **1d / 7d / 30d / All** updates counts after migration **033** and API deploy

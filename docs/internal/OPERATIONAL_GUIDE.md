@@ -30,11 +30,11 @@ MemoryNode has three main parts that users and you interact with:
 
 1. **The API** — The service that handles everything: storing and searching memories, checking usage, and (if you use it) processing payments. It runs on Cloudflare Workers and talks to your database and (for search quality) to an external embedding service. When we say “the API is up,” we mean this service is responding and can read and write data.
 
-2. **The dashboard** — The web app where users sign up, create workspaces, create API keys, and browse their memories. Users never put their API key in the dashboard; they log in with email or GitHub, and the dashboard talks to the API on their behalf. The dashboard must be deployed and reachable (e.g. at your main app URL) for a normal user experience.
+2. **The dashboard** — The web app where users sign up, create projects, create API keys, and browse their memories. Users never put their API key in the dashboard; they log in with email or GitHub, and the dashboard talks to the API on their behalf. The dashboard must be deployed and reachable (e.g. at your main app URL) for a normal user experience.
 
-3. **The database** — Where all persistent data lives: memories, workspaces, API keys, usage, and (if billing is on) payment-related state. The API is only truly “ready” when it can reach the database. A simple “readiness” check that hits the database is available for load balancers or platforms; if that check fails, the API should not receive traffic until the database is back.
+3. **The database** — Where all persistent data lives: memories, projects (internal workspace rows), API keys, usage, and (if billing is on) payment-related state. The API is only truly “ready” when it can reach the database. A simple “readiness” check that hits the database is available for load balancers or platforms; if that check fails, the API should not receive traffic until the database is back.
 
-**What users do (normal flow):** Sign up → create or pick a workspace → create an API key (shown once) → store memories via the API or dashboard → run searches. Success means they complete this path; you can track that with activation events (e.g. first ingest, first search) if you have product analytics.
+**What users do (normal flow):** Sign up -> create or pick a project -> create an API key (shown once) -> store memories via the API or dashboard -> run searches. Success means they complete this path; you can track that with activation events (e.g. first ingest, first search) if you have product analytics.
 
 **Billing (if enabled):** Payments are handled by PayU. When a customer pays, PayU sends a “webhook” (a callback) to your API. The API checks that the callback is genuine, then updates the customer’s plan and limits. If something goes wrong with that callback (e.g. wrong credentials or a missing mapping), payments can be “deferred” until you fix the cause and replay or reprocess. There is a dedicated billing runbook for that; this guide only tells you when to think “billing” and where to look.
 
@@ -50,7 +50,7 @@ MemoryNode has three main parts that users and you interact with:
 - **Most requests succeed** — The vast majority of responses are successful (2xx). A small number of client errors (4xx) or “rate limited” (429) is normal; a sudden spike in server errors (5xx) is not.
 - **Latency is normal** — Requests (including search and embedding) complete within expected times. Your observability docs define what “normal” is (e.g. p95 under a few hundred milliseconds for the API, a bit higher for search and embeds).
 - **The database is reachable** — The API can read and write to the database. If you use a readiness endpoint that checks the database, it should return “ready.”
-- **Billing (if on):** PayU callbacks are received, verified, and processed. You see “webhook processed” (or similar) in logs after payments. There is no growing backlog of “deferred” or “failed” webhooks, and no repeated “signature invalid” or “workspace not found” errors.
+- **Billing (if on):** PayU callbacks are received, verified, and processed. You see “webhook processed” (or similar) in logs after payments. There is no growing backlog of “deferred” or “failed” webhooks, and no repeated “signature invalid” or “project not found” mapping errors.
 
 **What to look at first:** Your monitoring or log dashboard should give you a single “health” view: request rate, error rate (especially 5xx), latency, and (if billing is on) webhook flow and any backlog. If all of those are green, the system is healthy. If any turn red, that’s your starting point (see “When something seems off”).
 
@@ -98,7 +98,7 @@ These are signals that something may be wrong. They are not a full incident resp
 
 - **Lots of “rate limited” or “cap exceeded”** — Many 429 or “cap exceeded” responses. *Check first:* Whether a single customer or key is driving the spike (abuse or misconfiguration) vs. a system-wide limit misconfiguration. Rate and cap behavior are documented in your internal docs; you may need an engineer to adjust limits or talk to the customer.
 
-- **Billing: payments not reflecting, or support says “payment went through but plan didn’t update”** — *Check first:* Webhook logs. Look for “webhook received,” “webhook verified,” and “webhook processed.” If you see “signature invalid” or “workspace not found,” or a growing number of “deferred” or “failed” events, that’s a billing pipeline issue. Use the billing runbook: fix the root cause (e.g. credentials, mapping), then replay or reprocess as described there. Do not change billing state manually without following that runbook.
+- **Billing: payments not reflecting, or support says “payment went through but plan didn’t update”** — *Check first:* Webhook logs. Look for “webhook received,” “webhook verified,” and “webhook processed.” If you see “signature invalid” or “project mapping not found,” or a growing number of “deferred” or “failed” events, that’s a billing pipeline issue. Use the billing runbook: fix the root cause (e.g. credentials, mapping), then replay or reprocess as described there. Do not change billing state manually without following that runbook.
 
 - **Dashboard not loading or “session expired” for everyone** — *Check first:* Is the dashboard deployment up? Is the API up and accepting dashboard requests? Are allowed origins set correctly for production? If the dashboard and API are up but users still cannot use it, it may be a config or auth issue; your operations or security docs describe where to look.
 

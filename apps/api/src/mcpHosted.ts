@@ -16,6 +16,7 @@ import { authenticate, extractApiKey, rateLimit, rateLimitWorkspace, type AuthCo
 import { isApiError } from "./http.js";
 import { getRouteRateLimitMax } from "./limits.js";
 import { logger } from "./logger.js";
+import { enforceIsolation } from "./middleware/isolation.js";
 import { resolveQuotaForWorkspace } from "./usage/quotaResolution.js";
 import { McpResponseCache } from "./mcpCache.js";
 import {
@@ -1574,8 +1575,26 @@ export async function handleHostedMcpRequest(
   const gated = await applyMcpEntitlementAndRateLimits(env, supabase, auth, ctx);
   if (gated) return gated;
 
-  const defaultUserId = "default";
-  const defaultNamespace = sanitizeScopePart(request.headers.get("x-mn-container-tag"), 128, "default");
+  const isolationResolution = enforceIsolation(
+    request,
+    env,
+    {
+      userId: request.headers.get("x-mn-user-id"),
+      scope: request.headers.get("x-mn-scope"),
+      containerTag: request.headers.get("x-mn-container-tag"),
+    },
+    { scopedContainerTag: auth.scopedContainerTag ?? null },
+  );
+  if (isolationResolution.isolation.conflictDetected) {
+    logger.info({
+      event: "mcp_routing_conflict",
+      request_id: requestId,
+      workspace_id: auth.workspaceId,
+      routing_mode: isolationResolution.isolation.routingMode,
+    });
+  }
+  const defaultUserId = sanitizeScopePart(isolationResolution.isolation.ownerId, 128, "default");
+  const defaultNamespace = sanitizeScopePart(isolationResolution.isolation.containerTag, 128, "default");
   const restApiOrigin = resolveRestApiOrigin(request, env);
 
   const sessionHeader = request.headers.get("mcp-session-id");
@@ -1607,6 +1626,9 @@ export async function handleHostedMcpRequest(
     const res = await rec.transport.handleRequest(request, { parsedBody });
     const headers = new Headers(res.headers);
     headers.set("x-mcp-policy-version", MCP_POLICY_VERSION);
+    for (const [k, v] of Object.entries(isolationResolution.responseHeaders)) {
+      if (!headers.has(k)) headers.set(k, v);
+    }
     for (const [k, v] of Object.entries(ctx.securityHeaders)) {
       if (!headers.has(k)) headers.set(k, v);
     }
@@ -1675,6 +1697,9 @@ export async function handleHostedMcpRequest(
 
   const headers = new Headers(res.headers);
   headers.set("x-mcp-policy-version", MCP_POLICY_VERSION);
+  for (const [k, v] of Object.entries(isolationResolution.responseHeaders)) {
+    if (!headers.has(k)) headers.set(k, v);
+  }
   for (const [k, v] of Object.entries(ctx.securityHeaders)) {
     if (!headers.has(k)) headers.set(k, v);
   }

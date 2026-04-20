@@ -2,7 +2,7 @@
 
 ## Layout
 - `apps/api` – Cloudflare Worker API.
-- `apps/dashboard` – implemented dashboard web app (workspace, keys, memories, usage, activation, settings).
+- `apps/dashboard` – implemented dashboard web app (project experience, keys, memories, usage, activation, settings).
 - `packages/shared` – shared types.
 - `packages/sdk` – lightweight TypeScript SDK.
 - `infra/sql` – SQL migrations and schema (apply in order).
@@ -129,7 +129,7 @@ pnpm install
 cp .env.example .env && cp apps/api/.dev.vars.template apps/api/.dev.vars   # fill SUPABASE_*, API_KEY_SALT, MASTER_ADMIN_TOKEN, EMBEDDINGS_MODE=stub
 DATABASE_URL=postgres://... pnpm db:migrate
 pnpm dev:api   # terminal 1
-pnpm --filter @memorynode/dashboard dev   # terminal 2 → dashboard, create workspace + API key
+pnpm --filter @memorynode/dashboard dev   # terminal 2 -> dashboard, create project + API key
 # curl ingest + search (see docs/start-here/README.md)
 ```
 
@@ -159,7 +159,7 @@ curl http://127.0.0.1:8787/healthz
 cp apps/api/.dev.vars.template apps/api/.dev.vars
 ```
    - In production, set `SUPABASE_MODE` to your real Supabase (not `stub`) and `EMBEDDINGS_MODE=openai`.
-2) Run the end-to-end smoke (starts API with stub embeddings, bootstraps workspace/key, exercises memories/search/context):
+2) Run the end-to-end smoke (starts API with stub embeddings, bootstraps project/key, exercises memories/search/context):
 ```bash
 corepack pnpm smoke
 ```
@@ -251,7 +251,7 @@ It checks `/healthz`, validates authenticated usage/search/context paths, and ve
 - Entitlements drive quota enforcement on quota-consuming routes (`/v1/memories`, `/v1/search`, `/v1/context`) and expired entitlements return `ENTITLEMENT_EXPIRED` (HTTP 402).
 
 ### Import (paid plans)
-- `POST /v1/import` accepts `{ artifact_base64, mode? }` and restores memories/chunks for the authenticated workspace only.
+- `POST /v1/import` accepts `{ artifact_base64, mode? }` and restores memories/chunks for the authenticated project only (internal workspace row).
 - `mode` defaults to non-destructive `upsert`; see API docs for other modes.
 - Free plans return `402 UPGRADE_REQUIRED`.
 
@@ -297,7 +297,7 @@ Migration manifest (CI-checked): `MIGRATIONS_TOTAL=60; MIGRATIONS_LATEST=058_mem
   ```
   By default this runs `pnpm db:migrate`, `pnpm db:verify-rls`, and `pnpm db:verify-schema` first when `DATABASE_URL`/`SUPABASE_DB_URL` is set.
   Set `BOOTSTRAP_SKIP_DB_CHECKS=1` to skip DB bootstrap checks.
-  Outputs a workspace ID and one-time API key plus sample curl commands.
+  Outputs a project ID (`workspace_id`) and one-time API key plus sample curl commands.
 
 ## Local Env File
 Copy the template and fill values before running wrangler:
@@ -308,12 +308,12 @@ cp apps/api/.dev.vars.template apps/api/.dev.vars
 ## RLS quick verification
 Apply migrations, then in Supabase SQL:
 ```sql
--- Tenant visibility (should see only own workspace rows)
+-- Tenant visibility (should see only own project rows; internal workspace_id)
 set local role authenticated;
 set local "request.jwt.claims" = '{"workspace_id":"00000000-0000-0000-0000-000000000001"}';
 select count(*) from memories where workspace_id <> '00000000-0000-0000-0000-000000000001'::uuid; -- expect 0
 
--- Spoofing a different workspace claim without membership should still return 0
+-- Spoofing a different project claim without membership should still return 0
 set local "request.jwt.claims" = '{"workspace_id":"ffffffff-ffff-ffff-ffff-ffffffffffff"}';
 select count(*) as cross_visible from memories; -- expect 0
 
@@ -333,8 +333,8 @@ See `infra/sql/verify_rls.sql` for an automated checklist.
 
 > Note: user_metadata claims are user-editable. Policies enforce membership in `workspace_members` so spoofed claims cannot break isolation.
 
-### Workspace creation under RLS
-- Use the RPC `select * from create_workspace('My Workspace')` (or dashboard UI) to create a workspace. The function inserts the workspace and adds the caller to `workspace_members` as `owner` in one transaction and runs as `security definer` to bypass RLS safely.
+### Project creation under RLS
+- Use the RPC `select * from create_workspace('My Project')` (or dashboard UI) to create a project. The function inserts the internal workspace row and adds the caller to `workspace_members` as `owner` in one transaction and runs as `security definer` to bypass RLS safely.
 
 ### API key management (RLS-safe)
 - Create key: `select * from create_api_key('my-key-name', '<workspace_uuid>'::uuid);` — returns the plaintext key once plus masked fields.
@@ -440,7 +440,7 @@ From repo root: `pnpm install && pnpm --filter @memorynode/dashboard build`, the
 
 **CORS:** Ensure `ALLOWED_ORIGINS` in the API Worker includes `https://console.memorynode.ai,https://app.memorynode.ai`.
 
-**Post-deploy:** [ ] `https://console.memorynode.ai` loads; [ ] `https://app.memorynode.ai/founder` loads; [ ] Sign in works on console; [ ] Session → workspace → API key flow works; [ ] Founder app requires admin token; [ ] API calls succeed (session cookie, CSRF on console).
+**Post-deploy:** [ ] `https://console.memorynode.ai` loads; [ ] `https://app.memorynode.ai/founder` loads; [ ] Sign in works on console; [ ] Session -> project -> API key flow works; [ ] Founder app requires admin token; [ ] API calls succeed (session cookie, CSRF on console).
 
 ---
 
@@ -462,11 +462,11 @@ Tables/columns: `infra/sql/023_dashboard_sessions.sql`, `infra/sql/024_dashboard
 
 ## Identity and tenancy (merged from IDENTITY_TENANCY.md)
 
-**Auth:** Supabase Auth (email magic link + OAuth). **Mapping:** Auth user → workspace membership (`workspace_members`) → API keys scoped to workspace.
+**Auth:** Supabase Auth (email magic link + OAuth). **Mapping:** Auth user -> project membership (`workspace_members`) -> API keys scoped to project.
 
-**Flow:** 1) Login → Supabase Auth (session with `user.id`). 2) Workspace selection → User picks current workspace (stored client-side as `workspace_id` only — not secret). 3) Dashboard calls → Use authenticated `user.id` and current `workspace_id`; API key is workspace-scoped. 4) Memory search / user-scoped calls → Send `user_id: session.user.id` (and optional namespace); no hardcoded user.
+**Flow:** 1) Login -> Supabase Auth (session with `user.id`). 2) Project selection -> User picks current project (stored client-side as `workspace_id` only — not secret). 3) Dashboard calls -> Use authenticated `user.id` and current `workspace_id`; API key is project-scoped. 4) Memory search / user-scoped calls -> Send `userId: session.user.id` (and optional `scope`); no hardcoded user.
 
-**Enforcement map:** Workspace selection = stored client-side as `workspace_id` only. Authorization = server verifies workspace membership on every dashboard/API call. API scope = `workspace_id` mandatory for dashboard calls; server rejects mismatches. Revocation = membership removal invalidates access immediately.
+**Enforcement map:** Project selection = stored client-side as `workspace_id` only. Authorization = server verifies project membership on every dashboard/API call. API scope = `workspace_id` mandatory for dashboard calls; server rejects mismatches. Revocation = membership removal invalidates access immediately.
 
-**No stale workspace:** On 401/403, the UI forces workspace reselect and clears cached workspace selection (apiClient `onUnauthorized` clears session, shows “Session expired or access denied”, clears persisted `workspace_id`). Optional: subscribe to membership changes or poll on load.
+**No stale project:** On 401/403, the UI forces project reselect and clears cached selection (apiClient `onUnauthorized` clears session, shows “Session expired or access denied”, clears persisted `workspace_id`). Optional: subscribe to membership changes or poll on load.
 

@@ -20,7 +20,7 @@
 
 ### 🧩 Build with control
 
-- Namespaces, filters, TypeScript SDK, OpenAPI  
+- Scopes, filters, TypeScript SDK, OpenAPI  
 - For product engineers shipping real apps  
 
 → **[docs/external/API_USAGE.md](docs/external/API_USAGE.md)**
@@ -46,7 +46,7 @@
 - Teams
 - Apps / AI systems
 
-Workspaces organize access, people, and billing. Memories belong to an owner.
+Projects organize access, people, and billing. Memories belong to an owner.
 
 ---
 
@@ -56,16 +56,17 @@ Workspaces organize access, people, and billing. Memories belong to an owner.
 export API_KEY=mn_live_xxx
 curl -X POST "https://api.memorynode.ai/v1/memories" \
   -H "Authorization: Bearer $API_KEY" -H "Content-Type: application/json" \
-  -d '{"user_id":"user-1","text":"User prefers dark mode"}'
+  -d '{"userId":"user-1","scope":"default","text":"User prefers dark mode"}'
 curl -X POST "https://api.memorynode.ai/v1/search" \
   -H "Authorization: Bearer $API_KEY" -H "Content-Type: application/json" \
-  -d '{"user_id":"user-1","query":"theme preference","top_k":5}'
+  -d '{"userId":"user-1","scope":"default","query":"theme preference","top_k":5}'
 curl -X POST "https://api.memorynode.ai/v1/context" \
   -H "Authorization: Bearer $API_KEY" -H "Content-Type: application/json" \
-  -d '{"user_id":"user-1","query":"What do we know about theme preferences?"}'
+  -d '{"userId":"user-1","scope":"default","query":"What do we know about theme preferences?"}'
 curl -G "https://api.memorynode.ai/v1/context/explain" \
   -H "Authorization: Bearer $API_KEY" \
-  --data-urlencode "user_id=user-1" \
+  --data-urlencode "userId=user-1" \
+  --data-urlencode "scope=default" \
   --data-urlencode "query=What do we know about theme preferences?" \
   --data-urlencode "top_k=5"
 ```

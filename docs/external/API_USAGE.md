@@ -2,6 +2,16 @@
 
 How to call the MemoryNode API and what to expect. Base URL: `https://api.memorynode.ai` (or your deployment’s URL).
 
+## Read order (recommended)
+
+If you are new, read in this order:
+
+1. [../start-here/README.md](../start-here/README.md)
+2. [../start-here/PER_USER_MEMORY.md](../start-here/PER_USER_MEMORY.md)
+3. [../start-here/SCOPES.md](../start-here/SCOPES.md)
+4. [../start-here/ADVANCED_ISOLATION.md](../start-here/ADVANCED_ISOLATION.md)
+5. Then use this page as full reference.
+
 ## Authentication
 
 Send your API key on every request:
@@ -21,16 +31,18 @@ Body:
 
 | Field | Required | Description |
 |-------|----------|-------------|
-| user_id | Yes | Your end-user’s identifier. Use the same when you search. |
+| userId | Recommended | Your end-user identifier. Use the same value when you search. |
+| user_id | Legacy alias | Backward-compatible alias for `userId`. |
 | text | Yes | The memory content. |
-| namespace | No | Scope (e.g. app or environment). Use the same when you search. |
+| scope | No | Optional logical scope (e.g. support, sales). |
+| namespace | Legacy alias | Backward-compatible alias for `scope`. |
 | metadata | No | Optional key-value pairs. |
 | memory_type | No | Optional tag: `fact`, `preference`, `event`, `note`, or `task`. |
 | extract | No | Defaults to **`true`**. When allowed by plan/budget, runs lightweight LLM extraction to child memories. Set **`false`** to store only the parent memory. |
 
-Example: `{"user_id":"user-123","namespace":"myapp","text":"User loves coffee"}`
+Example: `{"userId":"user-123","scope":"myapp","text":"User loves coffee"}`
 
-With typing and extraction: `{"user_id":"user-123","text":"I'm vegetarian and visited Paris last week","memory_type":"note","extract":true}`
+With typing and extraction: `{"userId":"user-123","text":"I'm vegetarian and visited Paris last week","memory_type":"note","extract":true}`
 
 Response: always includes **`"stored": true`** on HTTP 200 (your row was saved). **`chunks`** is the count of search-indexed segments when embedding ran; it may be omitted when embedding was skipped (e.g. text-only ingest under global AI budget — then **`"embedding": "skipped_due_to_budget"`** appears instead). **`extraction`**: `{ "status": "run" | "degraded" | "skipped" }`; when `status` is `skipped`, a **`reason`** (and optional **`error`**) is included. Headers: **`x-extraction-status`** always; **`x-extraction-reason`** only when skipped (and not `none`).
 
@@ -38,7 +50,7 @@ Response: always includes **`"stored": true`** on HTTP 200 (your row was saved).
 
 ## List and delete memories
 
-- **GET /v1/memories** — List memories. Query params: `page`, `page_size`, `user_id`, `namespace`, `memory_type` (fact | preference | event | note | task), and optional filters (`metadata`, `start_time`, `end_time`).
+- **GET /v1/memories** — List memories. Query params: `page`, `page_size`, `userId` (or `user_id`), `scope` (or `namespace`), `memory_type` (fact | preference | event | note | task), and optional filters (`metadata`, `start_time`, `end_time`).
 - **GET /v1/memories/:id** — Fetch one memory.
 - **DELETE /v1/memories/:id** — Delete a memory.
 
@@ -48,7 +60,7 @@ Response: always includes **`"stored": true`** on HTTP 200 (your row was saved).
 
 **POST /v1/search**
 
-Body: `user_id`, `query`, and optional `namespace`, `top_k`, `page`, `page_size`, `explain`. Use the same `user_id` and `namespace` as when you stored.
+Body: `userId`, `query`, and optional `scope`, `top_k`, `page`, `page_size`, `explain`. Use the same `userId` and `scope` as when you stored.
 
 Optional fields:
 
@@ -75,7 +87,7 @@ Same body as search (including optional `search_mode`, `min_score`, and `filters
 
 **GET /v1/context/explain**
 
-Query params: `user_id`, `query`, and optional `namespace`, `top_k`, `page`, `page_size`, `search_mode`, `min_score`, `retrieval_profile`.
+Query params: `userId`, `query`, and optional `scope`, `top_k`, `page`, `page_size`, `search_mode`, `min_score`, `retrieval_profile`.
 
 Response includes:
 
@@ -109,6 +121,13 @@ Returns how much you’ve used today and your plan’s limits. Use it to show us
 - Free plans receive **402 `UPGRADE_REQUIRED`**.
 
 ---
+
+## Routing defaults
+
+If `userId` is omitted, MemoryNode routes to a shared app bucket (`shared_default`) instead of per-user isolation.
+Use that path only for global memory, not personalized memory.
+
+For full routing precedence and debug-header policy, see [../start-here/ADVANCED_ISOLATION.md](../start-here/ADVANCED_ISOLATION.md).
 
 ## Errors and what to do
 

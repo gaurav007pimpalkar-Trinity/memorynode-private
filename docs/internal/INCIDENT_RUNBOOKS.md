@@ -19,7 +19,7 @@ Canonical response playbooks for high-impact incidents. This document is optimiz
 ## 2) Universal First 5 Minutes
 
 1. Acknowledge alert/page and open incident channel.
-2. Capture current impact: route groups, error rates, impacted workspaces.
+2. Capture current impact: route groups, error rates, impacted projects.
 3. Freeze non-essential deploys.
 4. Record evidence:
    - `x-request-id` samples
@@ -162,7 +162,7 @@ Canonical response playbooks for high-impact incidents. This document is optimiz
 
 - [ ] Root cause identified and documented.
 - [ ] Time-to-detect / time-to-mitigate captured.
-- [ ] Impacted users/workspaces listed.
+- [ ] Impacted users/projects listed.
 - [ ] Corrective action item(s) created with owners and due dates.
 - [ ] Tests/guards added to prevent recurrence.
 

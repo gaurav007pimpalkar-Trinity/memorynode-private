@@ -4,7 +4,7 @@
 
 ## Get API key
 
-1. Open `https://console.memorynode.ai`, create/select a workspace.
+1. Open `https://console.memorynode.ai`, create/select a project.
 2. Go to **API Keys** -> **Create API Key** -> copy the `mn_live_...` value.
 
 ## Your First Working Memory (60 seconds)
@@ -12,30 +12,32 @@
 ```bash
 export API_KEY="mn_live_your_key_here"
 export USER_ID="user-123"
-export NAMESPACE="myapp"
+export SCOPE="myapp"
 
 curl -sS -X POST "https://api.memorynode.ai/v1/memories" \
   -H "Authorization: Bearer $API_KEY" \
   -H "Content-Type: application/json" \
-  -d "{\"user_id\":\"$USER_ID\",\"namespace\":\"$NAMESPACE\",\"text\":\"User prefers dark mode\"}"
+  -d "{\"userId\":\"$USER_ID\",\"scope\":\"$SCOPE\",\"text\":\"User prefers dark mode\"}"
 
 curl -sS -X POST "https://api.memorynode.ai/v1/search" \
   -H "Authorization: Bearer $API_KEY" \
   -H "Content-Type: application/json" \
-  -d "{\"user_id\":\"$USER_ID\",\"namespace\":\"$NAMESPACE\",\"query\":\"theme preference\",\"top_k\":5}"
+  -d "{\"userId\":\"$USER_ID\",\"scope\":\"$SCOPE\",\"query\":\"theme preference\",\"top_k\":5}"
 
 curl -sS -X POST "https://api.memorynode.ai/v1/context" \
   -H "Authorization: Bearer $API_KEY" \
   -H "Content-Type: application/json" \
-  -d "{\"user_id\":\"$USER_ID\",\"namespace\":\"$NAMESPACE\",\"query\":\"What do we know about theme preferences?\",\"top_k\":5}"
+  -d "{\"userId\":\"$USER_ID\",\"scope\":\"$SCOPE\",\"query\":\"What do we know about theme preferences?\",\"top_k\":5}"
 
 curl -sS -G "https://api.memorynode.ai/v1/context/explain" \
   -H "Authorization: Bearer $API_KEY" \
-  --data-urlencode "user_id=$USER_ID" \
-  --data-urlencode "namespace=$NAMESPACE" \
+  --data-urlencode "userId=$USER_ID" \
+  --data-urlencode "scope=$SCOPE" \
   --data-urlencode "query=What do we know about theme preferences?" \
   --data-urlencode "top_k=5"
 ```
+
+Legacy aliases (`user_id`, `namespace`) are still accepted for compatibility.
 
 ## Context explain response
 
@@ -55,8 +57,8 @@ The JSON includes a **`query`** object (echo of the params you sent), **`chunk_i
 ```json
 {
   "query": {
-    "user_id": "user-123",
-    "namespace": "myapp",
+    "userId": "user-123",
+    "scope": "myapp",
     "query": "What do we know about theme preferences?",
     "top_k": 5,
     "search_mode": "hybrid",
@@ -101,3 +103,10 @@ Flow mental model:
 - search -> recall relevant memory
 - context -> use memory in AI response
 - explain -> prove why it was used
+
+## Continue
+
+1. [PER_USER_MEMORY.md](./PER_USER_MEMORY.md)
+2. [SCOPES.md](./SCOPES.md)
+3. [ADVANCED_ISOLATION.md](./ADVANCED_ISOLATION.md)
+4. [../external/API_USAGE.md](../external/API_USAGE.md)
