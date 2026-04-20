@@ -1,2 +1,4 @@
 /founder /index.html 200
 /founder/* /index.html 200
+# SPA fallback for deep links (e.g. /lab, /api-keys). Specific rules above take precedence.
+/* /index.html 200

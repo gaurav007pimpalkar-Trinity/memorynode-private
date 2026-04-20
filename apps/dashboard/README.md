@@ -56,6 +56,11 @@ Use the **anon** (not service-role) key so browser traffic is RLS-enforced. Foun
 - Usage is project-scoped and loaded through dashboard session auth.
 - Data is fetched from Worker API `/v1/usage/today`; shows reads/writes/embed consumption and plan limits with friendly errors.
 
+## Console auth vs API keys
+
+- In the browser, the console uses a **dashboard session** (HTTP-only cookies from `POST /v1/dashboard/session` after sign-in, plus `x-csrf-token` on mutating calls). JSON **bodies** match the public API reference.
+- **Copy-as-curl** helpers use `Authorization: Bearer YOUR_API_KEY` on purpose: same JSON your servers send. Successful responses expose `x-request-id` when the Worker sets that header.
+
 ## Import tab (paid)
 
 - Import supports artifact-based bulk ingest through Worker API `POST /v1/import`.

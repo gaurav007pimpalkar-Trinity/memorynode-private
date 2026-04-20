@@ -9,6 +9,8 @@
 # Legacy single-surface CLI (build dist once, then deploy):
 #   VITE_APP_SURFACE=console VITE_API_BASE_URL=https://api.memorynode.ai pnpm --filter @memorynode/dashboard build
 #   pnpm exec wrangler pages deploy apps/dashboard/dist --project-name=memorynode-console
+#
+# Client-side routes: public/_redirects includes `/* /index.html 200` so /lab and /api-keys work on refresh.
 
 name = "memorynode-console"
 pages_build_output_dir = "./dist"

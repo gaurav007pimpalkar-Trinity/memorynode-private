@@ -51,8 +51,8 @@ export function DeveloperNextSteps({ hasApiKey }: { hasApiKey: boolean }): JSX.E
         </li>
         {!hasApiKey ? (
           <li>
-            <strong>Create an API key</strong> under <strong>API Keys</strong> in the sidebar, then run the script with{" "}
-            <code className="developer-next-steps-code">API_KEY</code> set.
+            <strong>Create an API key</strong> under <strong>API Keys</strong>, then run the script with{" "}
+            <code className="developer-next-steps-code">API_KEY</code> set and confirm queries in <strong>Memory Lab</strong>.
           </li>
         ) : null}
       </ul>

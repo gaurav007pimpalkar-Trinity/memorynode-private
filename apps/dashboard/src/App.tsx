@@ -1,137 +1,24 @@
 import { Component, useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { Navigate, NavLink, useLocation, useNavigate } from "react-router-dom";
 import { Session, type AuthChangeEvent } from "@supabase/supabase-js";
 import { supabase, supabaseEnvError } from "./supabaseClient";
+import {
+  SESSION_LAST_API_KEY_PLAINTEXT,
+  buildPaletteSectionRows,
+  pushRecentCommandId,
+  type PaletteCommand,
+} from "./consoleCommandPalette";
+import { pathForTab, tabFromPath, tabsRequiringWorkspace, UNIFIED_SIDEBAR_GROUPS, type Tab } from "./consoleRoutes";
 import { ApiKeyRow, ConnectorSettingRow, InviteRow, MemoryRow, UsageRow } from "./types";
 import { loadWorkspaceId, persistWorkspaceId } from "./state";
 import { apiDelete, apiEnvError, apiGet, apiPatch, apiPost, ensureDashboardSession, dashboardLogout, setOnUnauthorized, userFacingErrorMessage } from "./apiClient";
-import { mapSearchResultsToRows, type MemorySearchRow, type SearchApiResult } from "./memorySearch";
-import { DeveloperNextSteps } from "./DeveloperNextSteps";
 import { DashboardBuildFooter } from "./DashboardBuildFooter";
-
-type Tab =
-  | "overview"
-  | "continuity"
-  | "assistant_home"
-  | "assistant_connections"
-  | "assistant_memory"
-  | "assistant_settings"
-  | "memories"
-  | "usage"
-  | "import"
-  | "api_keys"
-  | "mcp"
-  | "connectors"
-  | "workspaces"
-  | "billing";
-
-const tabsRequiringWorkspace: Tab[] = [
-  "continuity",
-  "assistant_home",
-  "assistant_connections",
-  "assistant_memory",
-  "assistant_settings",
-  "memories",
-  "usage",
-  "import",
-  "api_keys",
-  "connectors",
-  "workspaces",
-  "billing",
-];
-
-type SidebarNavEntry = { tab: Tab; label: string; showLock?: boolean };
-
-type SidebarGroup = { section: string; entries: SidebarNavEntry[] };
-
-type ConsoleSurface = "developer" | "saas" | "assistant";
-
-const SURFACE_PREF_KEY = "mn_console_surface";
-
-const DEVELOPER_SIDEBAR_GROUPS: SidebarGroup[] = [
-  {
-    section: "Build",
-    entries: [
-      { tab: "overview", label: "Overview" },
-      { tab: "memories", label: "Memory Browser" },
-      { tab: "import", label: "Import" },
-      { tab: "api_keys", label: "API Keys" },
-      { tab: "mcp", label: "MCP Setup" },
-      { tab: "connectors", label: "Connectors" },
-      { tab: "usage", label: "Usage" },
-    ],
-  },
-  {
-    section: "Account",
-    entries: [{ tab: "workspaces", label: "Projects" }],
-  },
-];
-
-const SAAS_SIDEBAR_GROUPS: SidebarGroup[] = [
-  {
-    section: "Operate",
-    entries: [
-      { tab: "overview", label: "Overview" },
-      { tab: "continuity", label: "Continuity" },
-      { tab: "usage", label: "Usage" },
-      { tab: "workspaces", label: "Projects" },
-      { tab: "billing", label: "Billing" },
-    ],
-  },
-];
-
-const ASSISTANT_SIDEBAR_GROUPS: SidebarGroup[] = [
-  {
-    section: "Assistant Workspace",
-    entries: [{ tab: "assistant_memory", label: "Assistant" }],
-  },
-];
-
-function loadSurfacePreference(): ConsoleSurface {
-  if (typeof window === "undefined") return "developer";
-  const raw = window.localStorage.getItem(SURFACE_PREF_KEY);
-  if (raw === "assistant") return "assistant";
-  return raw === "saas" ? "saas" : "developer";
-}
-
-function persistSurfacePreference(surface: ConsoleSurface): void {
-  if (typeof window === "undefined") return;
-  window.localStorage.setItem(SURFACE_PREF_KEY, surface);
-}
-
-const SIDEBAR_GROUPS_BY_SURFACE: Record<ConsoleSurface, SidebarGroup[]> = {
-  developer: DEVELOPER_SIDEBAR_GROUPS,
-  saas: SAAS_SIDEBAR_GROUPS,
-  assistant: ASSISTANT_SIDEBAR_GROUPS,
-};
-
-function defaultTabForSurface(surface: ConsoleSurface): Tab {
-  const groups = SIDEBAR_GROUPS_BY_SURFACE[surface];
-  return groups[0]?.entries[0]?.tab ?? "overview";
-}
-
-function nextAvailableTab(current: Tab, surface: ConsoleSurface): Tab {
-  const groups = SIDEBAR_GROUPS_BY_SURFACE[surface];
-  const allTabs = groups.flatMap((group) => group.entries.map((entry) => entry.tab));
-  return allTabs.includes(current) ? current : defaultTabForSurface(surface);
-}
-
-const SURFACE_DESCRIPTIONS: Record<ConsoleSurface, string> = {
-  developer: "API setup, memory debugging, and integration controls.",
-  saas: "Run the user-memory continuity demo and verify returning users are remembered.",
-  assistant: "No-code assistant flow to connect tools, remember context, and recall it later.",
-};
-
-const SIDEBAR_SURFACE_TITLES: Record<ConsoleSurface, string> = {
-  developer: "Developer Console",
-  saas: "SaaS Memory Console",
-  assistant: "Assistant Workspace",
-};
-
-const SIDEBAR_SURFACE_SHORT: Record<ConsoleSurface, string> = {
-  developer: "Developer",
-  saas: "SaaS",
-  assistant: "Assistant",
-};
+import { EmptyState } from "./components/EmptyState";
+import { Panel, Shell } from "./components/Panel";
+import { DashboardSessionAuthNote } from "./components/DashboardSessionAuthNote";
+import { OverviewView } from "./views/OverviewView";
+import { MemoryLabView } from "./views/MemoryLabView";
+import { ImportView } from "./views/ImportView";
 
 function seatCapForPlan(planCode: string | null | undefined): number {
   const normalized = (planCode ?? "launch").toLowerCase();
@@ -174,13 +61,6 @@ function workspaceSwitcherLabel(session: Session, effectiveWorkspaceId: string, 
   if (name) return name;
   const local = userEmail.includes("@") ? userEmail.split("@")[0] : userEmail;
   return local || "Account";
-}
-
-function shortWorkspaceId(id: string): string {
-  const t = id.trim();
-  if (!t) return "";
-  if (t.length <= 12) return t;
-  return `${t.slice(0, 8)}…${t.slice(-4)}`;
 }
 
 function devLog(payload: Record<string, unknown>): void {
@@ -255,9 +135,10 @@ class ErrorBoundary extends Component<ErrorBoundaryProps, ErrorBoundaryState> {
 }
 
 export function App(): JSX.Element {
+  const location = useLocation();
+  const navigate = useNavigate();
   const [session, setSession] = useState<Session | null>(null);
   const [loadingSession, setLoadingSession] = useState(true);
-  const [tab, setTab] = useState<Tab>("overview");
   const [workspaceId, setWorkspaceId] = useState(() => loadWorkspaceId());
   const [workspaceSaving, setWorkspaceSaving] = useState(false);
   const [alert, setAlert] = useState<string | null>(null);
@@ -269,12 +150,17 @@ export function App(): JSX.Element {
   const [navDrawerOpen, setNavDrawerOpen] = useState(false);
   const [onboardingCollapsed, setOnboardingCollapsed] = useState(false);
   const [planBadge, setPlanBadge] = useState("LAUNCH");
+  const [labSearchDone, setLabSearchDone] = useState(() => {
+    if (typeof sessionStorage === "undefined") return false;
+    return sessionStorage.getItem("mn_lab_search_done") === "1";
+  });
   const consoleSearchRef = useRef<HTMLInputElement>(null);
   const [paletteQuery, setPaletteQuery] = useState("");
   const [paletteOpen, setPaletteOpen] = useState(false);
   const [paletteIndex, setPaletteIndex] = useState(0);
-  const [surface, setSurface] = useState<ConsoleSurface>(() => loadSurfacePreference());
   const workspaceBootstrapAttemptedRef = useRef(false);
+
+  const resolvedTab = tabFromPath(location.pathname);
 
   const missingEnv = useMemo(() => {
     const errs: string[] = [];
@@ -461,7 +347,7 @@ export function App(): JSX.Element {
     setOnUnauthorized(() => {
       workspaceBootstrapAttemptedRef.current = false;
       setSessionReady(false);
-      setSessionError("Session expired or access denied. Please sign in again or select project.");
+      setSessionError("Session expired or access denied. Please sign in again or connect a project in Get started.");
       persistWorkspaceId("");
       setWorkspaceId("");
     });
@@ -478,17 +364,12 @@ export function App(): JSX.Element {
     } else {
       persistWorkspaceId(workspaceId);
       await supabase.auth.refreshSession();
-      setAlert("Workspace connected. All sections are now ready.");
+      setAlert("Project connected. All sections are now ready.");
     }
     setWorkspaceSaving(false);
   };
 
-  useEffect(() => {
-    persistSurfacePreference(surface);
-    setTab((prev) => nextAvailableTab(prev, surface));
-  }, [surface]);
-
-  const sidebarGroups = useMemo(() => SIDEBAR_GROUPS_BY_SURFACE[surface], [surface]);
+  const sidebarGroups = useMemo(() => UNIFIED_SIDEBAR_GROUPS, []);
   const sidebarCommands = useMemo(
     () =>
       sidebarGroups.flatMap((g) =>
@@ -497,68 +378,190 @@ export function App(): JSX.Element {
     [sidebarGroups],
   );
 
+  const onMemoryLabCriteriaMet = useCallback(() => {
+    try {
+      sessionStorage.setItem("mn_lab_search_done", "1");
+    } catch {
+      /* ignore */
+    }
+    setLabSearchDone(true);
+  }, []);
+
   const onboardingSteps = useMemo(
-    () =>
-      surface === "developer"
-        ? [
-            { key: "workspace", label: "Choose your project", done: workspaceReady },
-            { key: "workspace-bind", label: "Connect this browser", done: Boolean(workspaceClaim?.trim() || workspaceId.trim()) },
-            { key: "api-key", label: "Create your first API key", done: firstApiKeyCreated },
-            { key: "team", label: "Invite collaborators (optional)", done: false },
-          ]
-        : surface === "assistant"
-          ? [
-              { key: "workspace", label: "Choose your project", done: workspaceReady },
-              { key: "workspace-bind", label: "Connect this browser", done: Boolean(workspaceClaim?.trim() || workspaceId.trim()) },
-              { key: "remember", label: "Remember something for a user", done: workspaceReady },
-              { key: "recall", label: "Ask what the assistant knows", done: workspaceReady },
-            ]
-        : [
-            { key: "workspace", label: "Choose your project", done: workspaceReady },
-            { key: "workspace-bind", label: "Connect this browser", done: Boolean(workspaceClaim?.trim() || workspaceId.trim()) },
-            { key: "usage", label: "Verify usage metrics", done: workspaceReady && sessionReady },
-            { key: "billing", label: "Confirm plan and billing", done: planBadge !== "FREE" },
-          ],
-    [surface, workspaceReady, workspaceClaim, workspaceId, firstApiKeyCreated, sessionReady, planBadge],
+    () => [
+      { key: "api-key", label: "Create an API key", done: firstApiKeyCreated },
+      { key: "lab", label: "Test memory in Memory Lab", done: labSearchDone },
+      { key: "ship", label: "Use it in your app", done: false },
+    ],
+    [firstApiKeyCreated, labSearchDone],
   );
   const completedSteps = onboardingSteps.filter((step) => step.done).length;
 
   const selectTab = useCallback(
     (t: Tab) => {
       if (!workspaceReady && tabsRequiringWorkspace.includes(t)) return;
-      setTab(t);
+      navigate(pathForTab(t));
       setNavDrawerOpen(false);
     },
-    [workspaceReady],
+    [workspaceReady, navigate],
   );
 
-  const paletteMatches = useMemo(() => {
-    const q = paletteQuery.trim().toLowerCase();
-    if (!q) return sidebarCommands;
-    return sidebarCommands.filter(
-      (c) =>
-        c.label.toLowerCase().includes(q) ||
-        c.section.toLowerCase().includes(q) ||
-        `${c.section} ${c.label}`.toLowerCase().includes(q),
-    );
-  }, [paletteQuery, sidebarCommands]);
+  useEffect(() => {
+    if (resolvedTab === null) return;
+    if (workspaceReady) return;
+    if (!tabsRequiringWorkspace.includes(resolvedTab)) return;
+    navigate("/", { replace: true });
+  }, [workspaceReady, resolvedTab, navigate]);
+
+  const closeCommandPalette = useCallback(() => {
+    setPaletteOpen(false);
+    setPaletteQuery("");
+    consoleSearchRef.current?.blur();
+  }, []);
+
+  const paletteCommands = useMemo((): PaletteCommand[] => {
+    const workspaceIdStr = effectiveWorkspaceId?.trim() ?? "";
+    const navLocked = (t: Tab) => !workspaceReady && tabsRequiringWorkspace.includes(t);
+
+    const navigation: PaletteCommand[] = sidebarCommands.map((c) => ({
+      id: `nav-${c.tab}`,
+      group: "navigation" as const,
+      label: c.label,
+      description: c.section,
+      keywords: [c.section, c.label, pathForTab(c.tab).replace(/^\//, "")],
+      locked: navLocked(c.tab),
+      tab: c.tab,
+      execute: () => {
+        if (navLocked(c.tab)) return;
+        selectTab(c.tab);
+      },
+    }));
+
+    const actions: PaletteCommand[] = [
+      {
+        id: "action-memory-lab",
+        group: "action",
+        label: "Open Memory Lab",
+        description: "Semantic search, context probe, retrieval explain",
+        keywords: ["lab", "search", "memory", "debug", "memories"],
+        locked: navLocked("memories"),
+        tab: "memories",
+        execute: () => {
+          if (navLocked("memories")) return;
+          selectTab("memories");
+        },
+      },
+      {
+        id: "action-create-api-key",
+        group: "action",
+        label: "Create API key",
+        description: "Open API Keys — add a server key for your app",
+        keywords: ["key", "token", "auth", "api-keys", "secrets"],
+        locked: navLocked("api_keys"),
+        tab: "api_keys",
+        execute: () => {
+          if (navLocked("api_keys")) return;
+          selectTab("api_keys");
+        },
+      },
+      {
+        id: "action-copy-project-id",
+        group: "action",
+        label: "Copy project ID",
+        description: workspaceIdStr ? `Current project · ${workspaceIdStr.slice(0, 8)}…` : "Connect a project first",
+        keywords: ["workspace", "uuid", "project", "id", "clipboard"],
+        locked: !workspaceIdStr,
+        execute: () => {
+          if (!workspaceIdStr) return;
+          void navigator.clipboard.writeText(workspaceIdStr);
+          setAlert("Project ID copied to clipboard.");
+        },
+      },
+      {
+        id: "action-copy-api-key",
+        group: "action",
+        label: "Copy latest API key",
+        description: "Uses the last key shown after creation (this session only)",
+        keywords: ["clipboard", "secret", "mn_live", "token"],
+        locked: false,
+        execute: () => {
+          try {
+            const key = sessionStorage.getItem(SESSION_LAST_API_KEY_PLAINTEXT)?.trim();
+            if (key) {
+              void navigator.clipboard.writeText(key);
+              setAlert("API key copied to clipboard.");
+            } else {
+              setAlert("No key in this session — create one on API Keys (copy it from the one-time modal).");
+            }
+          } catch {
+            setAlert("Could not copy — check browser permissions.");
+          }
+        },
+      },
+      {
+        id: "action-goto-usage",
+        group: "action",
+        label: "Go to Usage",
+        description: "Reads, writes, embed limits",
+        keywords: ["billing", "quota", "metrics", "consumption"],
+        locked: navLocked("usage"),
+        tab: "usage",
+        execute: () => {
+          if (navLocked("usage")) return;
+          selectTab("usage");
+        },
+      },
+      {
+        id: "action-goto-import",
+        group: "action",
+        label: "Open Import",
+        description: "Bulk load memories",
+        keywords: ["upload", "migrate", "json", "base64"],
+        locked: navLocked("import"),
+        tab: "import",
+        execute: () => {
+          if (navLocked("import")) return;
+          selectTab("import");
+        },
+      },
+      {
+        id: "action-goto-billing",
+        group: "action",
+        label: "Open Billing",
+        description: "Plan and invoices",
+        keywords: ["plan", "invoice", "subscription", "payment"],
+        locked: navLocked("billing"),
+        tab: "billing",
+        execute: () => {
+          if (navLocked("billing")) return;
+          selectTab("billing");
+        },
+      },
+    ];
+
+    return [...actions, ...navigation];
+  }, [effectiveWorkspaceId, workspaceReady, sidebarCommands, selectTab]);
+
+  const { rows: paletteRows, flat: paletteFlat } = useMemo(
+    () => buildPaletteSectionRows(paletteQuery, paletteCommands),
+    [paletteQuery, paletteCommands],
+  );
 
   useEffect(() => {
     setPaletteIndex((i) => {
-      if (paletteMatches.length === 0) return 0;
-      return Math.min(i, paletteMatches.length - 1);
+      if (paletteFlat.length === 0) return 0;
+      return Math.min(i, paletteFlat.length - 1);
     });
-  }, [paletteMatches.length, paletteQuery]);
+  }, [paletteFlat.length, paletteQuery]);
 
-  const runPaletteSelect = useCallback(
-    (t: Tab) => {
-      if (!workspaceReady && tabsRequiringWorkspace.includes(t)) return;
-      selectTab(t);
-      setPaletteQuery("");
-      setPaletteOpen(false);
-      consoleSearchRef.current?.blur();
+  const runPaletteCommand = useCallback(
+    (cmd: PaletteCommand) => {
+      if (cmd.locked) return;
+      pushRecentCommandId(cmd.id);
+      cmd.execute();
+      closeCommandPalette();
     },
-    [workspaceReady, selectTab],
+    [closeCommandPalette],
   );
 
   useEffect(() => {
@@ -573,7 +576,9 @@ export function App(): JSX.Element {
     return (
       <Shell>
         <Panel title="Configuration error">
-          <div className="badge">The dashboard is missing required environment variables.</div>
+          <div className="alert alert--error" role="alert">
+            The dashboard is missing required environment variables.
+          </div>
           <ul className="muted small">
             {missingEnv.map((m) => (
               <li key={m}>{m}</li>
@@ -602,7 +607,9 @@ export function App(): JSX.Element {
     return (
       <Shell>
         <Panel title="Session error">
-          <div className="badge">{sessionError}</div>
+          <div className="alert alert--error" role="alert">
+            {sessionError}
+          </div>
           <div className="row">
             <button onClick={() => { setSessionError(null); setSessionReady(false); }}>
               Retry
@@ -616,6 +623,11 @@ export function App(): JSX.Element {
     );
   }
 
+  if (resolvedTab === null) {
+    return <Navigate to="/" replace />;
+  }
+
+  const tab = resolvedTab;
   const switcherTitle = workspaceSwitcherLabel(session, effectiveWorkspaceId, userEmail);
 
   return (
@@ -634,41 +646,21 @@ export function App(): JSX.Element {
           <span className="console-brand-text">MemoryNode</span>
         </div>
         <div className="panel card">
-          <div className="muted small">{SIDEBAR_SURFACE_TITLES[surface]}</div>
-          <div className="row mt-sm">
-            <button
-              type="button"
-              className={surface === "developer" ? "" : "ghost"}
-              onClick={() => setSurface("developer")}
-            >
-              Developer
-            </button>
-            <button
-              type="button"
-              className={surface === "saas" ? "" : "ghost"}
-              onClick={() => setSurface("saas")}
-            >
-              SaaS
-            </button>
-            <button
-              type="button"
-              className={surface === "assistant" ? "" : "ghost"}
-              onClick={() => setSurface("assistant")}
-            >
-              Assistant
-            </button>
+          <div className="muted small">Memory Lab first</div>
+          <div className="muted small mt-sm">
+            Search and debug production memory from one place. Integrations, usage, and billing support your rollout.
           </div>
-          <div className="muted small mt-sm">{SURFACE_DESCRIPTIONS[surface]}</div>
         </div>
         <div className={`console-search-wrap${paletteOpen ? " console-search-wrap--open" : ""}`}>
           <input
             ref={consoleSearchRef}
             type="search"
             className="console-search-input"
-            placeholder="Jump to…"
-            aria-label="Jump to page"
+            placeholder="Commands and pages…"
+            aria-label="Command palette"
             aria-expanded={paletteOpen}
-            aria-controls="console-command-list"
+            aria-controls="cmdgroups"
+            aria-activedescendant={paletteFlat[paletteIndex] ? `palette-cmd-${paletteFlat[paletteIndex].id}` : undefined}
             autoComplete="off"
             value={paletteQuery}
             onChange={(e) => {
@@ -682,57 +674,77 @@ export function App(): JSX.Element {
             onKeyDown={(e) => {
               if (e.key === "ArrowDown") {
                 e.preventDefault();
-                setPaletteIndex((i) => Math.min(Math.max(0, paletteMatches.length - 1), i + 1));
+                setPaletteIndex((i) => Math.min(Math.max(0, paletteFlat.length - 1), i + 1));
               } else if (e.key === "ArrowUp") {
                 e.preventDefault();
                 setPaletteIndex((i) => Math.max(0, i - 1));
               } else if (e.key === "Enter") {
-                const pick = paletteMatches[paletteIndex];
+                const pick = paletteFlat[paletteIndex];
                 if (pick) {
                   e.preventDefault();
-                  runPaletteSelect(pick.tab);
+                  runPaletteCommand(pick);
                 }
               } else if (e.key === "Escape") {
                 e.preventDefault();
-                setPaletteOpen(false);
-                setPaletteQuery("");
-                consoleSearchRef.current?.blur();
+                closeCommandPalette();
               }
             }}
           />
           <kbd className="console-search-kbd">⌘K</kbd>
           {paletteOpen && (
             <div
-              id="console-command-list"
+              id="cmdgroups"
               className="console-search-results"
               role="listbox"
-              aria-label="Console pages"
+              aria-label="Commands and navigation"
               onMouseDown={(ev) => ev.preventDefault()}
             >
-              {paletteMatches.length === 0 ? (
-                <div className="console-search-empty muted small">No matching pages</div>
+              {paletteFlat.length === 0 ? (
+                <div className="console-search-empty muted small">No matching commands</div>
               ) : (
-                paletteMatches.map((c, i) => {
-                  const locked = !workspaceReady && tabsRequiringWorkspace.includes(c.tab);
-                  return (
+                paletteRows.map((row, ri) =>
+                  row.kind === "section" ? (
+                    <div
+                      key={`palette-sec-${row.title}-${ri}`}
+                      id={`cmdgroups-${row.title.toLowerCase().replace(/\s+/g, "-")}`}
+                      className="console-search-group-label"
+                      role="presentation"
+                    >
+                      {row.title}
+                    </div>
+                  ) : (
                     <button
-                      key={`${c.section}-${c.tab}`}
+                      key={row.cmd.id}
+                      id={`palette-cmd-${row.cmd.id}`}
                       type="button"
                       role="option"
-                      aria-selected={i === paletteIndex}
+                      aria-selected={row.flatIndex === paletteIndex}
                       className={
-                        i === paletteIndex ? "console-search-item console-search-item--active" : "console-search-item"
+                        row.flatIndex === paletteIndex ? "console-search-item console-search-item--active" : "console-search-item"
                       }
-                      disabled={locked}
-                      title={locked ? "Finish project setup to open this page." : c.label}
-                      onMouseEnter={() => setPaletteIndex(i)}
-                      onClick={() => runPaletteSelect(c.tab)}
+                      disabled={row.cmd.locked}
+                      title={
+                        row.cmd.locked
+                          ? row.cmd.id === "action-copy-project-id"
+                            ? "Connect a project to copy its ID."
+                            : "Finish Get started (connect a project) to unlock this destination."
+                          : `${row.cmd.label}${row.cmd.description ? ` · ${row.cmd.description}` : ""}`
+                      }
+                      onMouseEnter={() => setPaletteIndex(row.flatIndex)}
+                      onClick={() => runPaletteCommand(row.cmd)}
                     >
-                      <span className="console-search-item-label">{c.label}</span>
-                      <span className="console-search-item-section muted small">{c.section}</span>
+                      <span className="console-search-item-row">
+                        <span className="console-search-item-label">{row.cmd.label}</span>
+                        {row.cmd.shortcut ? (
+                          <kbd className="console-search-item-shortcut">{row.cmd.shortcut}</kbd>
+                        ) : null}
+                      </span>
+                      {row.cmd.description ? (
+                        <span className="console-search-item-desc muted small">{row.cmd.description}</span>
+                      ) : null}
                     </button>
-                  );
-                })
+                  )
+                )
               )}
             </div>
           )}
@@ -744,18 +756,33 @@ export function App(): JSX.Element {
               <div className="console-nav-section-items">
                 {g.entries.map((entry) => {
                   const locked = !workspaceReady && tabsRequiringWorkspace.includes(entry.tab);
+                  if (locked) {
+                    return (
+                      <button
+                        key={entry.tab}
+                        type="button"
+                        className="console-nav-item"
+                        disabled
+                        title="Finish project setup to open this section."
+                      >
+                        <span className="console-nav-item-label">{entry.label}</span>
+                        {entry.showLock ? <LockIcon className="console-nav-lock" /> : null}
+                      </button>
+                    );
+                  }
                   return (
-                    <button
+                    <NavLink
                       key={entry.tab}
-                      type="button"
-                      className={tab === entry.tab ? "console-nav-item console-nav-item--active" : "console-nav-item"}
-                      disabled={locked}
-                      title={locked ? "Finish project setup to open this section." : entry.label}
-                      onClick={() => selectTab(entry.tab)}
+                      to={pathForTab(entry.tab)}
+                      end={entry.tab === "overview"}
+                      className={
+                        tab === entry.tab ? "console-nav-item console-nav-item--active" : "console-nav-item"
+                      }
+                      onClick={() => setNavDrawerOpen(false)}
                     >
                       <span className="console-nav-item-label">{entry.label}</span>
                       {entry.showLock ? <LockIcon className="console-nav-lock" /> : null}
-                    </button>
+                    </NavLink>
                   );
                 })}
               </div>
@@ -792,7 +819,6 @@ export function App(): JSX.Element {
               <span className="console-plan-badge">{planBadge}</span>
             </div>
             <div className="console-header-sub muted small">
-              <strong>{SIDEBAR_SURFACE_SHORT[surface]} surface.</strong>{" "}
               {workspaceReady ? "Project connected." : "Finish setup below to unlock all sections."}
             </div>
           </div>
@@ -817,6 +843,11 @@ export function App(): JSX.Element {
               type="button"
               className="ghost console-header-signout"
               onClick={async () => {
+                try {
+                  sessionStorage.removeItem(SESSION_LAST_API_KEY_PLAINTEXT);
+                } catch {
+                  /* ignore */
+                }
                 await dashboardLogout();
                 await supabase.auth.signOut();
               }}
@@ -844,18 +875,26 @@ export function App(): JSX.Element {
             <section className="console-onboarding panel">
               <div className="panel-head row-space">
                 <span>Get started</span>
-                <span className="badge">
+                <span className="badge badge--accent">
                   {completedSteps}/{onboardingSteps.length} complete
                 </span>
               </div>
               <div className="panel-body">
-                <div className="muted small">We keep setup short so you can start quickly.</div>
+                <div className="muted small">Outcome-driven — ship memory in three steps.</div>
+                <ol className="muted small mt-sm">
+                  {onboardingSteps.map((s, i) => (
+                    <li key={s.key}>
+                      <strong>{i + 1}.</strong> {s.label}
+                      {s.done ? <span className="muted small"> — done</span> : null}
+                    </li>
+                  ))}
+                </ol>
                 <label className="field">
-                  <span>Project ID (optional)</span>
+                  <span>Advanced — link another project</span>
                   <input
                     value={workspaceId}
                     onChange={(e) => setWorkspaceId(e.target.value)}
-                    placeholder="Paste an existing project ID"
+                    placeholder="Paste the value from your team or backup"
                   />
                 </label>
                 <div className="row">
@@ -866,14 +905,14 @@ export function App(): JSX.Element {
                     Use last saved project
                   </button>
                 </div>
-                {alert && <div className="badge">{alert}</div>}
-                <div className="muted small">Current project: {workspaceClaim || workspaceId || "Not selected yet"}</div>
-                {workspaceReady && (
-                  <details className="console-advanced-details">
-                    <summary className="muted small">Advanced details</summary>
-                    <div className="muted small mt-sm">Project ID: {effectiveWorkspaceId}</div>
-                  </details>
-                )}
+                {alert != null && alert !== "" ? (
+                  <div className="alert alert--info" role="status">
+                    {alert}
+                  </div>
+                ) : null}
+                <div className="muted small">
+                  {workspaceReady ? "Project connected for this browser." : "No project linked yet — we’ll create or pick one automatically when possible."}
+                </div>
                 {workspaceReady && (
                   <button type="button" className="ghost console-onboarding-collapse" onClick={() => setOnboardingCollapsed(true)}>
                     Hide setup
@@ -885,27 +924,28 @@ export function App(): JSX.Element {
 
           {workspaceReady && onboardingCollapsed && (
             <button type="button" className="console-onboarding-collapsed ghost" onClick={() => setOnboardingCollapsed(false)}>
-              Setup complete · {shortWorkspaceId(effectiveWorkspaceId)} — Show setup
+              Setup complete — Show setup
             </button>
           )}
 
-          <ErrorBoundary onBack={() => setTab("overview")}>
+          <ErrorBoundary onBack={() => navigate("/")}>
             <div className="console-content grid">
               {tab === "overview" && (
                 <OverviewView
                   workspaceReady={workspaceReady}
                   sessionReady={sessionReady}
                   hasApiKey={firstApiKeyCreated}
-                  surface={surface}
                   onQuickSetup={() => {
                     setOnboardingCollapsed(false);
-                    selectTab(surface === "developer" ? "api_keys" : surface === "saas" ? "workspaces" : "assistant_memory");
+                    if (workspaceReady) navigate("/api-keys");
                   }}
                 />
               )}
               {tab === "continuity" && <SaasContinuityView workspaceId={effectiveWorkspaceId} />}
               {tab === "assistant_memory" && <AssistantMemoryView />}
-              {tab === "memories" && <MemoryBrowserView userId={session.user.id} workspaceId={effectiveWorkspaceId} onSearchCompleted={() => {}} />}
+              {tab === "memories" && (
+                <MemoryLabView workspaceId={effectiveWorkspaceId} onLabCriteriaMet={onMemoryLabCriteriaMet} />
+              )}
               {tab === "usage" && <RequestsView workspaceId={effectiveWorkspaceId} />}
               {tab === "import" && <ImportView isPaid={planBadge !== "FREE"} />}
               {tab === "api_keys" && (
@@ -939,18 +979,6 @@ export function App(): JSX.Element {
   );
 }
 
-function Shell({ children }: { children: React.ReactNode }) {
-  return <div className="shell">{children}</div>;
-}
-
-function Panel({ title, children }: { title: string; children: React.ReactNode }) {
-  return (
-    <section className="panel">
-      <div className="panel-head">{title}</div>
-      <div className="panel-body">{children}</div>
-    </section>
-  );
-}
 
 function AuthLanding() {
   return (
@@ -982,213 +1010,6 @@ function AuthLanding() {
   );
 }
 
-function EmptyState({ title, subtitle }: { title: string; subtitle: string }) {
-  return (
-    <div className="empty-state">
-      <strong>{title}</strong>
-      <p className="muted small">{subtitle}</p>
-    </div>
-  );
-}
-
-function OverviewChevron(): JSX.Element {
-  return (
-    <span className="explore-tile-chevron" aria-hidden>
-      <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-        <path d="M7 17L17 7M17 7H9M17 7V15" />
-      </svg>
-    </span>
-  );
-}
-
-type OverviewStatsResponse = {
-  range: string;
-  documents: number;
-  memories: number;
-  search_requests: number;
-  container_tags: number;
-};
-
-function OverviewView({
-  workspaceReady,
-  sessionReady,
-  hasApiKey,
-  surface,
-  onQuickSetup,
-}: {
-  workspaceReady: boolean;
-  sessionReady: boolean;
-  hasApiKey: boolean;
-  surface: ConsoleSurface;
-  onQuickSetup: () => void;
-}): JSX.Element {
-  const [range, setRange] = useState<"1d" | "7d" | "30d" | "all">("all");
-  const [stats, setStats] = useState<OverviewStatsResponse | null>(null);
-  const [loading, setLoading] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-
-  useEffect(() => {
-    if (!workspaceReady || !sessionReady) {
-      setStats(null);
-      setError(null);
-      setLoading(false);
-      return;
-    }
-    let cancelled = false;
-    setLoading(true);
-    setError(null);
-    void apiGet<OverviewStatsResponse>(`/v1/dashboard/overview-stats?range=${encodeURIComponent(range)}`)
-      .then((data) => {
-        if (!cancelled) setStats(data);
-      })
-      .catch((err: unknown) => {
-        if (!cancelled) setError(userFacingErrorMessage(err));
-      })
-      .finally(() => {
-        if (!cancelled) setLoading(false);
-      });
-    return () => {
-      cancelled = true;
-    };
-  }, [workspaceReady, sessionReady, range]);
-
-  const fmt = (n: number) => n.toLocaleString("en-US");
-  const dash = "—";
-  const cards = [
-    {
-      label: "Memories",
-      value: !workspaceReady || !sessionReady ? dash : loading ? "…" : fmt(stats?.documents ?? 0),
-    },
-    {
-      label: "Indexed Chunks",
-      value: !workspaceReady || !sessionReady ? dash : loading ? "…" : fmt(stats?.memories ?? 0),
-    },
-    {
-      label: "Read Operations",
-      value: !workspaceReady || !sessionReady ? dash : loading ? "…" : fmt(stats?.search_requests ?? 0),
-    },
-    {
-      label: "Container Tags",
-      value: !workspaceReady || !sessionReady ? dash : loading ? "…" : fmt(stats?.container_tags ?? 0),
-    },
-  ];
-
-  return (
-    <div className="overview-page">
-      <div className="overview-page-head">
-        <h1 className="overview-page-title">Overview</h1>
-        <div className="timeframe-toggle" role="group" aria-label="Time range">
-          {(["1d", "7d", "30d", "all"] as const).map((r) => (
-            <button
-              key={r}
-              type="button"
-              className={range === r ? "timeframe-btn timeframe-btn--active" : "timeframe-btn"}
-              onClick={() => setRange(r)}
-              disabled={!workspaceReady || !sessionReady}
-              title={!workspaceReady ? "Set a workspace to load metrics." : undefined}
-            >
-              {r === "all" ? "All" : r}
-            </button>
-          ))}
-        </div>
-      </div>
-      <p className="overview-range-hint muted small">
-        Counts for <strong>{range === "all" ? "all time" : range}</strong>
-        {!workspaceReady || !sessionReady
-          ? " — set a project to load live numbers."
-          : " — numbers update for this selected time range."}
-      </p>
-      {error && (
-        <div className="badge" role="alert">
-          {error}
-        </div>
-      )}
-      {surface === "developer" && workspaceReady && sessionReady ? <DeveloperNextSteps hasApiKey={hasApiKey} /> : null}
-      {workspaceReady && sessionReady && stats && !loading && stats.memories === 0 && stats.search_requests === 0 ? (
-        <div className="overview-empty-api-hint muted small" role="status">
-          {surface === "developer" ? (
-            <>
-              No memory writes or reads in this range yet. Follow <strong>Next: ship memory</strong> above or open{" "}
-              <a href="https://docs.memorynode.ai/quickstart" target="_blank" rel="noopener noreferrer">
-                Quickstart
-              </a>
-              .
-            </>
-          ) : (
-            <>
-              No continuity activity in this range yet. Connect a project data source in <strong>Continuity</strong> and verify reads/writes from live traffic.
-            </>
-          )}
-        </div>
-      ) : null}
-      <div className="overview-cards overview-cards--hero">
-        {cards.map((card) => (
-          <div key={card.label} className="metric-card">
-            <div className="muted small">{card.label}</div>
-            <div className="metric-value">{card.value}</div>
-          </div>
-        ))}
-      </div>
-
-      <h2 className="overview-explore-title">Start here</h2>
-      <div className="explore-grid">
-        <button type="button" className="explore-tile" onClick={onQuickSetup}>
-          <OverviewChevron />
-          <span className="explore-tile-icon" aria-hidden>
-            <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8">
-              <path d="M12 3v3M12 18v3M5.6 5.6l2.1 2.1M16.3 16.3l2.1 2.1M3 12h3M18 12h3M5.6 18.4l2.1-2.1M16.3 7.7l2.1-2.1" />
-              <circle cx="12" cy="12" r="3.2" />
-            </svg>
-          </span>
-          <span className="explore-tile-title">Quick setup</span>
-          <span className="explore-tile-desc muted small">Connect your workspace and unlock the console.</span>
-        </button>
-        <a
-          className="explore-tile"
-          href="https://docs.memorynode.ai/quickstart"
-          target="_blank"
-          rel="noopener noreferrer"
-        >
-          <OverviewChevron />
-          <span className="explore-tile-icon" aria-hidden>
-            <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8">
-              <path d="M8 5v14l11-7-11-7z" fill="currentColor" stroke="none" />
-            </svg>
-          </span>
-          <span className="explore-tile-title">Quickstart</span>
-          <span className="explore-tile-desc muted small">See MemoryNode in action with a copy-paste guide.</span>
-        </a>
-        <a
-          className="explore-tile"
-          href="https://docs.memorynode.ai/playground"
-          target="_blank"
-          rel="noopener noreferrer"
-        >
-          <OverviewChevron />
-          <span className="explore-tile-icon" aria-hidden>
-            <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8">
-              <circle cx="12" cy="12" r="9" />
-              <path d="M3 12h6m12 0h-6M12 3a10 10 0 0 1 0 18" />
-            </svg>
-          </span>
-          <span className="explore-tile-title">Playground</span>
-          <span className="explore-tile-desc muted small">Test the API interactively.</span>
-        </a>
-        <a className="explore-tile" href="https://docs.memorynode.ai" target="_blank" rel="noopener noreferrer">
-          <OverviewChevron />
-          <span className="explore-tile-icon" aria-hidden>
-            <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8">
-              <path d="M7 4h7l3 3v13a1 1 0 0 1-1 1H7a1 1 0 0 1-1-1V5a1 1 0 0 1 1-1z" />
-              <path d="M14 4v4h4M9 12h6M9 16h6" />
-            </svg>
-          </span>
-          <span className="explore-tile-title">Documentation</span>
-          <span className="explore-tile-desc muted small">Read the full API reference.</span>
-        </a>
-      </div>
-    </div>
-  );
-}
 
 function SaasContinuityView({ workspaceId }: { workspaceId: string }): JSX.Element {
   const [userId, setUserId] = useState("user_123");
@@ -1268,14 +1089,30 @@ function SaasContinuityView({ workspaceId }: { workspaceId: string }): JSX.Eleme
   if (!workspaceId?.trim()) {
     return (
       <Panel title="Continuity">
-        <div className="badge">Set your project first to run the continuity demo.</div>
+        <div className="mb-sm">
+          <span className="badge badge--accent">Example</span>
+        </div>
+        <div className="alert alert--warning" role="status">
+          Set your project first to run the continuity demo.
+        </div>
       </Panel>
     );
   }
 
   return (
     <Panel title="Continuity">
-      {message && <div className="badge">{message}</div>}
+      <div className="mb-sm">
+        <span className="badge badge--accent">Example</span>
+      </div>
+      <DashboardSessionAuthNote variant="writes" />
+      {message ? (
+        <div
+          className={`alert ${message.startsWith("Continuity demo completed") ? "alert--success" : "alert--error"}`}
+          role="status"
+        >
+          {message}
+        </div>
+      ) : null}
       <h3>Test User Memory Continuity</h3>
       <div className="muted small">Save memory for one user, simulate return, and confirm this user is remembered.</div>
       <label className="field">
@@ -1323,7 +1160,7 @@ function SaasContinuityView({ workspaceId }: { workspaceId: string }): JSX.Eleme
         </div>
       </div>
 
-      <div className={remembered ? "badge" : "muted small"}>
+      <div className={remembered ? "badge badge--accent" : "muted small"}>
         {remembered ? "This user was remembered." : "Run the demo to prove user memory continuity."}
       </div>
     </Panel>
@@ -1455,7 +1292,24 @@ function AssistantMemoryView(): JSX.Element {
 
   return (
     <Panel title="Memory Assistant">
-      {message && <div className="badge">{message}</div>}
+      <div className="mb-sm">
+        <span className="badge badge--accent">Example</span>
+      </div>
+      <DashboardSessionAuthNote variant="writes" />
+      {message ? (
+        <div
+          className={`alert ${
+            /Enter |cannot be empty/i.test(message)
+              ? "alert--warning"
+              : /Memory saved|Recall completed|Memory updated|^Memory deleted/i.test(message)
+                ? "alert--success"
+                : "alert--error"
+          }`}
+          role="status"
+        >
+          {message}
+        </div>
+      ) : null}
       <h3>Remember something</h3>
       <label className="field">
         <span>User ID</span>
@@ -1548,62 +1402,6 @@ function RequestsView({ workspaceId }: { workspaceId: string }) {
   );
 }
 
-function ImportView({ isPaid }: { isPaid: boolean }) {
-  const [artifactBase64, setArtifactBase64] = useState("");
-  const [mode, setMode] = useState<"upsert" | "skip_existing" | "error_on_conflict" | "replace_ids" | "replace_all">("upsert");
-  const [busy, setBusy] = useState(false);
-  const [message, setMessage] = useState<string | null>(null);
-
-  const runImport = async () => {
-    if (!artifactBase64.trim()) return;
-    setBusy(true);
-    setMessage(null);
-    try {
-      const res = await apiPost<{ imported_memories: number; imported_chunks: number }>("/v1/import", {
-        artifact_base64: artifactBase64.trim(),
-        mode,
-      });
-      setMessage(`Imported ${res.imported_memories} memories and ${res.imported_chunks} chunks.`);
-      setArtifactBase64("");
-    } catch (err: unknown) {
-      setMessage(userFacingErrorMessage(err));
-    } finally {
-      setBusy(false);
-    }
-  };
-
-  return (
-    <Panel title="Import Data">
-      {!isPaid && (
-        <div className="badge">
-          Import is available on paid plans only. Upgrade in Billing to unlock it.
-        </div>
-      )}
-      <div className="muted small">
-        Import currently accepts a prepared base64 artifact payload and mode. File drop and URL import are not available in this console.
-      </div>
-      <label className="field">
-        <span>Artifact (base64)</span>
-        <textarea value={artifactBase64} onChange={(e) => setArtifactBase64(e.target.value)} rows={6} />
-      </label>
-      <label className="field">
-        <span>Mode</span>
-        <select value={mode} onChange={(e) => setMode(e.target.value as typeof mode)}>
-          <option value="upsert">upsert</option>
-          <option value="skip_existing">skip_existing</option>
-          <option value="error_on_conflict">error_on_conflict</option>
-          <option value="replace_ids">replace_ids</option>
-          <option value="replace_all">replace_all</option>
-        </select>
-      </label>
-      <button disabled={!isPaid || !artifactBase64.trim() || busy} onClick={runImport}>
-        {busy ? "Importing..." : "Run import"}
-      </button>
-      {message && <div className="badge">{message}</div>}
-    </Panel>
-  );
-}
-
 function ConnectorSettingsView() {
   const [rows, setRows] = useState<ConnectorSettingRow[]>([]);
   const [busy, setBusy] = useState(false);
@@ -1676,7 +1474,11 @@ function ConnectorSettingsView() {
   return (
     <Panel title="Connector Capture Settings">
       <div className="muted small">Toggle sync per connector and choose which file types should be captured.</div>
-      {message && <div className="badge">{message}</div>}
+      {message ? (
+        <div className="alert" role="status">
+          {message}
+        </div>
+      ) : null}
       {connectors.map((connectorId) => {
         const row = ensureRow(connectorId);
         return (
@@ -1785,8 +1587,19 @@ ${Object.entries(res.fields).map(([k, v]) => `<input type="hidden" name="${k}" v
 
   return (
     <div className="list">
-      {message && <div className="badge">{message}</div>}
-      {!workspaceId && <div className="badge">Set your project first to checkout a plan.</div>}
+      {message ? (
+        <div
+          className={`alert ${message.includes("Popup") ? "alert--warning" : "alert--error"}`}
+          role="alert"
+        >
+          {message}
+        </div>
+      ) : null}
+      {!workspaceId ? (
+        <div className="alert alert--warning" role="status">
+          Set your project first to checkout a plan.
+        </div>
+      ) : null}
       <div className="pricing-grid">
         {plans.map((plan) => (
           <div key={plan.id} className="card">
@@ -1939,7 +1752,11 @@ function AuthPanel() {
         </span>
         {busy ? "Opening GitHub…" : "Continue with GitHub"}
       </button>
-      {errorMessage && <div className="badge">{errorMessage}</div>}
+      {errorMessage ? (
+        <div className="alert alert--error" role="alert">
+          {errorMessage}
+        </div>
+      ) : null}
     </div>
   );
 }
@@ -2016,8 +1833,17 @@ function WorkspacesView({
         <div className="muted small">You have one project. Create another only if you need separate teams or environments.</div>
       )}
       {hasWorkspaceSwitcher && <div className="muted small">Switching appears because you now have multiple projects.</div>}
-      {loading && <div>Loading…</div>}
-      {error && <div className="badge">{error}</div>}
+      {loading ? (
+        <div className="ds-inline-loading" role="status">
+          <span className="ds-spinner" aria-hidden />
+          Loading…
+        </div>
+      ) : null}
+      {error ? (
+        <div className="alert alert--error" role="alert">
+          {error}
+        </div>
+      ) : null}
       <ul className="list">
         {list.map((w) => (
           <li key={w.id} className="card">
@@ -2161,6 +1987,11 @@ function ApiKeysView({
       const row = Array.isArray(data) ? (data[0] as { api_key?: string }) : undefined;
       if (row?.api_key) {
         setPlaintextKey(row.api_key);
+        try {
+          sessionStorage.setItem(SESSION_LAST_API_KEY_PLAINTEXT, row.api_key);
+        } catch {
+          /* ignore */
+        }
         onApiKeyCreated();
       }
       setNewName("");
@@ -2195,8 +2026,17 @@ function ApiKeysView({
           {creating ? "Creating…" : "Create API key"}
         </button>
       </div>
-      {loading && <div>Loading…</div>}
-      {error && <div className="badge">{error}</div>}
+      {loading ? (
+        <div className="ds-inline-loading" role="status">
+          <span className="ds-spinner" aria-hidden />
+          Loading…
+        </div>
+      ) : null}
+      {error ? (
+        <div className="alert alert--error" role="alert">
+          {error}
+        </div>
+      ) : null}
       {!loading && keys.length === 0 && <div className="muted small">No keys yet.</div>}
       <ul className="list">
         {keys.map((k) => (
@@ -2255,779 +2095,18 @@ function ApiKeysView({
   );
 }
 
-type RetrievalExplainPayload = {
-  explain_requested: true;
-  results: Array<{
-    memory_id: string;
-    chunk_id: string;
-    chunk_index: number;
-    score: number;
-    _explain: unknown | null;
-  }>;
-};
-
-function MemoryBrowserView({
-  userId,
-  workspaceId,
-  onSearchCompleted,
-}: {
-  userId: string;
-  workspaceId: string;
-  onSearchCompleted: () => void;
-}) {
-  const [rows, setRows] = useState<MemorySearchRow[]>([]);
-  const [total, setTotal] = useState<number | null>(null);
-  const [hasMore, setHasMore] = useState(false);
-  const [loading, setLoading] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-  const [query, setQuery] = useState("");
-  const [namespace, setNamespace] = useState("");
-  const [metadata, setMetadata] = useState("");
-  const [start, setStart] = useState("");
-  const [end, setEnd] = useState("");
-  const [page, setPage] = useState(1);
-  const [pageSize] = useState(10);
-  const [selected, setSelected] = useState<MemoryRow | null>(null);
-  const [saveToHistory, setSaveToHistory] = useState(false);
-  const [searchExplainEnabled, setSearchExplainEnabled] = useState(false);
-  const [explainPayload, setExplainPayload] = useState<RetrievalExplainPayload | null>(null);
-  const [historyRows, setHistoryRows] = useState<Array<{ id: string; query: string; created_at: string }>>([]);
-  const [historyLoading, setHistoryLoading] = useState(false);
-  const [historyError, setHistoryError] = useState<string | null>(null);
-  const [replayLoadingId, setReplayLoadingId] = useState<string | null>(null);
-  const [replayError, setReplayError] = useState<string | null>(null);
-  const [replayResult, setReplayResult] = useState<{
-    query_id: string;
-    previous: { results?: Array<{ chunk_id?: string; memory_id?: string; score?: number }> } | null;
-    current: { results?: Array<{ chunk_id?: string; memory_id?: string; score?: number }> } | null;
-  } | null>(null);
-  const [evalSets, setEvalSets] = useState<Array<{ id: string; name: string; created_at: string }>>([]);
-  const [selectedEvalSetId, setSelectedEvalSetId] = useState<string>("");
-  const [newEvalSetName, setNewEvalSetName] = useState("");
-  const [evalItems, setEvalItems] = useState<Array<{ id: string; query: string; expected_memory_ids: string[] }>>([]);
-  const [newEvalQuery, setNewEvalQuery] = useState("");
-  const [newEvalExpectedIds, setNewEvalExpectedIds] = useState("");
-  const [evalLoading, setEvalLoading] = useState(false);
-  const [evalItemsLoading, setEvalItemsLoading] = useState(false);
-  const [evalError, setEvalError] = useState<string | null>(null);
-  const [evalRunLoading, setEvalRunLoading] = useState(false);
-  const [evalRunResult, setEvalRunResult] = useState<{
-    item_count: number;
-    avg_precision_at_k: number;
-    avg_recall: number;
-    items: Array<{
-      eval_item_id: string;
-      query: string;
-      precision_at_k: number;
-      recall: number;
-      matched_expected_memory_ids: string[];
-    }>;
-  } | null>(null);
-  const [evalItemsPage, setEvalItemsPage] = useState(1);
-  const [evalItemsPageSize] = useState(5);
-  const [expectedIdsValidationError, setExpectedIdsValidationError] = useState<string | null>(null);
-  const [feedbackTraceId, setFeedbackTraceId] = useState("");
-  const [feedbackUsedIds, setFeedbackUsedIds] = useState("");
-  const [feedbackUnusedIds, setFeedbackUnusedIds] = useState("");
-  const [feedbackBusy, setFeedbackBusy] = useState(false);
-  const [feedbackMessage, setFeedbackMessage] = useState<string | null>(null);
-  const uuidRe = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
-
-  if (!workspaceId?.trim()) {
-    return (
-      <Panel title="Memory Browser">
-        <div className="badge">Set your project first to search and open memories.</div>
-        <div className="muted small">Tip: Choose a project in the Projects section, then click Use this project.</div>
-      </Panel>
-    );
-  }
-
-  const parseMetadata = (): Record<string, unknown> | undefined => {
-    if (!metadata.trim()) return undefined;
-    try {
-      return JSON.parse(metadata);
-    } catch {
-      setError("Metadata filter must be valid JSON");
-      return undefined;
-    }
-  };
-
-  const search = async (resetPage = true, fetchPage?: number) => {
-    if (!userId?.trim()) {
-      setError("User context missing. Sign in again if this persists.");
-      return;
-    }
-    const pageToUse = fetchPage ?? (resetPage ? 1 : page);
-    if (resetPage) setPage(1);
-    else setPage(pageToUse);
-    setLoading(true);
-    setError(null);
-      try {
-        const queryValue = query.trim();
-        if (!queryValue) {
-          setRows([]);
-          setTotal(0);
-          setHasMore(false);
-          setExplainPayload(null);
-          setError("Enter a search query to run semantic search.");
-          return;
-        }
-        type SearchFilters = { metadata?: Record<string, unknown>; start_time?: string; end_time?: string };
-        const body: {
-          user_id: string;
-          namespace?: string;
-          query: string;
-          page: number;
-          page_size: number;
-          explain?: boolean;
-          filters?: SearchFilters;
-        } = {
-          user_id: userId,
-          namespace: namespace || undefined,
-          query: queryValue,
-          page: pageToUse,
-          page_size: pageSize,
-        };
-        if (searchExplainEnabled) body.explain = true;
-      const filters = parseMetadata();
-      if (filters) {
-        body.filters = { metadata: filters };
-      }
-      if (start || end) {
-        body.filters = body.filters || {};
-        body.filters.start_time = start || undefined;
-        body.filters.end_time = end || undefined;
-      }
-
-      const res = await apiPost<{ results: SearchApiResult[]; total?: number; has_more?: boolean }>(
-        "/v1/search",
-        body,
-        saveToHistory ? { "x-save-history": "true" } : undefined,
-      );
-      const rawResults = res.results ?? [];
-      const mappedRows = mapSearchResultsToRows(rawResults);
-      setRows((prev) => (resetPage ? mappedRows : [...prev, ...mappedRows]));
-      if (searchExplainEnabled) {
-        const slice = rawResults.map((row) => ({
-          memory_id: row.memory_id,
-          chunk_id: row.chunk_id,
-          chunk_index: row.chunk_index,
-          score: row.score,
-          _explain: row._explain ?? null,
-        }));
-        setExplainPayload((prev) => {
-          if (resetPage) return { explain_requested: true, results: slice };
-          const merged = [...(prev?.results ?? []), ...slice];
-          return { explain_requested: true, results: merged };
-        });
-      } else {
-        setExplainPayload(null);
-      }
-      setTotal(res.total ?? null);
-      setHasMore(res.has_more ?? false);
-      onSearchCompleted();
-      if (saveToHistory) {
-        void loadHistory();
-      }
-    } catch (err: unknown) {
-      setError(userFacingErrorMessage(err));
-    } finally {
-      setLoading(false);
-    }
-  };
-
-  const loadMore = () => {
-    void search(false, page + 1);
-  };
-
-  const loadHistory = async () => {
-    setHistoryLoading(true);
-    setHistoryError(null);
-    try {
-      const res = await apiGet<{ history?: Array<{ id: string; query: string; created_at: string }> }>("/v1/search/history?limit=20");
-      setHistoryRows(res.history ?? []);
-    } catch (err: unknown) {
-      setHistoryError(userFacingErrorMessage(err));
-    } finally {
-      setHistoryLoading(false);
-    }
-  };
-
-  const replayQuery = async (queryId: string) => {
-    setReplayLoadingId(queryId);
-    setReplayError(null);
-    try {
-      const res = await apiPost<{
-        query_id: string;
-        previous: { results?: Array<{ chunk_id?: string; memory_id?: string; score?: number }> } | null;
-        current: { results?: Array<{ chunk_id?: string; memory_id?: string; score?: number }> } | null;
-      }>("/v1/search/replay", { query_id: queryId });
-      setReplayResult(res);
-      setFeedbackTraceId(res.query_id);
-    } catch (err: unknown) {
-      setReplayError(userFacingErrorMessage(err));
-    } finally {
-      setReplayLoadingId(null);
-    }
-  };
-
-  const loadEvalSets = async () => {
-    setEvalLoading(true);
-    setEvalError(null);
-    try {
-      const res = await apiGet<{ eval_sets?: Array<{ id: string; name: string; created_at: string }> }>("/v1/evals/sets");
-      const sets = res.eval_sets ?? [];
-      setEvalSets(sets);
-      if (sets.length > 0 && !selectedEvalSetId) {
-        setSelectedEvalSetId(sets[0].id);
-      }
-    } catch (err: unknown) {
-      setEvalError(userFacingErrorMessage(err));
-    } finally {
-      setEvalLoading(false);
-    }
-  };
-
-  const createEvalSet = async () => {
-    if (!newEvalSetName.trim()) return;
-    setEvalLoading(true);
-    setEvalError(null);
-    try {
-      const res = await apiPost<{ eval_set?: { id: string; name: string; created_at: string } }>("/v1/evals/sets", {
-        name: newEvalSetName.trim(),
-      });
-      setNewEvalSetName("");
-      await loadEvalSets();
-      if (res.eval_set?.id) setSelectedEvalSetId(res.eval_set.id);
-    } catch (err: unknown) {
-      setEvalError(userFacingErrorMessage(err));
-    } finally {
-      setEvalLoading(false);
-    }
-  };
-
-  const deleteEvalSet = async (id: string) => {
-    setEvalLoading(true);
-    setEvalError(null);
-    try {
-      await apiDelete<{ deleted: boolean; id: string }>(`/v1/evals/sets/${encodeURIComponent(id)}`);
-      if (selectedEvalSetId === id) setSelectedEvalSetId("");
-      setEvalItems([]);
-      setEvalRunResult(null);
-      await loadEvalSets();
-    } catch (err: unknown) {
-      setEvalError(userFacingErrorMessage(err));
-    } finally {
-      setEvalLoading(false);
-    }
-  };
-
-  const loadEvalItems = async (evalSetId: string) => {
-    if (!evalSetId) {
-      setEvalItems([]);
-      return;
-    }
-    setEvalItemsLoading(true);
-    setEvalError(null);
-    try {
-      const res = await apiGet<{ eval_items?: Array<{ id: string; query: string; expected_memory_ids: string[] }> }>(
-        `/v1/evals/items?eval_set_id=${encodeURIComponent(evalSetId)}`,
-      );
-      setEvalItems(res.eval_items ?? []);
-      setEvalItemsPage(1);
-    } catch (err: unknown) {
-      setEvalError(userFacingErrorMessage(err));
-    } finally {
-      setEvalItemsLoading(false);
-    }
-  };
-
-  const createEvalItem = async () => {
-    if (!selectedEvalSetId || !newEvalQuery.trim()) return;
-    setEvalItemsLoading(true);
-    setEvalError(null);
-    setExpectedIdsValidationError(null);
-    try {
-      const expectedIds = newEvalExpectedIds
-        .split(",")
-        .map((v) => v.trim())
-        .filter(Boolean);
-      const invalidExpected = expectedIds.filter((id) => !uuidRe.test(id));
-      if (invalidExpected.length > 0) {
-        setExpectedIdsValidationError(`Invalid UUID(s): ${invalidExpected.slice(0, 3).join(", ")}${invalidExpected.length > 3 ? "…" : ""}`);
-        return;
-      }
-      await apiPost<{ eval_item?: { id: string } }>("/v1/evals/items", {
-        eval_set_id: selectedEvalSetId,
-        query: newEvalQuery.trim(),
-        expected_memory_ids: expectedIds,
-      });
-      setNewEvalQuery("");
-      setNewEvalExpectedIds("");
-      await loadEvalItems(selectedEvalSetId);
-    } catch (err: unknown) {
-      setEvalError(userFacingErrorMessage(err));
-    } finally {
-      setEvalItemsLoading(false);
-    }
-  };
-
-  const exportEvalRunJson = () => {
-    if (!evalRunResult) return;
-    const blob = new Blob([JSON.stringify(evalRunResult, null, 2)], { type: "application/json" });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement("a");
-    a.href = url;
-    a.download = `eval-run-${selectedEvalSetId || "set"}.json`;
-    a.click();
-    URL.revokeObjectURL(url);
-  };
-
-  const submitContextFeedback = async () => {
-    const traceId = feedbackTraceId.trim() || replayResult?.query_id;
-    if (!traceId) {
-      setFeedbackMessage("Trace ID is required.");
-      return;
-    }
-    const parseCsv = (raw: string): string[] => raw.split(",").map((v) => v.trim()).filter(Boolean);
-    setFeedbackBusy(true);
-    setFeedbackMessage(null);
-    try {
-      await apiPost<{ accepted: boolean }>("/v1/context/feedback", {
-        trace_id: traceId,
-        query_id: replayResult?.query_id,
-        chunk_ids_used: parseCsv(feedbackUsedIds),
-        chunk_ids_unused: parseCsv(feedbackUnusedIds),
-      });
-      setFeedbackMessage("Feedback submitted.");
-    } catch (err: unknown) {
-      setFeedbackMessage(userFacingErrorMessage(err));
-    } finally {
-      setFeedbackBusy(false);
-    }
-  };
-
-  const deleteEvalItem = async (id: string) => {
-    if (!selectedEvalSetId) return;
-    setEvalItemsLoading(true);
-    setEvalError(null);
-    try {
-      await apiDelete<{ deleted: boolean; id: string }>(`/v1/evals/items/${encodeURIComponent(id)}`);
-      await loadEvalItems(selectedEvalSetId);
-    } catch (err: unknown) {
-      setEvalError(userFacingErrorMessage(err));
-    } finally {
-      setEvalItemsLoading(false);
-    }
-  };
-
-  const runEvalSet = async () => {
-    if (!selectedEvalSetId) return;
-    setEvalRunLoading(true);
-    setEvalError(null);
-    try {
-      const res = await apiPost<{
-        item_count: number;
-        avg_precision_at_k: number;
-        avg_recall: number;
-        items: Array<{
-          eval_item_id: string;
-          query: string;
-          precision_at_k: number;
-          recall: number;
-          matched_expected_memory_ids: string[];
-        }>;
-      }>("/v1/evals/run", {
-        eval_set_id: selectedEvalSetId,
-        user_id: userId,
-        namespace: namespace || undefined,
-        top_k: 5,
-        search_mode: "hybrid",
-      });
-      setEvalRunResult(res);
-    } catch (err: unknown) {
-      setEvalError(userFacingErrorMessage(err));
-    } finally {
-      setEvalRunLoading(false);
-    }
-  };
-
-  useEffect(() => {
-    void loadEvalSets();
-  }, []);
-
-  useEffect(() => {
-    if (!selectedEvalSetId) return;
-    void loadEvalItems(selectedEvalSetId);
-  }, [selectedEvalSetId]);
-
-  useEffect(() => {
-    setEvalItemsPage((p) => Math.min(Math.max(1, p), Math.max(1, Math.ceil(evalItems.length / evalItemsPageSize))));
-  }, [evalItems, evalItemsPageSize]);
-
-  const replayPrevIds = useMemo(
-    () => new Set((replayResult?.previous?.results ?? []).map((r) => r.chunk_id).filter((id): id is string => Boolean(id))),
-    [replayResult],
-  );
-  const replayCurrIds = useMemo(
-    () => new Set((replayResult?.current?.results ?? []).map((r) => r.chunk_id).filter((id): id is string => Boolean(id))),
-    [replayResult],
-  );
-  const replayAdded = useMemo(() => Array.from(replayCurrIds).filter((id) => !replayPrevIds.has(id)), [replayCurrIds, replayPrevIds]);
-  const replayRemoved = useMemo(() => Array.from(replayPrevIds).filter((id) => !replayCurrIds.has(id)), [replayCurrIds, replayPrevIds]);
-  const replayUnchanged = useMemo(() => Array.from(replayCurrIds).filter((id) => replayPrevIds.has(id)), [replayCurrIds, replayPrevIds]);
-  const evalItemsTotalPages = Math.max(1, Math.ceil(evalItems.length / evalItemsPageSize));
-  const pagedEvalItems = useMemo(
-    () => evalItems.slice((evalItemsPage - 1) * evalItemsPageSize, evalItemsPage * evalItemsPageSize),
-    [evalItems, evalItemsPage, evalItemsPageSize],
-  );
-
-  const openMemory = async (id: string) => {
-    try {
-      const res = await apiGet<MemoryRow>(`/v1/memories/${id}`);
-      setSelected(res);
-    } catch (err: unknown) {
-      setError(userFacingErrorMessage(err));
-    }
-  };
-
-  return (
-    <Panel title="Memory Browser">
-      <div className="muted small">Using session (workspace-scoped).</div>
-      <div className="row">
-        <input value={query} onChange={(e) => setQuery(e.target.value)} placeholder="Search query" />
-        <input value={namespace} onChange={(e) => setNamespace(e.target.value)} placeholder="Namespace/project" />
-      </div>
-      <div className="row">
-        <input value={metadata} onChange={(e) => setMetadata(e.target.value)} placeholder='Metadata JSON {"tag":"x"}' />
-        <input type="date" value={start} onChange={(e) => setStart(e.target.value)} title="Start date" />
-        <input type="date" value={end} onChange={(e) => setEnd(e.target.value)} title="End date" />
-      </div>
-      <div className="row">
-        <label>
-          <input type="checkbox" checked={saveToHistory} onChange={(e) => setSaveToHistory(e.target.checked)} />
-          Save to history (for replay)
-        </label>
-        <label title="Adds explain: true to the search request and shows structured trace JSON when present">
-          <input type="checkbox" checked={searchExplainEnabled} onChange={(e) => setSearchExplainEnabled(e.target.checked)} />
-          Retrieval explain (debug)
-        </label>
-        <button onClick={() => search(true)} disabled={loading}>
-          {loading ? "Searching…" : "Search"}
-        </button>
-        <button
-          className="ghost"
-          onClick={() => {
-            setRows([]);
-            setTotal(null);
-            setHasMore(false);
-            setExplainPayload(null);
-          }}
-        >
-          Clear
-        </button>
-        <button className="ghost" onClick={loadHistory} disabled={historyLoading}>
-          {historyLoading ? "Loading history…" : "Load history"}
-        </button>
-      </div>
-      {error && (
-        <div className="badge">
-          {error}
-          <div>
-            <button className="ghost" onClick={() => search(true)} disabled={loading}>
-              Retry
-            </button>
-          </div>
-        </div>
-      )}
-      {rows.length === 0 && !loading && <div className="muted small">No results.</div>}
-      <div className="list">
-        {rows.map((r) => (
-          <div key={r.key} className="card clickable" onClick={() => openMemory(r.memoryId)}>
-            <div className="row-space">
-              <strong>Memory {r.memoryId.slice(0, 8)}…</strong>
-              <span className="muted small">Chunk #{r.chunkIndex}</span>
-            </div>
-            <div className="muted small">
-              Score: {r.score.toFixed(3)} · Chunk: <code>{r.chunkId}</code>
-              {searchExplainEnabled && r.explain != null && (
-                <span className="muted small"> · trace</span>
-              )}
-            </div>
-            <p>{r.text.slice(0, 240)}</p>
-          </div>
-        ))}
-      </div>
-      {searchExplainEnabled && explainPayload != null && (
-        <div className="panel mt-md">
-          <div className="panel-head">Retrieval explain (_explain)</div>
-          <div className="panel-body">
-            <pre className="code-block">{JSON.stringify(explainPayload, null, 2)}</pre>
-          </div>
-        </div>
-      )}
-      {rows.length > 0 && (
-        <>
-          {total != null && (
-            <div className="muted small">
-              {rows.length} of {total} result{total !== 1 ? "s" : ""}.
-            </div>
-          )}
-          <button
-            className="ghost"
-            onClick={loadMore}
-            disabled={loading || !hasMore || (total != null && rows.length >= total)}
-          >
-            {loading ? "Loading…" : !hasMore || (total != null && rows.length >= total) ? "No more results" : "Load more"}
-          </button>
-        </>
-      )}
-
-      <div className="panel mt-md">
-        <div className="panel-head">Retrieval history and replay</div>
-        <div className="panel-body">
-          {historyError && <div className="badge">{historyError}</div>}
-          {historyRows.length === 0 && !historyLoading && (
-            <div className="muted small">
-              No saved history yet. Enable “Save to history” before searching, then click Load history.
-            </div>
-          )}
-          <ul className="list">
-            {historyRows.map((h) => (
-              <li key={h.id} className="card">
-                <div className="row-space">
-                  <div>
-                    <strong>{h.query || "(empty query)"}</strong>
-                    <div className="muted small">{new Date(h.created_at).toLocaleString()}</div>
-                  </div>
-                  <button className="ghost" onClick={() => replayQuery(h.id)} disabled={replayLoadingId === h.id}>
-                    {replayLoadingId === h.id ? "Replaying…" : "Replay"}
-                  </button>
-                </div>
-              </li>
-            ))}
-          </ul>
-          {replayError && <div className="badge">{replayError}</div>}
-          {replayResult && (
-            <div className="card">
-              <strong>Replay diff</strong>
-              <div className="muted small">Query ID: <code>{replayResult.query_id}</code></div>
-              <div className="muted small">
-                Previous results: {replayResult.previous?.results?.length ?? 0} · Current results: {replayResult.current?.results?.length ?? 0}
-              </div>
-              <div className="mt-sm">
-                <div className="muted small">
-                  Added chunks: {replayAdded.length} · Removed chunks: {replayRemoved.length} · Unchanged: {replayUnchanged.length}
-                </div>
-                {replayAdded.length > 0 && (
-                  <div className="muted small">
-                    Added: {replayAdded.slice(0, 5).map((id) => id.slice(0, 8)).join(", ")}{replayAdded.length > 5 ? "…" : ""}
-                  </div>
-                )}
-                {replayRemoved.length > 0 && (
-                  <div className="muted small">
-                    Removed: {replayRemoved.slice(0, 5).map((id) => id.slice(0, 8)).join(", ")}{replayRemoved.length > 5 ? "…" : ""}
-                  </div>
-                )}
-                <div className="row mt-sm">
-                  <input
-                    value={feedbackTraceId}
-                    onChange={(e) => setFeedbackTraceId(e.target.value)}
-                    placeholder="Trace ID (defaults to replay query ID)"
-                  />
-                  <button className="ghost" onClick={() => setFeedbackTraceId(replayResult.query_id)}>
-                    Use replay ID
-                  </button>
-                </div>
-                <div className="row mt-sm">
-                  <input
-                    value={feedbackUsedIds}
-                    onChange={(e) => setFeedbackUsedIds(e.target.value)}
-                    placeholder="Used chunk IDs (comma-separated)"
-                  />
-                  <input
-                    value={feedbackUnusedIds}
-                    onChange={(e) => setFeedbackUnusedIds(e.target.value)}
-                    placeholder="Unused chunk IDs (comma-separated)"
-                  />
-                  <button onClick={submitContextFeedback} disabled={feedbackBusy}>
-                    {feedbackBusy ? "Submitting…" : "Submit feedback"}
-                  </button>
-                </div>
-                {feedbackMessage && <div className="muted small">{feedbackMessage}</div>}
-              </div>
-            </div>
-          )}
-        </div>
-      </div>
-
-      <div className="panel mt-md">
-        <div className="panel-head">Eval sets and runs</div>
-        <div className="panel-body">
-          <div className="row">
-            <input
-              value={newEvalSetName}
-              onChange={(e) => setNewEvalSetName(e.target.value)}
-              placeholder="New eval set name"
-            />
-            <button onClick={createEvalSet} disabled={evalLoading || !newEvalSetName.trim()}>
-              {evalLoading ? "Saving…" : "Create set"}
-            </button>
-            <button className="ghost" onClick={loadEvalSets} disabled={evalLoading}>
-              Refresh sets
-            </button>
-          </div>
-          {evalError && <div className="badge">{evalError}</div>}
-          <ul className="list">
-            {evalSets.map((s) => (
-              <li key={s.id} className="card">
-                <div className="row-space">
-                  <div>
-                    <strong>{s.name}</strong>
-                    <div className="muted small">{new Date(s.created_at).toLocaleString()}</div>
-                  </div>
-                  <div className="row">
-                    <button
-                      className={selectedEvalSetId === s.id ? "" : "ghost"}
-                      onClick={() => {
-                        setSelectedEvalSetId(s.id);
-                        setEvalRunResult(null);
-                      }}
-                    >
-                      {selectedEvalSetId === s.id ? "Selected" : "Use"}
-                    </button>
-                    <button className="ghost" onClick={() => deleteEvalSet(s.id)} disabled={evalLoading}>
-                      Delete
-                    </button>
-                  </div>
-                </div>
-              </li>
-            ))}
-          </ul>
-
-          {selectedEvalSetId && (
-            <>
-              <div className="row mt-sm">
-                <input
-                  value={newEvalQuery}
-                  onChange={(e) => setNewEvalQuery(e.target.value)}
-                  placeholder="Eval query"
-                />
-                <input
-                  value={newEvalExpectedIds}
-                  onChange={(e) => setNewEvalExpectedIds(e.target.value)}
-                  placeholder="Expected memory IDs (comma-separated UUIDs)"
-                />
-                <button onClick={createEvalItem} disabled={evalItemsLoading || !newEvalQuery.trim()}>
-                  {evalItemsLoading ? "Saving…" : "Add item"}
-                </button>
-              </div>
-              {expectedIdsValidationError && <div className="badge">{expectedIdsValidationError}</div>}
-              <div className="row mt-sm">
-                <button onClick={runEvalSet} disabled={evalRunLoading || evalItems.length === 0}>
-                  {evalRunLoading ? "Running…" : "Run eval set"}
-                </button>
-              </div>
-              {evalItemsLoading && <div className="muted small">Loading eval items…</div>}
-              <ul className="list">
-                {pagedEvalItems.map((item) => (
-                  <li key={item.id} className="card">
-                    <div className="row-space">
-                      <div>
-                        <strong>{item.query}</strong>
-                        <div className="muted small">
-                          Expected IDs: {item.expected_memory_ids?.length ?? 0}
-                        </div>
-                      </div>
-                      <button className="ghost" onClick={() => deleteEvalItem(item.id)} disabled={evalItemsLoading}>
-                        Delete
-                      </button>
-                    </div>
-                  </li>
-                ))}
-              </ul>
-              {evalItems.length > 0 && (
-                <div className="row">
-                  <button
-                    className="ghost"
-                    onClick={() => setEvalItemsPage((p) => Math.max(1, p - 1))}
-                    disabled={evalItemsPage <= 1}
-                  >
-                    Prev
-                  </button>
-                  <span className="muted small">Page {evalItemsPage} / {evalItemsTotalPages}</span>
-                  <button
-                    className="ghost"
-                    onClick={() => setEvalItemsPage((p) => Math.min(evalItemsTotalPages, p + 1))}
-                    disabled={evalItemsPage >= evalItemsTotalPages}
-                  >
-                    Next
-                  </button>
-                </div>
-              )}
-            </>
-          )}
-
-          {evalRunResult && (
-            <div className="card mt-sm">
-              <strong>Eval run result</strong>
-              <div className="muted small">
-                Items: {evalRunResult.item_count} · Avg Precision@k: {evalRunResult.avg_precision_at_k.toFixed(3)} · Avg Recall: {evalRunResult.avg_recall.toFixed(3)}
-              </div>
-              <div className="row mt-sm">
-                <button className="ghost" onClick={exportEvalRunJson}>Export JSON</button>
-              </div>
-              <ul className="list">
-                {evalRunResult.items.slice(0, 10).map((item) => (
-                  <li key={item.eval_item_id} className="card">
-                    <div className="row-space">
-                      <span>{item.query}</span>
-                      <span className="muted small">
-                        P@k {item.precision_at_k.toFixed(3)} · R {item.recall.toFixed(3)}
-                      </span>
-                    </div>
-                  </li>
-                ))}
-              </ul>
-            </div>
-          )}
-        </div>
-      </div>
-
-      {selected && (
-        <div className="modal" onClick={() => setSelected(null)}>
-          <div className="modal-card" onClick={(e) => e.stopPropagation()}>
-            <h3>Memory {selected.id}</h3>
-            <div className="muted small">Created {new Date(selected.created_at).toLocaleString()}</div>
-            {(selected.memory_type != null && selected.memory_type !== "") && (
-              <div className="muted small">Type: <span className="badge">{selected.memory_type}</span></div>
-            )}
-            {(selected.source_memory_id != null && selected.source_memory_id !== "") && (
-              <div className="muted small">Source memory: <code>{selected.source_memory_id}</code></div>
-            )}
-            <pre className="code-block">{selected.text}</pre>
-            <div className="muted small">Metadata: {JSON.stringify(selected.metadata)}</div>
-            <button className="ghost" onClick={() => setSelected(null)}>
-              Close
-            </button>
-          </div>
-        </div>
-      )}
-    </Panel>
-  );
-}
-
 function UsageView({ workspaceId, embedded = false }: { workspaceId: string; embedded?: boolean }) {
   const [usage, setUsage] = useState<UsageRow | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
   if (!workspaceId?.trim()) {
-    return embedded ? <div className="badge">Set your project first to view usage and limits.</div> : (
-      <Panel title="Usage">
-        <div className="badge">Set your project first to view usage and limits.</div>
-      </Panel>
+    const emptyWorkspace = (
+      <div className="alert alert--warning" role="status">
+        Set your project first to view usage and limits.
+      </div>
     );
+    return embedded ? emptyWorkspace : <Panel title="Usage">{emptyWorkspace}</Panel>;
   }
 
   const load = async () => {
@@ -3049,19 +2128,24 @@ function UsageView({ workspaceId, embedded = false }: { workspaceId: string; emb
 
   const content = (
     <>
-      <div className="muted small">Using session (workspace-scoped).</div>
+      <div className="muted small">Using session (scoped to this project).</div>
       <div className="muted small">Enforcement: daily fair-use cap (hard) and billing-period cap (hard).</div>
-      {loading && <div>Loading…</div>}
-      {error && (
-        <div className="badge">
-          {error}
-          <div>
-            <button className="ghost" onClick={load} disabled={loading}>
+      {loading ? (
+        <div className="ds-inline-loading" role="status">
+          <span className="ds-spinner" aria-hidden />
+          Loading…
+        </div>
+      ) : null}
+      {error ? (
+        <div className="alert alert--error" role="alert">
+          <div>{error}</div>
+          <div className="row mt-sm">
+            <button type="button" className="ghost" onClick={load} disabled={loading}>
               Retry
             </button>
           </div>
         </div>
-      )}
+      ) : null}
       {usage && (
         <div className="list">
           {usage.cap_alerts && usage.cap_alerts.length > 0 && (
@@ -3238,12 +2322,21 @@ function MembersView({ workspaceId, currentUserId }: { workspaceId: string; curr
       <div className="panel-head">Members & Invites</div>
       <div className="row-space">
         <span className="muted small">Plan: {effectivePlan}</span>
-        <span className="badge">
+        <span className="badge badge--accent">
           Seats used: {members.length}/{seatCap}
         </span>
       </div>
-      {error && <div className="badge">{error}</div>}
-      {loading && <div>Loading…</div>}
+      {error ? (
+        <div className="alert alert--error" role="alert">
+          {error}
+        </div>
+      ) : null}
+      {loading ? (
+        <div className="ds-inline-loading" role="status">
+          <span className="ds-spinner" aria-hidden />
+          Loading…
+        </div>
+      ) : null}
 
       <div className="stack">
         <div className="row">
@@ -3306,8 +2399,8 @@ function MembersView({ workspaceId, currentUserId }: { workspaceId: string; curr
             <div>
               <strong>{i.email}</strong> <span className="badge">{i.role}</span>
               <div className="muted small">Expires {new Date(i.expires_at).toLocaleString()}</div>
-              {i.accepted_at && <div className="badge">Accepted</div>}
-              {i.revoked_at && <div className="badge">Revoked</div>}
+              {i.accepted_at ? <span className="badge">Accepted</span> : null}
+              {i.revoked_at ? <span className="badge">Revoked</span> : null}
             </div>
             {!i.accepted_at && !i.revoked_at && (
               <button className="ghost" onClick={() => revokeInvite(i.id)} disabled={busy}>

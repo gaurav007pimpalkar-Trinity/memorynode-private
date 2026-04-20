@@ -1,6 +1,17 @@
 /**
- * Dashboard API client. Phase 0.2: auth via session cookie only (credentials: 'include').
- * CSRF token required for mutating calls (Phase 0).
+ * Dashboard API client — browser calls against the Worker with `credentials: "include"`.
+ *
+ * **Why JWT/session (not API key in headers)?** After `ensureDashboardSession`, the Worker ties
+ * requests to your Supabase user + selected workspace via HTTP-only cookies set by `/v1/dashboard/session`.
+ * Mutating calls also send `x-csrf-token`. This is correct for an interactive console.
+ *
+ * **Parity with API key usage:** Route paths and JSON bodies are identical to `docs.memorynode.ai`.
+ * Production apps send `Authorization: Bearer <API key>` instead of cookies; the Worker resolves the same
+ * workspace + auth rules. Copy-as-curl snippets (`apiCurl.ts`) deliberately show `YOUR_API_KEY`, not cookies,
+ * so engineers can replay the same JSON from servers or shells.
+ *
+ * **Success correlation:** HTTP responses include `x-request-id`; use `apiPostWithMeta` / `apiGetWithMeta`
+ * when the UI should display that id next to curl blocks. Errors embed `request_id` in JSON when present.
  */
 
 let csrfToken: string | null = null;
@@ -21,6 +32,13 @@ const isLocalhost = (url: string) => /^https?:\/\/(localhost|127\.0\.0\.1)(:\d+)
 const allowedBase = apiBaseFromEnv?.trim();
 const noFallbackInProd = isProd && (!allowedBase || isLocalhost(allowedBase));
 const API_BASE_URL = noFallbackInProd ? "" : (allowedBase ?? "http://127.0.0.1:8787");
+
+/** Public API base for “Copy as curl” (same host the dashboard uses, or a safe default for display). */
+export function getApiBaseUrl(): string {
+  if (API_BASE_URL) return API_BASE_URL.replace(/\/$/, "");
+  return "https://api.memorynode.ai";
+}
+
 export const apiEnvError = !allowedBase
   ? "Missing VITE_API_BASE_URL"
   : noFallbackInProd
@@ -33,15 +51,20 @@ export function maskKey(key: string): string {
   return `${key.slice(0, 6)}…${key.slice(-4)}`;
 }
 
-type ApiError = { error: { code: string; message: string } };
+type ApiErrorBody = {
+  error?: { code?: string; message?: string; request_id?: string };
+};
 
 export class ApiClientError extends Error {
   status: number;
   code?: string;
-  constructor(status: number, code: string | undefined, message: string) {
+  /** Server correlation id when present on error responses */
+  requestId?: string;
+  constructor(status: number, code: string | undefined, message: string, requestId?: string) {
     super(message);
     this.status = status;
     this.code = code;
+    this.requestId = requestId;
   }
 }
 
@@ -63,8 +86,14 @@ export function userFacingErrorMessage(err: unknown): string {
     if (code === "DAILY_CAP_EXCEEDED") return "Daily fair-use cap exceeded. Try again tomorrow.";
     if (code === "MONTHLY_CAP_EXCEEDED") return "Monthly cap exceeded. Upgrade to continue.";
     if (err.status === 402) return "Usage cap exceeded. Upgrade or try again later.";
-    if (err.status >= 500) return "Something went wrong. Please try again.";
-    return err.message || `Request failed (${err.status})`;
+    if (err.status >= 500) {
+      const base = "Something went wrong. Please try again.";
+      if (err.requestId?.trim()) return `${base} Request ID: ${err.requestId.trim()}`;
+      return base;
+    }
+    const base = err.message || `Request failed (${err.status})`;
+    if (err.requestId?.trim()) return `${base} Request ID: ${err.requestId.trim()}`;
+    return base;
   }
   if (err instanceof TypeError) {
     return "Unable to reach the server. Check your connection and API URL, then retry.";
@@ -72,11 +101,13 @@ export function userFacingErrorMessage(err: unknown): string {
   return err instanceof Error ? err.message : String(err);
 }
 
+export type ApiJsonResult<T> = { data: T; requestId?: string };
+
 async function fetchJson<T>(
   path: string,
   init: RequestInit,
   opts?: { suppressUnauthorizedHandling?: boolean },
-): Promise<T> {
+): Promise<ApiJsonResult<T>> {
   if (!API_BASE_URL) {
     throw new ApiClientError(0, "CONFIG", apiEnvError ?? "VITE_API_BASE_URL is not configured.");
   }
@@ -84,6 +115,7 @@ async function fetchJson<T>(
     ...init,
     credentials: "include",
   });
+  const headerRequestId = res.headers.get("x-request-id")?.trim() || undefined;
   const text = await res.text();
   let json: unknown = null;
   try {
@@ -96,10 +128,19 @@ async function fetchJson<T>(
       setCsrfToken(null);
       onUnauthorized?.();
     }
-    const err = (json as ApiError | null)?.error;
-    throw new ApiClientError(res.status, err?.code, err?.message ?? `Request failed: ${res.status}`);
+    const body = json as ApiErrorBody | null;
+    const err = body?.error;
+    const combinedRequestId =
+      typeof err?.request_id === "string" && err.request_id.trim() ? err.request_id.trim() : headerRequestId;
+    throw new ApiClientError(
+      res.status,
+      err?.code,
+      err?.message ?? `Request failed: ${res.status}`,
+      combinedRequestId,
+    );
   }
-  return (json as T) ?? ({} as T);
+  const data = ((json as T) ?? ({} as T)) as T;
+  return { data, requestId: headerRequestId };
 }
 
 /** Create or refresh dashboard session. Call after Supabase auth when workspace is selected. Sets CSRF token for mutating calls. */
@@ -114,6 +155,7 @@ export async function ensureDashboardSession(accessToken: string, workspaceId: s
     body: JSON.stringify({ access_token: accessToken, workspace_id: workspaceId }),
   });
   if (!res.ok) {
+    const headerRid = res.headers.get("x-request-id")?.trim() || undefined;
     const text = await res.text();
     let json: unknown = null;
     try {
@@ -121,11 +163,37 @@ export async function ensureDashboardSession(accessToken: string, workspaceId: s
     } catch {
       /* ignore */
     }
-    const err = (json as ApiError | null)?.error;
-    throw new ApiClientError(res.status, err?.code, err?.message ?? `Session failed: ${res.status}`);
+    const err = (json as ApiErrorBody | null)?.error;
+    const combinedRid = typeof err?.request_id === "string" && err.request_id.trim() ? err.request_id.trim() : headerRid;
+    throw new ApiClientError(
+      res.status,
+      err?.code,
+      err?.message ?? `Session failed: ${res.status}`,
+      combinedRid,
+    );
   }
   const data = (await res.json()) as { csrf_token?: string };
   setCsrfToken(data.csrf_token ?? null);
+}
+
+/** Same as `apiPost` plus `requestId` from response `x-request-id` when present (success paths). */
+export async function apiPostWithMeta<T>(
+  path: string,
+  body: unknown = {},
+  extraHeaders?: Record<string, string>,
+): Promise<ApiJsonResult<T>> {
+  const headers: Record<string, string> = { "content-type": "application/json", ...extraHeaders };
+  if (csrfToken) headers["x-csrf-token"] = csrfToken;
+  return fetchJson<T>(path, {
+    method: "POST",
+    headers,
+    body: JSON.stringify(body),
+  });
+}
+
+/** Same as `apiGet` plus `requestId` from response `x-request-id` when present. */
+export async function apiGetWithMeta<T>(path: string): Promise<ApiJsonResult<T>> {
+  return fetchJson<T>(path, { method: "GET" });
 }
 
 export async function dashboardLogout(): Promise<void> {
@@ -141,37 +209,35 @@ export async function dashboardLogout(): Promise<void> {
 }
 
 export async function apiPost<T>(path: string, body: unknown = {}, extraHeaders?: Record<string, string>): Promise<T> {
-  const headers: Record<string, string> = { "content-type": "application/json", ...extraHeaders };
-  if (csrfToken) headers["x-csrf-token"] = csrfToken;
-  return fetchJson<T>(path, {
-    method: "POST",
-    headers,
-    body: JSON.stringify(body),
-  });
+  const { data } = await apiPostWithMeta<T>(path, body, extraHeaders);
+  return data;
 }
 
 export async function apiGet<T>(path: string): Promise<T> {
-  return fetchJson<T>(path, { method: "GET" });
+  const { data } = await apiGetWithMeta<T>(path);
+  return data;
 }
 
 export async function apiDelete<T>(path: string): Promise<T> {
   const headers: Record<string, string> = {};
   if (csrfToken) headers["x-csrf-token"] = csrfToken;
-  return fetchJson<T>(path, { method: "DELETE", headers });
+  const { data } = await fetchJson<T>(path, { method: "DELETE", headers });
+  return data;
 }
 
 export async function apiPatch<T>(path: string, body: unknown = {}, extraHeaders?: Record<string, string>): Promise<T> {
   const headers: Record<string, string> = { "content-type": "application/json", ...extraHeaders };
   if (csrfToken) headers["x-csrf-token"] = csrfToken;
-  return fetchJson<T>(path, {
+  const { data } = await fetchJson<T>(path, {
     method: "PATCH",
     headers,
     body: JSON.stringify(body),
   });
+  return data;
 }
 
 export async function adminGet<T>(path: string, adminToken: string): Promise<T> {
-  return fetchJson<T>(
+  const { data } = await fetchJson<T>(
     path,
     {
       method: "GET",
@@ -179,4 +245,5 @@ export async function adminGet<T>(path: string, adminToken: string): Promise<T> 
     },
     { suppressUnauthorizedHandling: true },
   );
+  return data;
 }

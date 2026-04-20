@@ -1,5 +1,6 @@
 import React from "react";
 import { createRoot } from "react-dom/client";
+import { BrowserRouter } from "react-router-dom";
 import { App } from "./App";
 import { FounderApp } from "./FounderApp";
 import { getAppSurface, isFounderPath } from "./appSurface";
@@ -20,6 +21,12 @@ if (surface === "console" && isFounderPath(window.location.pathname)) {
 
 createRoot(root).render(
   <React.StrictMode>
-    {surface === "app" ? <FounderApp /> : <App />}
+    {surface === "app" ? (
+      <FounderApp />
+    ) : (
+      <BrowserRouter>
+        <App />
+      </BrowserRouter>
+    )}
   </React.StrictMode>,
 );

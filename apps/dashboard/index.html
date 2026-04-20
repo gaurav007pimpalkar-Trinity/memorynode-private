@@ -21,23 +21,19 @@
       rel="stylesheet"
     />
     <style>
+      /* FOUC guard — mirror apps/dashboard/src/styles.css :root canonical colors */
       :root {
         color-scheme: dark;
-        --bg: #060a12;
         --bg-app: #060a12;
-        --panel: #111827;
-        --muted: #94a3b8;
-        --text: #e2e8f0;
-        --accent: #38bdf8;
-        --accent-2: #a855f7;
-        --border: #1f2937;
-        --surface-elevated: #141f33;
+        --text-primary: #e8eef7;
+        --font-sans: "Inter", system-ui, -apple-system, sans-serif;
       }
       body {
         margin: 0;
-        font-family: "Inter", system-ui, -apple-system, sans-serif;
+        min-height: 100vh;
+        font-family: var(--font-sans);
         background: var(--bg-app);
-        color: var(--text);
+        color: var(--text-primary);
       }
       #root {
         min-height: 100vh;

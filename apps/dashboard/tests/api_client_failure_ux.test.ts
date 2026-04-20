@@ -16,4 +16,9 @@ describe("api client failure UX mapping", () => {
     const err = new TypeError("Failed to fetch");
     expect(userFacingErrorMessage(err)).toContain("Unable to reach the server");
   });
+
+  it("appends request id when ApiClientError carries requestId", () => {
+    const err = new ApiClientError(500, "INTERNAL", "boom", "req_abc123");
+    expect(userFacingErrorMessage(err)).toContain("Request ID: req_abc123");
+  });
 });

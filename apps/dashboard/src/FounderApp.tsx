@@ -275,8 +275,16 @@ export function FounderApp(): JSX.Element {
             ))}
           </div>
 
-          {error && <div className="badge">{error}</div>}
-          {!adminToken.trim() && <div className="badge">Enter a valid admin token to load founder metrics.</div>}
+          {error ? (
+            <div className="alert alert--error" role="alert">
+              {error}
+            </div>
+          ) : null}
+          {!adminToken.trim() ? (
+            <div className="alert alert--warning" role="status">
+              Enter a valid admin token to load founder metrics.
+            </div>
+          ) : null}
           {loading && <FounderPanel title="Loading">Fetching founder metrics…</FounderPanel>}
 
           {!loading && data && current && previous && (

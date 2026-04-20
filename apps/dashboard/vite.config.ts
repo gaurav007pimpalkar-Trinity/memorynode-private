@@ -86,5 +86,7 @@ export default defineConfig({
   plugins: [requireProdDashboardEnv(), emitDashboardVersionJson(), react()],
   server: {
     port: 4173,
+    // Dev: Vite serves index.html for unknown paths automatically (SPA).
+    // Prod (Cloudflare Pages): see public/_redirects for /* → index.html so /lab refresh works.
   },
 });
