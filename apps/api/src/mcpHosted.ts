@@ -156,6 +156,75 @@ export function isHostedMcpPath(pathname: string): boolean {
   return pathname === "/v1/mcp" || pathname === "/mcp";
 }
 
+function escapeHtmlText(s: string): string {
+  return s
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;");
+}
+
+/** True when this looks like a human opening the MCP URL in a browser tab (not curl / MCP clients). */
+function isLikelyBrowserDocumentNavigation(request: Request): boolean {
+  const dest = request.headers.get("Sec-Fetch-Dest");
+  const mode = request.headers.get("Sec-Fetch-Mode");
+  if (dest === "document" || mode === "navigate") return true;
+  const accept = (request.headers.get("Accept") ?? "").toLowerCase();
+  return accept.includes("text/html");
+}
+
+function safePublicAppBase(env: Env): string | null {
+  const raw = (env.PUBLIC_APP_URL ?? "").trim().replace(/\/$/, "");
+  if (!raw) return null;
+  try {
+    new URL(raw);
+    return raw;
+  } catch {
+    return null;
+  }
+}
+
+function buildMcpBrowserLandingPage(request: Request, env: Env): string {
+  const pageUrl = new URL(request.url);
+  const canonicalMcp = `${pageUrl.origin}${pageUrl.pathname.replace(/\/$/, "") || "/mcp"}`;
+  const restOrigin = resolveRestApiOrigin(request, env);
+  const alternateMcp = `${restOrigin}/v1/mcp`;
+  const consoleBase = safePublicAppBase(env);
+  const consoleLink =
+    consoleBase != null
+      ? `<p><a href="${escapeHtmlText(consoleBase)}">Open MemoryNode</a> to create an API key and MCP setup.</p>`
+      : "<p>Create a project API key in the MemoryNode console, then add this URL to your MCP client.</p>";
+
+  return `<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>MemoryNode MCP</title>
+  <style>
+    body { font-family: system-ui, sans-serif; max-width: 42rem; margin: 2rem auto; padding: 0 1rem;
+      line-height: 1.5; color: #e8eaed; background: #0f1419; }
+    a { color: #7cb8ff; }
+    code { background: #1a222d; padding: 0.15rem 0.4rem; border-radius: 4px; font-size: 0.9rem; word-break: break-all; }
+    .box { background: #1a222d; border-radius: 8px; padding: 1rem 1.1rem; margin: 1rem 0; border: 1px solid #2a3444; }
+  </style>
+</head>
+<body>
+  <h1>MemoryNode MCP (HTTP)</h1>
+  <p>This address is a <strong>machine endpoint</strong> for the Model Context Protocol. It is not a website to browse.</p>
+  <p>Use it in an MCP-capable editor or agent (for example Cursor) with your <strong>project API key</strong> (<code>Authorization: Bearer …</code> or <code>x-api-key</code>). Opening it here without credentials only shows this page.</p>
+  ${consoleLink}
+  <div class="box">
+    <p><strong>Hosted MCP URL (this host)</strong></p>
+    <p><code>${escapeHtmlText(canonicalMcp)}</code></p>
+    <p><strong>Same MCP on the API host</strong></p>
+    <p><code>${escapeHtmlText(alternateMcp)}</code></p>
+  </div>
+  <p>Technical reference: <code>docs/MCP_SERVER.md</code> in the MemoryNode repository.</p>
+</body>
+</html>`;
+}
+
 async function internalJson(
   env: Env,
   origin: string,
@@ -1546,6 +1615,23 @@ export async function handleHostedMcpRequest(
     return new Response(JSON.stringify({ error: { code: "METHOD_NOT_ALLOWED", message: "Method not allowed" } }), {
       status: 405,
       headers: { Allow: "GET, POST, DELETE", "Content-Type": "application/json", ...ctx.securityHeaders },
+    });
+  }
+
+  if (
+    method === "GET" &&
+    !extractApiKey(request) &&
+    !(request.headers.get("mcp-session-id") ?? "").trim() &&
+    isLikelyBrowserDocumentNavigation(request)
+  ) {
+    const html = buildMcpBrowserLandingPage(request, env);
+    return new Response(html, {
+      status: 200,
+      headers: {
+        "Content-Type": "text/html; charset=utf-8",
+        "Cache-Control": "public, max-age=300",
+        ...ctx.securityHeaders,
+      },
     });
   }
 
