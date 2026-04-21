@@ -234,8 +234,10 @@ jobs:
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
 
-      - name: Build shared package
-        run: pnpm --filter @memorynodeai/shared build
+      - name: Build workspace packages for API bundle (smoke)
+        run: |
+          pnpm --filter @memorynodeai/shared build
+          pnpm --filter @memorynodeai/mcp-core build
 
       - name: Run smoke
         env:

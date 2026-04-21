@@ -7,7 +7,10 @@ alter table workspaces
 comment on column workspaces.trial is 'Time-boxed trial indicator (trial PlanId stays indie until card).';
 comment on column workspaces.trial_expires_at is 'When trial access ends for policy enforcement.';
 
-create or replace function authenticate_api_key(p_key_hash text)
+-- Postgres rejects `CREATE OR REPLACE` when the RETURNS TABLE (...) shape changes vs 049_request_path_rls_first.sql (added trial columns).
+drop function if exists public.authenticate_api_key(text);
+
+create function authenticate_api_key(p_key_hash text)
 returns table (
   api_key_id uuid,
   workspace_id uuid,
@@ -35,3 +38,18 @@ as $$
     and k.revoked_at is null
   limit 1;
 $$;
+
+revoke all on function authenticate_api_key(text) from public;
+
+do $$
+begin
+  if exists (select 1 from pg_roles where rolname = 'anon') then
+    execute 'grant execute on function authenticate_api_key(text) to anon';
+  end if;
+  if exists (select 1 from pg_roles where rolname = 'authenticated') then
+    execute 'grant execute on function authenticate_api_key(text) to authenticated';
+  end if;
+  if exists (select 1 from pg_roles where rolname = 'service_role') then
+    execute 'grant execute on function authenticate_api_key(text) to service_role';
+  end if;
+end$$;
