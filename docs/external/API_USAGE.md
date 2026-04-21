@@ -254,18 +254,24 @@ In **RLS-first / service-role-disabled** modes some paths return **503** — see
 
 ## Errors
 
-JSON shape: `{ "error": { "code": "...", "message": "..." }, "request_id": "..." }` (some errors omit fields).
+JSON shape: `{ "error": { "code": "...", "message": "..." }, "request_id": "..." }` (some errors omit fields). Upgrade-style **402** responses may also include top-level **`upgrade_url`** (e.g. `{app_origin}/billing`) when the Worker has **`PUBLIC_APP_URL`** configured.
 
 | HTTP | Meaning |
 |------|---------|
 | 400 | Validation / bad parameters |
 | 401 | Missing or invalid API key |
-| 402 | Plan / entitlement / upgrade required |
+| 402 | Plan / entitlement / caps / upgrade required — see **402 variants** below |
 | 403 | Permission denied (e.g. CSRF) |
 | 404 | Unknown route or resource |
 | 410 | Gone (`/v1/billing/portal`) |
 | 429 | Rate limited — honor `Retry-After` when present |
 | 503 | Billing disabled, control-plane disabled, or dependency unavailable |
+
+### 402 variants
+
+Common `error.code` values include entitlement and fair-use caps (`daily_cap_exceeded`, `monthly_cap_exceeded`, `ENTITLEMENT_REQUIRED`, etc.).
+
+**Trial ended (`TRIAL_EXPIRED`):** When the workspace is on a **time-limited trial** (`trial` true, `trial_expires_at` in the past), **mutating** API calls (create/update/delete memory, links, connector settings patch, import, eval set/item writes, etc.) return **402** with `error.code: "TRIAL_EXPIRED"` and `error.upgrade_required: true`. **Read-only** traffic (search, list/get memory, context, usage meters, billing status/checkout) is **not** blocked by this gate so clients can still open billing. Hosted MCP write tools mirror the same rule; **`billing_checkout_create`** / **`billing_portal_create`** stay available to attach payment.
 
 ---
 
