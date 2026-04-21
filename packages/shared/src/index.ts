@@ -510,6 +510,9 @@ export interface RevokeApiKeyResponse {
   revoked: boolean;
 }
 
+export type { ProductPlanId } from "./productPlan.js";
+export { productPlanFromWorkspacePlan } from "./productPlan.js";
+
 // Plans & limits (single source of truth)
 export type {
   PlanId,
@@ -578,3 +581,5 @@ export type { RecallStrength } from "./mcpContextSignals.js";
 export { deriveContextSignals } from "./mcpContextSignals.js";
 export type { AttackType, AttackFailure, AttackSimulationConfig, AttackSimulationReport } from "./mcpAttackSimulator.js";
 export { runAttackSimulation } from "./mcpAttackSimulator.js";
+
+export { trialExpiredBlocksWrites } from "./trialAccess.js";

@@ -21,4 +21,22 @@ describe("api client failure UX mapping", () => {
     const err = new ApiClientError(500, "INTERNAL", "boom", "req_abc123");
     expect(userFacingErrorMessage(err)).toContain("Request ID: req_abc123");
   });
+
+  it("maps TRIAL_EXPIRED with upgrade_url to billing guidance", () => {
+    const err = new ApiClientError(
+      402,
+      "TRIAL_EXPIRED",
+      "trial ended",
+      undefined,
+      "https://app.example.test/billing",
+    );
+    const msg = userFacingErrorMessage(err);
+    expect(msg).toContain("trial has ended");
+    expect(msg).toContain("https://app.example.test/billing");
+  });
+
+  it("maps TRIAL_EXPIRED without upgrade_url to Billing page guidance", () => {
+    const err = new ApiClientError(402, "TRIAL_EXPIRED", "trial ended");
+    expect(userFacingErrorMessage(err)).toContain("Billing");
+  });
 });

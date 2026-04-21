@@ -30,7 +30,7 @@
     "smoke:ci": "SMOKE_MODE=ci bash scripts/smoke.sh",
     "load:smoke": "node scripts/load_smoke.mjs",
     "e2e:verify": "node scripts/e2e_verify.mjs",
-    "test:ci": "pnpm run check:typed-entry && pnpm run check:wrangler && pnpm run migrations:check && pnpm run check:workspace-scope && pnpm run check:config && pnpm run check:api-surface-phase1 && pnpm run openapi:check && pnpm run check:docs-drift && vitest run --silent",
+    "test:ci": "pnpm run check:typed-entry && pnpm run check:wrangler && pnpm run migrations:check && pnpm run check:workspace-scope && pnpm run check:config && pnpm run check:api-surface-phase1 && pnpm run openapi:check && pnpm run check:docs-drift && pnpm --filter @memorynodeai/mcp-core run lint:noun-verb && vitest run --silent",
     "check:typed-entry": "node scripts/check_typed_entry.mjs",
     "check:workspace-scope": "node scripts/check_workspace_scope.mjs",
     "check:service-role-allowlist": "node scripts/check_service_role_allowlist.mjs",

@@ -33,7 +33,7 @@ After `pnpm build` in this package (or when consuming the published package), th
 
 ## Tool surface
 
-- Canonical tools: `memory`, `recall`, `context`, `whoAmI`
+- Canonical tools: `memory` (save / forget / confirm_forget), `recall`, `context`, `whoAmI`
 - Deprecated aliases (non-breaking migration): `memory_insert`, `memory_search`, `memory_context`
 - Structured denials include `policy_version`, `action_id`, and stable error codes.
 
@@ -43,8 +43,13 @@ After `pnpm build` in this package (or when consuming the published package), th
 | ---------------------- | -------- | ----------------------------------------------------- |
 | `MEMORYNODE_API_KEY`   | Yes      | Project API key (`mn_live_...`).                    |
 | `MEMORYNODE_BASE_URL`  | Yes      | e.g. `https://api.memorynode.ai` (no trailing slash). |
-| `MEMORYNODE_CONTAINER_TAG` | No   | Default container tag / scope for tools.          |
+| `MEMORYNODE_CONTAINER_TAG` | No   | Default namespace when no per-call `containerTag` is set. |
 | `MEMORYNODE_NAMESPACE` | No       | Legacy alias for `MEMORYNODE_CONTAINER_TAG`.          |
+| `MEMORYNODE_USER_ID` | No       | REST `user_id` / policy user slice (default `default`). |
+| `MEMORYNODE_SCOPED_CONTAINER_TAG` | No | When set, pins the namespace (same idea as hosted `x-mn-container-tag` on the API key). |
+| `MEMORYNODE_POLICY_WORKSPACE_ID` | No | Display label for policy / `whoAmI` (default `stdio`). |
+| `MEMORYNODE_POLICY_KEY_ID` | No | Policy key id label (default `stdio`). |
+| `MEMORYNODE_SESSION_ID` | No | Session id echoed in `whoAmI` (default `stdio`). |
 
 Details and examples: **[docs/MCP_SERVER.md](../../docs/MCP_SERVER.md)**.
 

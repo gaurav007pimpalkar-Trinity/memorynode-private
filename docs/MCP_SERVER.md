@@ -19,7 +19,7 @@ MemoryNode exposes MCP in two ways:
    1) scoped API key lock
    2) explicit `x-mn-container-tag`
    3) derived from `x-mn-user-id` + optional `x-mn-scope`.
-   Tooling calls REST on **`api.memorynode.ai`** automatically when the MCP request hits `mcp.memorynode.ai` (override with Worker var **`MEMORYNODE_REST_ORIGIN`** if needed). Canonical tools are **`memory`**, **`recall`**, **`context`**, **`whoAmI`**. Alias tools (`memory_search`, `memory_insert`, `memory_context`) are maintained for migration with deprecated metadata. No Supabase in the MCP layer—only REST.
+   Tooling calls REST on **`api.memorynode.ai`** automatically when the MCP request hits `mcp.memorynode.ai` (override with Worker var **`MEMORYNODE_REST_ORIGIN`** if needed). Hosted registration includes many snake_case tools plus legacy aliases (**`memory`**, **`recall`**, **`context`**, **`whoAmI`**); authoritative list is **`HOSTED_CANONICAL_TOOL_NAMES`** in `packages/mcp-core/src/registry/registerAllTools.ts`. Alias tools (`memory_search`, `memory_insert`, `memory_context`) are maintained for migration with deprecated metadata. No Supabase in the MCP layer—only REST.
 
 ## Canonical MCP tool contracts
 
@@ -128,6 +128,14 @@ routing debug headers are emitted by default. Key headers:
 - `x-mn-routing-mode`
 - `x-mn-scope-override` (when scoped key override is applied)
 - `x-mn-routing-fallback` (when fallback routing is used)
+
+### Hosted worker environment (operators)
+
+These are **Cloudflare Worker** variables on the API worker (`apps/api`), not stdio client env:
+
+- **`MCP_AUDIT_LOG_REQUIRES_TEAM`** — Optional string. Unless set to **`false`** (case-insensitive), the hosted MCP tool **`audit_log_list`** is denied unless the authenticated workspace’s API key resolves to **Team** plan (`plan === "team"`). Set to **`false`** to allow **`audit_log_list`** for non-Team plans over hosted MCP (for example, parity with Studio-style keys). Source: `apps/api/src/mcpHosted.ts` (`planGate`).
+
+- **`MCP_CONNECTOR_SETTINGS_REQUIRES_TEAM`** — Optional string. Unless set to **`false`** (case-insensitive), **`connector_settings_get`** and **`connector_settings_update`** are denied unless **`plan === "team"`**. Set to **`false`** to allow connector settings MCP tools on non-Team keys (for example local/staging). Source: `apps/api/src/mcpHosted.ts` (`planGate`).
 
 ## Guardrails and defaults
 

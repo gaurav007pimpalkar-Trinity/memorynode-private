@@ -21,7 +21,7 @@ describe("MemoryNodeClient request mapping", () => {
     fetchMock.mockReturnValue(
       okResponse({ results: [], page: 2, page_size: 5, total: 0, has_more: false }),
     );
-    const client = new MemoryNodeClient({ apiKey: "test-key" });
+    const client = new MemoryNodeClient({ apiKey: "test-key", transport: "rest" });
 
     await client.search({
       userId: "u1",
@@ -46,7 +46,7 @@ describe("MemoryNodeClient request mapping", () => {
     fetchMock.mockReturnValue(
       okResponse({ context_text: "", citations: [], page: 1, page_size: 8, total: 0, has_more: false }),
     );
-    const client = new MemoryNodeClient({ apiKey: "test-key" });
+    const client = new MemoryNodeClient({ apiKey: "test-key", transport: "rest" });
 
     await client.context({
       userId: "u1",
@@ -62,7 +62,7 @@ describe("MemoryNodeClient request mapping", () => {
 
   it("omits filters when none are provided", async () => {
     fetchMock.mockReturnValue(okResponse({ results: [] }));
-    const client = new MemoryNodeClient({ apiKey: "test-key" });
+    const client = new MemoryNodeClient({ apiKey: "test-key", transport: "rest" });
     await client.search({ userId: "u1", query: "hello" });
     const [, init] = fetchMock.mock.calls[0];
     const body = JSON.parse((init as RequestInit).body as string);
@@ -73,7 +73,7 @@ describe("MemoryNodeClient request mapping", () => {
     fetchMock.mockReturnValue(
       okResponse({ results: [{ id: "m1" }], page: 1, page_size: 1, total: 1, has_more: false }),
     );
-    const client = new MemoryNodeClient({ apiKey: "test-key" });
+    const client = new MemoryNodeClient({ apiKey: "test-key", transport: "rest" });
     const resp = await client.listMemories();
     expect(resp.results?.length).toBe(1);
     expect(fetchMock).toHaveBeenCalled();
@@ -88,7 +88,7 @@ describe("MemoryNodeClient request mapping", () => {
       } as Response),
     );
 
-    const client = new MemoryNodeClient({ apiKey: "test-key" });
+    const client = new MemoryNodeClient({ apiKey: "test-key", transport: "rest" });
     const data = await client.importMemories("artifact-b64", "upsert");
     expect(data.imported_memories).toBe(1);
     expect(data.imported_chunks).toBe(2);
@@ -109,7 +109,7 @@ describe("MemoryNodeClient request mapping", () => {
       } as Response),
     );
 
-    const client = new MemoryNodeClient({ apiKey: "test-key" });
+    const client = new MemoryNodeClient({ apiKey: "test-key", transport: "rest" });
     const { MemoryNodeApiError } = await import("../src/index.js");
 
     try {
@@ -124,7 +124,7 @@ describe("MemoryNodeClient request mapping", () => {
   });
 
   it("throws MISSING_API_KEY when no apiKey and calling protected endpoint", async () => {
-    const client = new MemoryNodeClient({ baseUrl: "https://api.example.com" });
+    const client = new MemoryNodeClient({ baseUrl: "https://api.example.com", transport: "rest" });
     const { MemoryNodeApiError } = await import("../src/index.js");
 
     try {
@@ -138,7 +138,7 @@ describe("MemoryNodeClient request mapping", () => {
 
   it("allows health() without apiKey", async () => {
     fetchMock.mockReturnValue(okResponse({ status: "ok" }));
-    const client = new MemoryNodeClient();
+    const client = new MemoryNodeClient({ transport: "rest" });
     await client.health();
     expect(fetchMock).toHaveBeenCalled();
   });
@@ -146,7 +146,7 @@ describe("MemoryNodeClient request mapping", () => {
   it("passes abort signal into fetch init", async () => {
     fetchMock.mockReturnValue(okResponse({ results: [] }));
     const ac = new AbortController();
-    const client = new MemoryNodeClient({ apiKey: "test-key", signal: ac.signal, timeoutMs: 0 });
+    const client = new MemoryNodeClient({ apiKey: "test-key", signal: ac.signal, timeoutMs: 0, transport: "rest" });
     await client.search({ userId: "u1", query: "hello" });
     const [, init] = fetchMock.mock.calls[0];
     expect((init as RequestInit).signal).toBe(ac.signal);
@@ -156,7 +156,7 @@ describe("MemoryNodeClient request mapping", () => {
     const abortErr = new Error("The user aborted a request.");
     abortErr.name = "AbortError";
     fetchMock.mockRejectedValue(abortErr);
-    const client = new MemoryNodeClient({ apiKey: "test-key", timeoutMs: 0 });
+    const client = new MemoryNodeClient({ apiKey: "test-key", timeoutMs: 0, transport: "rest" });
     await expect(client.search({ userId: "u1", query: "hello" })).rejects.toMatchObject({
       code: "REQUEST_ABORTED",
     });
@@ -172,7 +172,7 @@ describe("MemoryNodeClient request mapping", () => {
       } as Response)
       .mockResolvedValueOnce(okResponse({ results: [], page: 1, page_size: 10, total: 0, has_more: false }));
 
-    const client = new MemoryNodeClient({ apiKey: "test-key", maxRetries: 1, retryBaseMs: 1 });
+    const client = new MemoryNodeClient({ apiKey: "test-key", maxRetries: 1, retryBaseMs: 1, transport: "rest" });
     const out = await client.search({ userId: "u1", query: "retry me" });
     expect(Array.isArray(out.results)).toBe(true);
     expect(fetchMock).toHaveBeenCalledTimes(2);
@@ -186,7 +186,7 @@ describe("MemoryNodeClient request mapping", () => {
       json: async () => ({ error: { code: "BAD_REQUEST", message: "invalid" } }),
     } as Response);
 
-    const client = new MemoryNodeClient({ apiKey: "test-key", maxRetries: 2, retryBaseMs: 1 });
+    const client = new MemoryNodeClient({ apiKey: "test-key", maxRetries: 2, retryBaseMs: 1, transport: "rest" });
     await expect(client.search({ userId: "u1", query: "bad" })).rejects.toMatchObject({ code: "BAD_REQUEST" });
     expect(fetchMock).toHaveBeenCalledTimes(1);
   });
@@ -196,7 +196,7 @@ describe("MemoryNodeClient request mapping", () => {
       .mockRejectedValueOnce(new Error("socket reset"))
       .mockResolvedValueOnce(okResponse({ status: "ok" }));
 
-    const client = new MemoryNodeClient({ maxRetries: 1, retryBaseMs: 1 });
+    const client = new MemoryNodeClient({ maxRetries: 1, retryBaseMs: 1, transport: "rest" });
     const health = await client.health();
     expect(health.status).toBe("ok");
     expect(fetchMock).toHaveBeenCalledTimes(2);

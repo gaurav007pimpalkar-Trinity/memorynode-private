@@ -59,6 +59,8 @@ required_columns(table_name, column_name) as (
     ('workspaces', 'payu_last_status'),
     ('workspaces', 'payu_txn_id'),
     ('workspaces', 'payu_payment_id'),
+    ('workspaces', 'trial'),
+    ('workspaces', 'trial_expires_at'),
     ('api_keys', 'key_hash'),
     ('memories', 'workspace_id'),
     ('memory_chunks', 'embedding'),

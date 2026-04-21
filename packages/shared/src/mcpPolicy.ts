@@ -4,6 +4,18 @@ export type McpActionId =
   | "memory.save"
   | "memory.forget"
   | "memory.confirm_forget"
+  | "memory.read"
+  | "memory.delete"
+  | "memory.conversation_save"
+  | "ingest.dispatch"
+  | "eval.run"
+  | "usage.today"
+  | "audit.log.list"
+  | "billing.status"
+  | "billing.checkout.create"
+  | "billing.portal.create"
+  | "connector.settings.get"
+  | "connector.settings.update"
   | "recall"
   | "context"
   | "whoAmI";
@@ -185,11 +197,30 @@ function sessionKey(scope: PolicyScope): string {
 }
 
 function actionIsWrite(action: McpActionId): boolean {
-  return action === "memory.save" || action === "memory.forget" || action === "memory.confirm_forget";
+  return (
+    action === "memory.save" ||
+    action === "memory.forget" ||
+    action === "memory.confirm_forget" ||
+    action === "memory.delete" ||
+    action === "memory.conversation_save" ||
+    action === "ingest.dispatch" ||
+    action === "eval.run" ||
+    action === "billing.checkout.create" ||
+    action === "billing.portal.create" ||
+    action === "connector.settings.update"
+  );
 }
 
 function actionIsRead(action: McpActionId): boolean {
-  return action === "recall" || action === "context";
+  return (
+    action === "recall" ||
+    action === "context" ||
+    action === "memory.read" ||
+    action === "usage.today" ||
+    action === "audit.log.list" ||
+    action === "billing.status" ||
+    action === "connector.settings.get"
+  );
 }
 
 function normalizeText(input: string): string {
@@ -301,6 +332,18 @@ export function estimateCost(input: PolicyInput): CostEstimate {
   let outputTokens = 64;
   if (input.actionId === "memory.save") outputTokens = 96;
   if (input.actionId === "memory.forget" || input.actionId === "memory.confirm_forget") outputTokens = 128;
+  if (input.actionId === "memory.read") outputTokens = 140;
+  if (input.actionId === "memory.delete") outputTokens = 96;
+  if (input.actionId === "memory.conversation_save") outputTokens = 160;
+  if (input.actionId === "ingest.dispatch") outputTokens = 200;
+  if (input.actionId === "eval.run") outputTokens = 420;
+  if (input.actionId === "usage.today") outputTokens = 110;
+  if (input.actionId === "audit.log.list") outputTokens = 240;
+  if (input.actionId === "billing.status") outputTokens = 130;
+  if (input.actionId === "billing.checkout.create") outputTokens = 280;
+  if (input.actionId === "billing.portal.create") outputTokens = 120;
+  if (input.actionId === "connector.settings.get") outputTokens = 120;
+  if (input.actionId === "connector.settings.update") outputTokens = 90;
   if (input.actionId === "recall") outputTokens = 180 + topK * 220 + (input.includeProfile === false ? 0 : 120);
   if (input.actionId === "context") outputTokens = 220 + topK * 320;
   return { inputTokens, outputTokens, totalTokens: inputTokens + outputTokens };
@@ -380,7 +423,7 @@ export class McpPolicyEngine {
       }
     }
 
-    if (input.actionId === "memory.save") {
+    if (input.actionId === "memory.save" || input.actionId === "memory.conversation_save") {
       const writes = pruneTimes(this.scopeWrites.get(scopeId) ?? [], now, this.limits.scopeWindowMs);
       if (writes.length >= this.limits.scopeWriteCalls) {
         return this.finalizeDecision(input, this.deny(decisionId, "rate_limit_exceeded", "Scope write cap reached."), start);
@@ -401,7 +444,7 @@ export class McpPolicyEngine {
       }
     }
 
-    if (input.actionId === "memory.forget") {
+    if (input.actionId === "memory.forget" || input.actionId === "memory.delete") {
       const forgets = pruneTimes(this.scopeForgets.get(scopeId) ?? [], now, this.limits.scopeWindowMs);
       if (forgets.length >= this.limits.scopeForgetCalls) {
         return this.finalizeDecision(input, this.deny(decisionId, "rate_limit_exceeded", "Scope forget cap reached."), start);
@@ -504,11 +547,11 @@ export class McpPolicyEngine {
       this.sessionWrites.set(sessId, pushTime(this.sessionWrites, sessId, now));
       this.keyWrites.set(keyId, pushTime(this.keyWrites, keyId, now));
     }
-    if (input.actionId === "memory.save") {
+    if (input.actionId === "memory.save" || input.actionId === "memory.conversation_save") {
       this.scopeWrites.set(scopeId, pushTime(this.scopeWrites, scopeId, now));
       this.pushWriteHistory(scopeId, input.contentText ?? "", now);
     }
-    if (input.actionId === "memory.forget") {
+    if (input.actionId === "memory.forget" || input.actionId === "memory.delete") {
       this.scopeForgets.set(scopeId, pushTime(this.scopeForgets, scopeId, now));
     }
     this.inFlightKey.set(keyId, currentInFlightKey + 1);

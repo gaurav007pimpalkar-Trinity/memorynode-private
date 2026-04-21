@@ -65,6 +65,10 @@ export interface Env {
   PAYU_SCALE_AMOUNT?: string;
   PAYU_PRO_AMOUNT?: string;
   PAYU_PRODUCT_INFO?: string;
+  /**
+   * Public web app origin (no trailing slash), e.g. `https://app.memorynode.ai`.
+   * When set, 402 responses that support upgrades include `upgrade_url` (often `{PUBLIC_APP_URL}/billing`), including `TRIAL_EXPIRED` after an ended trial.
+   */
   PUBLIC_APP_URL?: string;
   /**
    * Base URL for REST calls from the MCP worker path (no trailing slash), e.g. https://api.memorynode.ai.
@@ -77,6 +81,14 @@ export interface Env {
    * deployment that uses hosted MCP; keep out of client code. Unguessable random string (e.g. 32+ bytes hex).
    */
   MCP_INTERNAL_SECRET?: string;
+  /**
+   * When not `"false"`, hosted MCP requires `plan === "team"` before `audit_log_list` calls REST (plan gate).
+   */
+  MCP_AUDIT_LOG_REQUIRES_TEAM?: string;
+  /**
+   * When not `"false"`, hosted MCP requires `plan === "team"` before `connector_settings_get` / `connector_settings_update` (plan gate).
+   */
+  MCP_CONNECTOR_SETTINGS_REQUIRES_TEAM?: string;
   /**
    * Server-only token used only on internally constructed requests after a verified
    * `POST /v1/webhooks/memory` HMAC check. Must match between webhook handler and `authenticate()`.

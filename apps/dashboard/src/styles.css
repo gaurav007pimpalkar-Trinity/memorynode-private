@@ -2496,3 +2496,16 @@ a.explore-tile {
 .docs-drawer-links a:hover {
   text-decoration: underline;
 }
+
+/* Auth (Tailwind) — global :root uses color-scheme: dark for the console; scope light
+   UI so native inputs, scrollbars, and buttons render consistently across browsers. */
+.mn-auth-login button {
+  font-family: inherit;
+}
+
+.mn-auth-login input:-webkit-autofill,
+.mn-auth-login input:-webkit-autofill:hover,
+.mn-auth-login input:-webkit-autofill:focus {
+  -webkit-text-fill-color: #111827;
+  box-shadow: 0 0 0 1000px #ffffff inset;
+}

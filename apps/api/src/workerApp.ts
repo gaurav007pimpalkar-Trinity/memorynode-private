@@ -845,6 +845,7 @@ async function handleRequestImpl(request: Request, env: Env): Promise<Response> 
             keyHash: `dashboard:${verified.userId}`,
             apiKeyId: verified.userId,
             plan: "pro",
+            productPlan: "studio",
             planStatus: "past_due",
           })
           : supabase;

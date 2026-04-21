@@ -19,6 +19,7 @@ import { ImportPayloadSchema, parseWithSchema } from "../contracts/index.js";
 import type { ImportMode, ImportPayload } from "../contracts/index.js";
 import type { QuotaResolutionLike } from "./memories.js";
 import { enforceIsolation } from "../middleware/isolation.js";
+import { maybeRespondTrialExpiredWrite } from "../trialWrites.js";
 
 export type { ImportMode, ImportPayload };
 export type ImportPayloadLike = ImportPayload;
@@ -100,6 +101,8 @@ export function createImportHandlers(
       const d = (deps ?? defaultDeps) as ImportHandlerDeps;
       const { jsonResponse } = d;
       const auth = await authenticate(request, env, supabase, auditCtx);
+      const trialEarly = maybeRespondTrialExpiredWrite(auth, env, jsonResponse);
+      if (trialEarly) return trialEarly;
       const rate = await rateLimit(auth.keyHash, env, auth, getRouteRateLimitMax(env, "import", auth.keyCreatedAt));
       if (!rate.allowed) {
         return jsonResponse({ error: { code: "rate_limited", message: "Rate limit exceeded" } }, 429, rate.headers);

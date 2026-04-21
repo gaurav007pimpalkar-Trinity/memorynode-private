@@ -39,7 +39,7 @@ MASTER_ADMIN_TOKEN=your_token node scripts/dev_bootstrap.mjs
 
 The migration list is checked in CI. Keep the line below updated when you add migrations under `infra/sql/`:
 
-<!-- Migration manifest (CI-checked): MIGRATIONS_TOTAL=64; MIGRATIONS_LATEST=062_memory_ingest_webhooks.sql -->
+<!-- Migration manifest (CI-checked): MIGRATIONS_TOTAL=65; MIGRATIONS_LATEST=063_workspace_trial.sql -->
 
 ## Where to read next
 

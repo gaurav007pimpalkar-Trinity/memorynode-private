@@ -1,8 +1,10 @@
+export { MemoryNodeApiError } from "./errors.js";
+import { MemoryNodeApiError } from "./errors.js";
+
 import type {
   AddConversationMemoryRequest,
   AddMemoryRequest,
   AddMemoryResponse,
-  ApiError,
   ContextExplainResponse,
   ContextResponse,
   ContextFeedbackRequest,
@@ -39,7 +41,12 @@ import type {
 import type { MemoryType, SearchMode, RetrievalProfile } from "@memorynodeai/shared";
 
 /** Re-export for consumers who want to type API errors without importing from @memorynodeai/shared. */
-export type { ApiError };
+export type { ApiError } from "@memorynodeai/shared";
+
+import { InternalRestTransport } from "./internal-rest.js";
+import { MemoryNodeMcpTransport } from "./mcp-transport.js";
+
+export { resolveMcpUrl, MemoryNodeMcpTransport } from "./mcp-transport.js";
 
 const DEFAULT_TIMEOUT_MS = 60_000;
 type OwnerType = "user" | "team" | "app";
@@ -78,6 +85,13 @@ export interface MemoryNodeClientOptions {
   maxRetries?: number;
   /** Base backoff in ms for retries (default 200ms). */
   retryBaseMs?: number;
+  /**
+   * Transport strategy (Sprint 2 — docs/PLAN.md §7 S2).
+   * - `mcp` — `search` uses hosted MCP Streamable HTTP (`search` tool) when possible.
+   * - `rest` — legacy direct REST only (backward-compatible, default for deterministic tests).
+   * - `hybrid` — MCP search for simple queries; REST when filters/explain/pagination require it or MCP fails.
+   */
+  transport?: "mcp" | "rest" | "hybrid";
 }
 
 // SDK-facing options (camelCase). Wire format stays snake_case per shared types.
@@ -179,71 +193,54 @@ export interface ContextExplainOptions {
 
 const DEFAULT_BASE_URL = "http://127.0.0.1:8787";
 
-/** Thrown when the API returns an error or when the client is misconfigured (e.g. missing API key). */
-export class MemoryNodeApiError extends Error implements ApiError {
-  readonly code: string;
-  readonly status?: number;
-
-  constructor(code: string, message: string, status?: number) {
-    super(message);
-    this.name = "MemoryNodeApiError";
-    this.code = code;
-    this.status = status;
-    Object.setPrototypeOf(this, MemoryNodeApiError.prototype);
-  }
-}
-
 export class MemoryNodeClient {
   private readonly baseUrl: string;
   private readonly apiKey?: string;
-  private readonly timeoutMs: number;
   private readonly outerSignal?: AbortSignal;
-  private readonly maxRetries: number;
-  private readonly retryBaseMs: number;
+  private readonly transportMode: "mcp" | "rest" | "hybrid";
+  private readonly rest: InternalRestTransport;
+  private mcp?: MemoryNodeMcpTransport;
 
   constructor(options: MemoryNodeClientOptions = {}) {
     this.baseUrl = options.baseUrl ?? DEFAULT_BASE_URL;
     this.apiKey = options.apiKey;
-    this.timeoutMs = options.timeoutMs ?? DEFAULT_TIMEOUT_MS;
     this.outerSignal = options.signal;
-    this.maxRetries = Math.max(0, Math.floor(options.maxRetries ?? 2));
-    this.retryBaseMs = Math.max(50, Math.floor(options.retryBaseMs ?? 200));
+    this.transportMode = options.transport ?? "hybrid";
+    this.rest = new InternalRestTransport({
+      baseUrl: this.baseUrl,
+      apiKey: this.apiKey,
+      timeoutMs: options.timeoutMs ?? DEFAULT_TIMEOUT_MS,
+      outerSignal: options.signal,
+      maxRetries: Math.max(0, Math.floor(options.maxRetries ?? 2)),
+      retryBaseMs: Math.max(50, Math.floor(options.retryBaseMs ?? 200)),
+    });
   }
 
-  /** Combines timeout, constructor signal, and per-call override (Node 20+ / modern runtimes). */
-  private composeFetchSignal(override?: AbortSignal): AbortSignal | undefined {
-    const parts: AbortSignal[] = [];
-    if (this.timeoutMs > 0 && typeof AbortSignal !== "undefined" && typeof AbortSignal.timeout === "function") {
-      parts.push(AbortSignal.timeout(this.timeoutMs));
+  private async ensureMcp(): Promise<MemoryNodeMcpTransport> {
+    if (!this.apiKey) {
+      throw new MemoryNodeApiError("MISSING_API_KEY", "API key is required for MCP transport.", undefined);
     }
-    if (this.outerSignal) parts.push(this.outerSignal);
-    if (override) parts.push(override);
-    if (parts.length === 0) return undefined;
-    if (parts.length === 1) return parts[0];
-    if (typeof AbortSignal.any === "function") return AbortSignal.any(parts);
-    return parts[0];
+    if (!this.mcp) {
+      this.mcp = new MemoryNodeMcpTransport({
+        baseUrl: this.baseUrl,
+        apiKey: this.apiKey,
+        signal: this.outerSignal,
+      });
+    }
+    await this.mcp.ensureConnected();
+    return this.mcp;
   }
 
-  private async waitBeforeRetry(attempt: number): Promise<void> {
-    const jitter = Math.floor(Math.random() * 50);
-    const delay = this.retryBaseMs * Math.pow(2, attempt) + jitter;
-    await new Promise((resolve) => setTimeout(resolve, delay));
-  }
-
-  private isRetryableStatus(status: number): boolean {
-    return status === 408 || status === 429 || status >= 500;
-  }
-
-  private isRetryableRequest(method: string, path: string): boolean {
-    const m = method.toUpperCase();
-    if (m === "GET" || m === "DELETE") return true;
-    if (m !== "POST") return false;
-    return path === "/v1/search" ||
-      path === "/v1/context" ||
-      path === "/v1/evals/run" ||
-      path === "/v1/context/feedback" ||
-      path === "/v1/explain/answer" ||
-      path.startsWith("/v1/search?");
+  private searchWireNeedsRestOnlyFeatures(wire: OwnerScopedSearchRequest): boolean {
+    return Boolean(
+      wire.filters ||
+        wire.explain !== undefined ||
+        wire.search_mode ||
+        wire.min_score !== undefined ||
+        wire.retrieval_profile ||
+        wire.page !== undefined ||
+        wire.page_size !== undefined,
+    );
   }
 
   // -------- Admin helpers (require adminToken per call) --------
@@ -351,9 +348,29 @@ export class MemoryNodeClient {
   }
 
   async search(input: SearchOptions): Promise<SearchResponse> {
+    const wire = this.toWireSearch(input);
+    const tryMcp =
+      this.transportMode !== "rest" &&
+      !this.searchWireNeedsRestOnlyFeatures(wire) &&
+      this.apiKey !== undefined;
+
+    if (tryMcp) {
+      try {
+        const mcp = await this.ensureMcp();
+        return await mcp.searchTool({
+          query: input.query,
+          top_k: wire.top_k ?? input.topK ?? 10,
+          containerTag: wire.namespace ?? input.namespace,
+          includeProfile: true,
+        });
+      } catch (e) {
+        if (this.transportMode === "mcp") throw e;
+      }
+    }
+
     return this.request<SearchResponse>("/v1/search", {
       method: "POST",
-      body: this.toWireSearch(input),
+      body: wire,
     });
   }
 
@@ -517,86 +534,11 @@ export class MemoryNodeClient {
     });
   }
 
-  private buildHeaders(adminToken?: string): HeadersInit {
-    const headers: Record<string, string> = {
-      "content-type": "application/json",
-    };
-    if (adminToken) {
-      headers["x-admin-token"] = adminToken;
-    } else if (this.apiKey) {
-      headers["authorization"] = `Bearer ${this.apiKey}`;
-    }
-    return headers;
-  }
-
   private async request<T>(
     path: string,
     init: { method: string; body?: unknown; adminToken?: string; signal?: AbortSignal },
   ): Promise<T> {
-    const isPublicHealth = path === "/healthz" || path.startsWith("/healthz?");
-    if (!init.adminToken && this.apiKey === undefined && !isPublicHealth) {
-      throw new MemoryNodeApiError("MISSING_API_KEY", "API key is required for this request. Pass apiKey in constructor or use adminToken for admin endpoints.", undefined);
-    }
-
-    const retryable = this.isRetryableRequest(init.method, path);
-    const maxAttempts = retryable ? this.maxRetries + 1 : 1;
-    let lastError: MemoryNodeApiError | null = null;
-
-    for (let attempt = 0; attempt < maxAttempts; attempt++) {
-      let response: Response;
-      try {
-        response = await fetch(new URL(path, this.baseUrl).toString(), {
-          method: init.method,
-          headers: this.buildHeaders(init.adminToken),
-          body: init.body ? JSON.stringify(init.body) : undefined,
-          signal: this.composeFetchSignal(init.signal),
-        });
-      } catch (err) {
-        const e = err as { name?: string; message?: string };
-        if (e?.name === "AbortError") {
-          throw new MemoryNodeApiError("REQUEST_ABORTED", e.message || "Request aborted", undefined);
-        }
-        lastError = new MemoryNodeApiError("NETWORK_ERROR", e?.message || "Network request failed", undefined);
-        if (attempt < maxAttempts - 1) {
-          await this.waitBeforeRetry(attempt);
-          continue;
-        }
-        throw lastError;
-      }
-
-      if (!response.ok) {
-        const apiErr = await this.toApiError(response);
-        lastError = apiErr;
-        if (attempt < maxAttempts - 1 && this.isRetryableStatus(response.status)) {
-          await this.waitBeforeRetry(attempt);
-          continue;
-        }
-        throw apiErr;
-      }
-
-      if (response.status === 204) {
-        return undefined as T;
-      }
-
-      return (await response.json()) as T;
-    }
-    throw lastError ?? new MemoryNodeApiError("HTTP_ERROR", "Request failed", undefined);
-  }
-
-  private async toApiError(response: Response): Promise<MemoryNodeApiError> {
-    let body: { error?: { code?: string; message?: string } } = {};
-    try {
-      body = (await response.json()) as typeof body;
-    } catch {
-      // non-JSON or empty body
-    }
-
-    const err = body?.error;
-    const code = typeof err?.code === "string" ? err.code : "HTTP_ERROR";
-    const message = typeof err?.message === "string" ? err.message : response.statusText;
-    const status = response.status;
-
-    return new MemoryNodeApiError(code, message, status);
+    return this.rest.request<T>(path, init);
   }
 
   private normalizeOwnerType(value: OwnerType | "agent" | undefined): OwnerType | undefined {

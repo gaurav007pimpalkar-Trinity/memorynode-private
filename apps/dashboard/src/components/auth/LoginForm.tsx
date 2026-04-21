@@ -71,16 +71,16 @@ export function LoginForm({
   if (magicSent) {
     return (
       <div className="w-full max-w-md">
-        <h2 className="mt-0 text-xl font-semibold text-gray-900">Check your email</h2>
-        <p className="mt-2 text-sm leading-relaxed text-gray-600">We sent a secure login link to {email}</p>
-        <p className="mt-2 text-sm leading-relaxed text-gray-500">Open it to continue</p>
-        <div className="mt-2 min-h-[1.25rem]">
+        <h2 className="mt-0 text-xl font-semibold tracking-tight text-gray-950">Check your email</h2>
+        <p className="mt-1.5 text-sm leading-relaxed text-gray-600">We sent a secure login link to {email}</p>
+        <p className="mt-1 text-sm leading-relaxed text-gray-500">Open it to continue</p>
+        <div className="mt-1.5 min-h-[1.25rem]">
           {errorMessage ? <p className="text-sm text-red-500">{errorMessage}</p> : null}
         </div>
-        <div className="mt-6 flex flex-col gap-3">
+        <div className="mt-5 flex flex-col gap-2.5">
           <button
             type="button"
-            className="flex w-full cursor-pointer items-center justify-center gap-2 rounded-xl bg-indigo-600 px-4 py-3 font-medium text-white shadow-sm transition-all duration-200 hover:scale-[1.01] hover:bg-indigo-700 hover:shadow-md active:scale-[0.98] disabled:cursor-not-allowed disabled:opacity-50 disabled:hover:scale-100"
+            className="flex w-full cursor-pointer items-center justify-center gap-2 rounded-2xl bg-indigo-600 px-4 py-[0.7rem] font-medium text-white shadow-[0_1px_0_rgba(255,255,255,0.1)_inset,0_10px_28px_-4px_rgba(79,70,229,0.55)] transition-all duration-200 hover:scale-[1.01] hover:bg-indigo-700 hover:brightness-[1.03] hover:shadow-[0_1px_0_rgba(255,255,255,0.12)_inset,0_14px_36px_-6px_rgba(79,70,229,0.6)] active:scale-[0.98] disabled:cursor-not-allowed disabled:opacity-50 disabled:hover:scale-100"
             onClick={() => void onMagic()}
             disabled={busy}
           >
@@ -108,9 +108,9 @@ export function LoginForm({
 
   return (
     <div className="w-full max-w-md">
-      <h2 className="mt-0 text-2xl font-semibold text-gray-900">MemoryNode</h2>
-      <p className="mt-1 text-sm text-gray-600">Welcome back</p>
-      <p className="mt-2 text-sm text-gray-500">Don’t have an account? Create one</p>
+      <h2 className="mt-0 text-2xl font-semibold tracking-tight text-gray-950">MemoryNode</h2>
+      <p className="mt-0.5 text-sm font-medium text-gray-700">Welcome back</p>
+      <p className="mt-1 text-sm text-gray-500">Don’t have an account? Create one</p>
 
       <label className="sr-only" htmlFor="console-login-email">
         Email
@@ -122,15 +122,15 @@ export function LoginForm({
         value={email}
         onChange={(e) => onEmailChange(e.target.value)}
         placeholder="you@company.com"
-        className="mt-6 w-full rounded-xl border border-gray-300 px-4 py-3 text-gray-900 placeholder:text-gray-400 transition-all duration-200 focus:border-indigo-500 focus:outline-none focus:ring-2 focus:ring-indigo-200"
+        className="mt-4 w-full rounded-2xl border border-gray-300 bg-white px-4 py-[0.7rem] text-base text-gray-900 shadow-sm placeholder:text-gray-400 transition-[border-color,box-shadow,transform] duration-200 focus:border-indigo-500 focus:outline-none focus:ring-2 focus:ring-indigo-500/20 focus:shadow-[0_0_0_3px_rgba(99,102,241,0.14)]"
       />
-      <div className="mt-2 min-h-[1.25rem]">
+      <div className="mt-1.5 min-h-[1.25rem]">
         {errorMessage ? <p className="text-sm text-red-500">{errorMessage}</p> : null}
       </div>
 
       <button
         type="button"
-        className="mt-4 flex w-full cursor-pointer items-center justify-center gap-2 rounded-xl bg-indigo-600 py-3 font-medium text-white shadow-sm transition-all duration-200 hover:scale-[1.01] hover:bg-indigo-700 hover:shadow-md active:scale-[0.98] disabled:cursor-not-allowed disabled:opacity-50 disabled:hover:scale-100"
+        className="mt-3 flex w-full cursor-pointer items-center justify-center gap-2 rounded-2xl bg-indigo-600 py-[0.7rem] font-medium text-white shadow-[0_1px_0_rgba(255,255,255,0.1)_inset,0_10px_28px_-4px_rgba(79,70,229,0.55)] transition-all duration-200 hover:scale-[1.01] hover:bg-indigo-700 hover:brightness-[1.03] hover:shadow-[0_1px_0_rgba(255,255,255,0.12)_inset,0_14px_36px_-6px_rgba(79,70,229,0.6)] active:scale-[0.98] disabled:cursor-not-allowed disabled:opacity-50 disabled:hover:scale-100"
         onClick={() => void onMagic()}
         disabled={!email || busy}
       >
@@ -144,15 +144,15 @@ export function LoginForm({
         )}
       </button>
 
-      <div className="mt-6 flex items-center">
+      <div className="mt-4 flex items-center">
         <div className="h-px flex-1 bg-gray-200" />
-        <span className="px-3 text-sm leading-none text-gray-400">or</span>
+        <span className="px-3 text-xs font-medium uppercase tracking-wide text-gray-400">or</span>
         <div className="h-px flex-1 bg-gray-200" />
       </div>
 
       <button
         type="button"
-        className="mt-3 flex w-full cursor-pointer items-center justify-center gap-2.5 rounded-xl border border-gray-300 py-3 text-sm text-gray-800 transition-all duration-150 hover:scale-[1.01] hover:bg-gray-50 hover:shadow-sm active:scale-[0.98] disabled:cursor-not-allowed disabled:opacity-50 disabled:hover:scale-100"
+        className="mt-2.5 flex w-full cursor-pointer items-center justify-center gap-2.5 rounded-2xl border border-gray-300 bg-white py-[0.65rem] text-sm text-gray-800 shadow-sm transition-all duration-200 hover:scale-[1.01] hover:border-gray-400/90 hover:bg-gray-50 hover:shadow-md active:scale-[0.98] disabled:cursor-not-allowed disabled:opacity-50 disabled:hover:scale-100"
         onClick={() => void onGoogle()}
         disabled={busy}
       >
@@ -161,7 +161,7 @@ export function LoginForm({
       </button>
       <button
         type="button"
-        className="mt-3 flex w-full cursor-pointer items-center justify-center gap-2.5 rounded-xl border border-gray-300 py-3 text-sm text-gray-800 transition-all duration-150 hover:scale-[1.01] hover:bg-gray-50 hover:shadow-sm active:scale-[0.98] disabled:cursor-not-allowed disabled:opacity-50 disabled:hover:scale-100"
+        className="mt-2 flex w-full cursor-pointer items-center justify-center gap-2.5 rounded-2xl border border-gray-300 bg-white py-[0.65rem] text-sm text-gray-800 shadow-sm transition-all duration-200 hover:scale-[1.01] hover:border-gray-400/90 hover:bg-gray-50 hover:shadow-md active:scale-[0.98] disabled:cursor-not-allowed disabled:opacity-50 disabled:hover:scale-100"
         onClick={() => void onGithub()}
         disabled={busy}
       >
@@ -169,7 +169,7 @@ export function LoginForm({
         {busy ? "Opening GitHub..." : "Continue with GitHub"}
       </button>
 
-      <p className="mt-6 text-center text-xs leading-relaxed text-gray-400">
+      <p className="mt-5 text-center text-xs leading-relaxed text-gray-400">
         By continuing, you agree to{" "}
         <a className="cursor-pointer text-gray-500 underline decoration-gray-300 underline-offset-2 transition-colors hover:text-gray-700" href="https://memorynode.ai/terms" target="_blank" rel="noopener noreferrer">
           Terms

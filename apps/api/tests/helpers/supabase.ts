@@ -13,6 +13,8 @@ export interface WorkspaceRow {
   id: string;
   plan: "free" | "pro" | "team";
   plan_status: "free" | "trialing" | "active" | "past_due" | "canceled";
+  trial?: boolean;
+  trial_expires_at?: string | null;
   current_period_end: string | null;
   cancel_at_period_end: boolean;
   billing_provider: string;
@@ -65,6 +67,8 @@ export function makeSimpleSupabase(options?: MockSupabaseOptions) {
     payu_last_status: options?.workspace?.payu_last_status ?? null,
     payu_last_event_id: options?.workspace?.payu_last_event_id ?? null,
     payu_last_event_created: options?.workspace?.payu_last_event_created ?? null,
+    trial: options?.workspace?.trial ?? false,
+    trial_expires_at: options?.workspace?.trial_expires_at ?? null,
   };
 
   const usage: UsageRow = options?.usage ?? { writes: 0, reads: 0, embeds: 0 };
@@ -93,7 +97,12 @@ export function makeSimpleSupabase(options?: MockSupabaseOptions) {
             data: {
               id: "k1",
               workspace_id: workspace.id,
-              workspaces: { plan: workspace.plan, plan_status: workspace.plan_status },
+              workspaces: {
+                plan: workspace.plan,
+                plan_status: workspace.plan_status,
+                trial: workspace.trial ?? false,
+                trial_expires_at: workspace.trial_expires_at ?? null,
+              },
             },
             error: null,
           }),
@@ -178,6 +187,8 @@ export function makeSimpleSupabase(options?: MockSupabaseOptions) {
             key_created_at: new Date().toISOString(),
             plan: workspace.plan,
             plan_status: workspace.plan_status,
+            trial: workspace.trial ?? false,
+            trial_expires_at: workspace.trial_expires_at ?? null,
           }],
           error: null,
         });

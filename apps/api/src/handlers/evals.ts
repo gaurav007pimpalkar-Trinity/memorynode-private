@@ -18,6 +18,7 @@ import {
 } from "../contracts/index.js";
 import { requireWorkspaceId } from "../supabaseScoped.js";
 import type { QuotaResolutionLike } from "./memories.js";
+import { maybeRespondTrialExpiredWrite } from "../trialWrites.js";
 
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 
@@ -221,6 +222,8 @@ export function createEvalHandlers(
       const d = (deps ?? defaultDeps) as EvalHandlerDeps;
       const gate = await authAndRate(request, env, supabase, auditCtx, d);
       if (!gate.ok) return gate.response;
+      const trialResp = maybeRespondTrialExpiredWrite(gate.auth, env, d.jsonResponse, gate.headers);
+      if (trialResp) return trialResp;
       const parseResult = await parseWithSchema(EvalSetCreateSchema, request);
       if (!parseResult.ok) {
         return d.jsonResponse({ error: { code: "BAD_REQUEST", message: parseResult.error } }, 400, gate.headers);
@@ -259,6 +262,8 @@ export function createEvalHandlers(
       const d = (deps ?? defaultDeps) as EvalHandlerDeps;
       const gate = await authAndRate(request, env, supabase, auditCtx, d);
       if (!gate.ok) return gate.response;
+      const trialResp = maybeRespondTrialExpiredWrite(gate.auth, env, d.jsonResponse, gate.headers);
+      if (trialResp) return trialResp;
       const exists = await assertEvalSetOwnedByWorkspace(supabase, evalSetId, gate.auth.workspaceId);
       if (!exists) return d.jsonResponse({ error: { code: "NOT_FOUND", message: "Eval set not found" } }, 404, gate.headers);
       const { error } = await supabase
@@ -274,6 +279,8 @@ export function createEvalHandlers(
       const d = (deps ?? defaultDeps) as EvalHandlerDeps;
       const gate = await authAndRate(request, env, supabase, auditCtx, d);
       if (!gate.ok) return gate.response;
+      const trialResp = maybeRespondTrialExpiredWrite(gate.auth, env, d.jsonResponse, gate.headers);
+      if (trialResp) return trialResp;
       const parseResult = await parseWithSchema(EvalItemCreateSchema, request);
       if (!parseResult.ok) {
         return d.jsonResponse({ error: { code: "BAD_REQUEST", message: parseResult.error } }, 400, gate.headers);
@@ -318,6 +325,8 @@ export function createEvalHandlers(
       const d = (deps ?? defaultDeps) as EvalHandlerDeps;
       const gate = await authAndRate(request, env, supabase, auditCtx, d);
       if (!gate.ok) return gate.response;
+      const trialResp = maybeRespondTrialExpiredWrite(gate.auth, env, d.jsonResponse, gate.headers);
+      if (trialResp) return trialResp;
       const { data: item, error: itemError } = await supabase
         .from("eval_items")
         .select("id, eval_set_id")

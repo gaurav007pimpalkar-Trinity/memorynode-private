@@ -1,6 +1,7 @@
 import { McpServer, ResourceTemplate } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import { z } from "zod";
+import { MIN_DELETE_CONFIDENCE, normalizedConfidenceFromFusionScore } from "@memorynodeai/mcp-core";
 import {
   MCP_POLICY_VERSION,
   McpPolicyEngine,
@@ -12,11 +13,20 @@ import {
   type PolicyScope,
 } from "@memorynodeai/shared";
 import { McpResponseCache } from "./cache.js";
+import { resolveStdioScope } from "./stdioScope.js";
 
 const MEMORYNODE_API_KEY = process.env.MEMORYNODE_API_KEY;
 const MEMORYNODE_BASE_URL = process.env.MEMORYNODE_BASE_URL;
-const MEMORYNODE_CONTAINER_TAG = process.env.MEMORYNODE_CONTAINER_TAG ?? process.env.MEMORYNODE_NAMESPACE ?? "default";
-const MCP_USER_ID = "default";
+
+/** Policy / identity display labels (stdio has no API key workspace id; override for multi-tenant agents). */
+const POLICY_WORKSPACE_ID = (process.env.MEMORYNODE_POLICY_WORKSPACE_ID ?? "stdio").trim() || "stdio";
+const POLICY_KEY_ID = (process.env.MEMORYNODE_POLICY_KEY_ID ?? "stdio").trim() || "stdio";
+const MCP_SESSION_ID = (process.env.MEMORYNODE_SESSION_ID ?? "stdio").trim() || "stdio";
+
+function scopedContainerTagForIdentity(): string | undefined {
+  const raw = (process.env.MEMORYNODE_SCOPED_CONTAINER_TAG ?? "").trim();
+  return raw.length > 0 ? raw : undefined;
+}
 
 if (!MEMORYNODE_API_KEY || typeof MEMORYNODE_API_KEY !== "string" || !MEMORYNODE_API_KEY.trim()) {
   console.error("MEMORYNODE_API_KEY is required. Set it in your environment or .env.");
@@ -33,6 +43,8 @@ const SEARCH_LIMIT_MIN = 1;
 const SEARCH_LIMIT_MAX = 10;
 const SEARCH_LIMIT_DEFAULT = 5;
 const INSERT_CONTENT_MAX = 10_000;
+/** Matches REST list default for profile resource parity. */
+const PROFILE_RESOURCE_PAGE_SIZE = 15;
 const METADATA_STRINGIFIED_MAX = 5 * 1024;
 const CONTEXT_BUDGET_CHARS = 2500;
 const policy = new McpPolicyEngine(undefined, {
@@ -73,6 +85,22 @@ const cache = new McpResponseCache({
   },
 });
 
+function getScopeForTool(containerTag?: string | null): PolicyScope {
+  const { user_id, namespace } = resolveStdioScope(containerTag);
+  return {
+    workspaceId: POLICY_WORKSPACE_ID,
+    keyId: POLICY_KEY_ID,
+    userId: user_id,
+    namespace,
+    sessionId: MCP_SESSION_ID,
+  };
+}
+
+function scopeCacheKey(containerTag?: string | null): string {
+  const { user_id, namespace } = resolveStdioScope(containerTag);
+  return `${POLICY_WORKSPACE_ID}:${user_id}:${namespace}`;
+}
+
 type RestFetchOptions = { method: string; body?: Record<string, unknown>; headers?: Record<string, string> };
 
 function mapRestStatusToMcpCode(status: number): string {
@@ -108,31 +136,21 @@ async function restFetch(path: string, init: RestFetchOptions): Promise<{ ok: bo
   return { ok: true, status: res.status, data };
 }
 
-function getScope(): PolicyScope {
-  return {
-    workspaceId: "stdio",
-    keyId: "stdio",
-    userId: MCP_USER_ID,
-    namespace: MEMORYNODE_CONTAINER_TAG,
-    sessionId: "stdio",
-  };
-}
-
-function scopeKey(): string {
-  return `stdio:${MCP_USER_ID}:${MEMORYNODE_CONTAINER_TAG}`;
-}
-
-function evaluate(actionId: McpActionId, args: {
-  queryText?: string;
-  contentText?: string;
-  topK?: number;
-  includeProfile?: boolean;
-  nonce?: string;
-  timestampMs?: number;
-}) {
+function evaluatePolicy(
+  actionId: McpActionId,
+  containerTag: string | null | undefined,
+  args: {
+    queryText?: string;
+    contentText?: string;
+    topK?: number;
+    includeProfile?: boolean;
+    nonce?: string;
+    timestampMs?: number;
+  },
+) {
   return policy.evaluate({
     actionId,
-    scope: getScope(),
+    scope: getScopeForTool(containerTag),
     nowMs: Date.now(),
     queryText: args.queryText,
     contentText: args.contentText,
@@ -143,13 +161,13 @@ function evaluate(actionId: McpActionId, args: {
   });
 }
 
-function denied(actionId: McpActionId, decision: ReturnType<typeof evaluate>) {
+function denied(actionId: McpActionId, decision: ReturnType<typeof evaluatePolicy>, scope: PolicyScope) {
   const d = policyDeniedError({
     code: decision.reasonCode ?? "rate_limit_exceeded",
     message: decision.message ?? "Request denied by policy.",
     retryAfterSec: decision.retryAfterSec,
     actionId,
-    scope: getScope(),
+    scope,
     details: {
       ...(typeof decision.estimatedTokens === "number" ? { estimated_tokens: decision.estimatedTokens } : {}),
       ...(decision.budget ? { budget: decision.budget.max_total_tokens } : {}),
@@ -208,10 +226,15 @@ function formatSearchResults(results: Array<{ text?: string; score?: number }>):
     .join("\n");
 }
 
-async function searchRows(query: string, topK: number): Promise<Array<{ memory_id: string; text: string; score: number }>> {
+async function searchRows(
+  query: string,
+  topK: number,
+  containerTag?: string | null,
+): Promise<Array<{ memory_id: string; text: string; score: number }>> {
+  const { user_id, namespace } = resolveStdioScope(containerTag);
   const out = await restFetch("/v1/search", {
     method: "POST",
-    body: { user_id: MCP_USER_ID, namespace: MEMORYNODE_CONTAINER_TAG, query: query.trim(), top_k: topK },
+    body: { user_id, namespace, query: query.trim(), top_k: topK },
   });
   if (!out.ok) throw new Error(JSON.stringify({ code: mapRestStatusToMcpCode(out.status), message: out.error ?? "Search failed" }));
   const rows = Array.isArray((out.data as { results?: unknown })?.results)
@@ -224,9 +247,10 @@ async function searchRows(query: string, topK: number): Promise<Array<{ memory_i
   }));
 }
 
-async function listRecent(limit: number): Promise<string[]> {
+async function listRecent(limit: number, containerTag?: string | null): Promise<string[]> {
+  const { user_id, namespace } = resolveStdioScope(containerTag);
   const out = await restFetch(
-    `/v1/memories?user_id=${encodeURIComponent(MCP_USER_ID)}&namespace=${encodeURIComponent(MEMORYNODE_CONTAINER_TAG)}&page=1&page_size=${Math.max(1, Math.min(20, limit))}`,
+    `/v1/memories?user_id=${encodeURIComponent(user_id)}&namespace=${encodeURIComponent(namespace)}&page=1&page_size=${Math.max(1, Math.min(20, limit))}`,
     { method: "GET" },
   );
   if (!out.ok) return [];
@@ -285,7 +309,9 @@ type ProfileEngineView = {
   confidence: number;
 };
 
-function buildProfileEngine(args: { recentTexts: string[]; historyTexts: string[] }): ProfileEngineView {
+function buildProfileEngine(
+  args: { recentTexts: string[]; historyTexts: string[]; namespace: string },
+): ProfileEngineView {
   const all = [...args.recentTexts, ...args.historyTexts].map((x) => x.trim()).filter((x) => x.length > 0);
   const pick = (matcher: RegExp, limit: number): string[] => {
     const out: string[] = [];
@@ -308,7 +334,7 @@ function buildProfileEngine(args: { recentTexts: string[]; historyTexts: string[
   const correctionCount = all.filter((row) => /\bactually|correction|update\b/i.test(row)).length;
   const filledBuckets = [preferences, projects, goals, constraints].filter((bucket) => bucket.length > 0).length;
   return {
-    identity: { workspace_id: "stdio", container_tag: MEMORYNODE_CONTAINER_TAG },
+    identity: { workspace_id: POLICY_WORKSPACE_ID, container_tag: args.namespace },
     preferences,
     projects,
     goals,
@@ -329,27 +355,33 @@ server.registerTool("recall", {
     query: z.string().min(1),
     top_k: z.number().int().min(SEARCH_LIMIT_MIN).max(SEARCH_LIMIT_MAX).optional().default(SEARCH_LIMIT_DEFAULT),
     includeProfile: z.boolean().optional().default(true),
+    containerTag: z.string().max(128).optional(),
   },
-}, async ({ query, top_k, includeProfile }) => {
+}, async ({ query, top_k, includeProfile, containerTag }) => {
   const execStart = Date.now();
-  const decision = evaluate("recall", { queryText: query, topK: top_k, includeProfile });
-  if (decision.status === "deny") return denied("recall", decision);
+  const scope = getScopeForTool(containerTag);
+  const decision = evaluatePolicy("recall", containerTag, { queryText: query, topK: top_k, includeProfile });
+  if (decision.status === "deny") return denied("recall", decision, scope);
   const effectiveTopK = decision.appliedTopK ?? top_k;
+  const sk = scopeCacheKey(containerTag);
   try {
     const key = cache.makeKey({
       tool: "recall",
-      scope: scopeKey(),
+      scope: sk,
       query: `${query}:${effectiveTopK}:${includeProfile ? 1 : 0}`,
       policyVersion: MCP_POLICY_VERSION,
     });
-    const result = await cache.getOrCompute(key, { tool: "recall", scope: scopeKey() }, async () => {
-      const rows = await searchRows(query, effectiveTopK);
-      const recent = includeProfile && decision.degradeLevel !== "disable_profile" ? await listRecent(5) : [];
+    const result = await cache.getOrCompute(key, { tool: "recall", scope: sk }, async () => {
+      const rows = await searchRows(query, effectiveTopK, containerTag);
+      const recent =
+        includeProfile && decision.degradeLevel !== "disable_profile" ? await listRecent(5, containerTag) : [];
       const text = `${recent.length > 0 ? `## Profile (recent)\n${recent.map((x, i) => `${i + 1}. ${x}`).join("\n")}\n\n` : ""}## Recall\n${formatSearchResults(rows)}`;
       const confidence = rows.length > 0 ? Math.min(1, Math.max(0, (rows[0]?.score ?? 0) / 0.08)) : 0;
+      const { namespace } = resolveStdioScope(containerTag);
       const profileEngine = buildProfileEngine({
         recentTexts: recent,
         historyTexts: rows.map((r) => r.text),
+        namespace,
       });
       return {
       content: [{ type: "text" as const, text }],
@@ -375,10 +407,10 @@ server.registerTool("recall", {
       decision: decision.status,
       reason: decision.reasonCode,
       latencyMs: Date.now() - execStart,
-      sessionId: getScope().sessionId,
+      sessionId: scope.sessionId,
       scores: { similarity: decision.loopConfidence, novelty: decision.noveltyScore },
     });
-    policy.complete({ actionId: "recall", scope: getScope(), nowMs: Date.now(), queryText: query, topK: effectiveTopK });
+    policy.complete({ actionId: "recall", scope, nowMs: Date.now(), queryText: query, topK: effectiveTopK });
   }
 });
 
@@ -388,22 +420,28 @@ server.registerTool("context", {
     query: z.string().min(1).max(2000),
     top_k: z.number().int().min(SEARCH_LIMIT_MIN).max(SEARCH_LIMIT_MAX).optional().default(SEARCH_LIMIT_DEFAULT),
     profile: z.enum(["balanced", "precision", "recall"]).optional().default("balanced"),
+    containerTag: z.string().max(128).optional(),
   },
-}, async ({ query, top_k, profile }) => {
+}, async ({ query, top_k, profile, containerTag }) => {
   const execStart = Date.now();
-  const decision = evaluate("context", { queryText: query, topK: top_k });
-  if (decision.status === "deny") return denied("context", decision);
+  const scope = getScopeForTool(containerTag);
+  const decision = evaluatePolicy("context", containerTag, { queryText: query, topK: top_k });
+  if (decision.status === "deny") return denied("context", decision, scope);
   const effectiveTopK = decision.appliedTopK ?? top_k;
+  const sk = scopeCacheKey(containerTag);
   try {
     const key = cache.makeKey({
       tool: "context",
-      scope: scopeKey(),
+      scope: sk,
       query: `${query}:${effectiveTopK}:${profile}`,
       policyVersion: MCP_POLICY_VERSION,
     });
-    const result = await cache.getOrCompute(key, { tool: "context", scope: scopeKey() }, async () => {
-      const rows = await searchRows(query, effectiveTopK);
-      const recent = profile !== "precision" && decision.degradeLevel !== "disable_profile" ? await listRecent(8) : [];
+    const result = await cache.getOrCompute(key, { tool: "context", scope: sk }, async () => {
+      const rows = await searchRows(query, effectiveTopK, containerTag);
+      const recent =
+        profile !== "precision" && decision.degradeLevel !== "disable_profile"
+          ? await listRecent(8, containerTag)
+          : [];
       const context = buildContext(query, rows, recent);
       const topScore = rows[0]?.score ?? 0;
       const secondScore = rows[1]?.score ?? 0;
@@ -426,9 +464,11 @@ server.registerTool("context", {
         "Guidance:",
         ...context.guidance.map((x) => `- ${x}`),
       ].join("\n");
+      const { namespace } = resolveStdioScope(containerTag);
       const profileEngine = buildProfileEngine({
         recentTexts: context.profileFacts,
         historyTexts: context.relevantHistory.map((row) => row.text),
+        namespace,
       });
       return {
       content: [{ type: "text" as const, text }],
@@ -465,65 +505,230 @@ server.registerTool("context", {
       decision: decision.status,
       reason: decision.reasonCode,
       latencyMs: Date.now() - execStart,
-      sessionId: getScope().sessionId,
+      sessionId: scope.sessionId,
       scores: { similarity: decision.loopConfidence, novelty: decision.noveltyScore },
     });
-    policy.complete({ actionId: "context", scope: getScope(), nowMs: Date.now(), queryText: query, topK: effectiveTopK });
+    policy.complete({ actionId: "context", scope, nowMs: Date.now(), queryText: query, topK: effectiveTopK });
   }
 });
 
 server.registerTool("memory", {
-  description: "Save important user information for future conversations.",
+  description: "Save or forget persistent memory for this workspace (MemoryNode).",
   inputSchema: {
-    action: z.enum(["save"]).optional().default("save"),
-    content: z.string().min(1).max(INSERT_CONTENT_MAX),
+    action: z.enum(["save", "forget", "confirm_forget"]).optional(),
+    content: z.string().min(1).max(INSERT_CONTENT_MAX).optional(),
     metadata: z.record(z.unknown()).optional(),
-    nonce: z.string().min(8),
-    timestampMs: z.number().int(),
+    containerTag: z.string().max(128).optional(),
+    confirm: z
+      .object({
+        token: z.string().optional(),
+        memory_id: z.string().optional(),
+      })
+      .optional(),
+    nonce: z.string().min(8).optional(),
+    timestampMs: z.number().int().optional(),
   },
-}, async ({ content, metadata, nonce, timestampMs }) => {
+}, async ({ content, action, containerTag, confirm, nonce, timestampMs, metadata }) => {
   const execStart = Date.now();
-  const decision = evaluate("memory.save", { contentText: content, nonce, timestampMs });
-  if (decision.status === "deny") return denied("memory.save", decision);
+  const act = action ?? "save";
+  const scope = getScopeForTool(containerTag);
+  const actionId: McpActionId =
+    act === "forget" ? "memory.forget" : act === "confirm_forget" ? "memory.confirm_forget" : "memory.save";
+  const decision = evaluatePolicy(actionId, containerTag, {
+    contentText: content,
+    nonce,
+    timestampMs,
+  });
+  if (decision.status === "deny") return denied(actionId, decision, scope);
+  const mustComplete = decision.status === "allow" || decision.status === "degrade";
+
   try {
-    if (metadata !== undefined) {
-      const str = JSON.stringify(metadata);
-      if (str.length > METADATA_STRINGIFIED_MAX) {
-        throw new Error(JSON.stringify({ code: "invalid_request", message: "metadata stringified exceeds 5KB" }));
+    if (act === "confirm_forget") {
+      const token = confirm?.token ?? "";
+      const memoryIdHint = confirm?.memory_id ?? "";
+      if (!token && !memoryIdHint) {
+        return toolError("confirmation_required", "confirm_forget requires token or memory_id.");
       }
+      if (token) {
+        const tokenDecision = policy.consumeConfirmationToken(
+          {
+            actionId,
+            scope,
+            nowMs: Date.now(),
+          },
+          token,
+          memoryIdHint || undefined,
+        );
+        if (tokenDecision.status === "deny") return denied(actionId, tokenDecision, scope);
+      }
+      const targetId = memoryIdHint || confirm?.memory_id;
+      if (!targetId) {
+        return toolError("confirmation_required", "No memory_id available for confirm_forget.");
+      }
+      const del = await restFetch(`/v1/memories/${encodeURIComponent(targetId)}`, { method: "DELETE" });
+      if (!del.ok) {
+        return toolError(
+          "confirmation_required",
+          `Delete failed: ${del.error ?? "unknown"}`,
+        );
+      }
+      cache.invalidateScope(scopeCacheKey(containerTag));
+      return {
+        content: [{ type: "text" as const, text: `Forgot memory ${targetId}.` }],
+        structuredContent: {
+          status: "forgot",
+          decision: { code: "OK", message: "confirmed_delete" },
+          data: { memory_id: targetId, policy_version: MCP_POLICY_VERSION },
+        },
+      };
     }
-    const out = await restFetch("/v1/memories", {
+
+    if (act === "save") {
+      if (!content || !content.trim()) {
+        return toolError("weak_signal", "content is required for save action.");
+      }
+      if (metadata !== undefined) {
+        const str = JSON.stringify(metadata);
+        if (str.length > METADATA_STRINGIFIED_MAX) {
+          return toolError("invalid_request", "metadata stringified exceeds 5KB");
+        }
+      }
+      const { user_id, namespace } = resolveStdioScope(containerTag);
+      const out = await restFetch("/v1/memories", {
+        method: "POST",
+        body: {
+          user_id,
+          namespace,
+          text: content,
+          ...(metadata && Object.keys(metadata).length > 0 ? { metadata } : {}),
+        },
+      });
+      if (!out.ok) {
+        return toolError("weak_signal", out.error ?? "Insert failed");
+      }
+      cache.invalidateScope(scopeCacheKey(containerTag));
+      return {
+        content: [{ type: "text" as const, text: "Saved to MemoryNode." }],
+        structuredContent: {
+          status: "saved",
+          decision: { code: "OK", message: "saved" },
+          data: { deduped: false, policy_version: MCP_POLICY_VERSION },
+        },
+      };
+    }
+
+    if (!content || !content.trim()) {
+      return toolError("weak_signal", "content is required for forget action.");
+    }
+    const { user_id, namespace } = resolveStdioScope(containerTag);
+    const search = await restFetch("/v1/search", {
       method: "POST",
       body: {
-        user_id: MCP_USER_ID,
-        namespace: MEMORYNODE_CONTAINER_TAG,
-        text: content,
-        ...(metadata && Object.keys(metadata).length > 0 ? { metadata } : {}),
+        user_id,
+        namespace,
+        query: content.slice(0, 2000),
+        top_k: 3,
       },
     });
-    if (!out.ok) throw new Error(JSON.stringify({ code: mapRestStatusToMcpCode(out.status), message: out.error ?? "Insert failed" }));
-    cache.invalidateScope(scopeKey());
+    if (!search.ok) {
+      return toolError("cost_exceeded", "Search failed while trying to forget.");
+    }
+    const results = Array.isArray((search.data as { results?: unknown })?.results)
+      ? (search.data as {
+          results: Array<{ memory_id?: string; id?: string; score?: number }>;
+        }).results
+      : [];
+    const top = results[0];
+    const memoryId =
+      typeof top?.memory_id === "string"
+        ? top.memory_id
+        : typeof (top as { id?: string } | undefined)?.id === "string"
+          ? (top as { id: string }).id
+          : null;
+    const rawScore = typeof top?.score === "number" ? top.score : NaN;
+    const confidence = normalizedConfidenceFromFusionScore(rawScore);
+
+    if (!memoryId) {
+      return {
+        content: [{ type: "text" as const, text: "No match found." }],
+        structuredContent: {
+          status: "rejected",
+          decision: { code: "NO_MATCH", message: "No match found." },
+          data: { policy_version: MCP_POLICY_VERSION },
+        },
+      };
+    }
+    const second = results[1];
+    const secondScore = typeof second?.score === "number" ? second.score : 0;
+    const scoreGap = rawScore - secondScore;
+    if (confidence < MIN_DELETE_CONFIDENCE || scoreGap < 0.12) {
+      const token = policy.issueConfirmationToken(
+        {
+          actionId,
+          scope,
+          nowMs: Date.now(),
+        },
+        memoryId,
+      );
+      const candidates = results.slice(0, 3).map((row) => ({
+        memory_id:
+          typeof row.memory_id === "string"
+            ? row.memory_id
+            : typeof row.id === "string"
+              ? row.id
+              : "",
+        score: typeof row.score === "number" ? row.score : 0,
+      }));
+      return {
+        content: [{ type: "text" as const, text: "Ambiguous forget request. Confirmation required." }],
+        structuredContent: {
+          status: "needs_confirmation",
+          decision: { code: "NEEDS_CONFIRMATION", message: "Confirmation required before deleting memory." },
+          data: {
+            confirmation_token: token.token,
+            expires_at: new Date(token.expiresAt).toISOString(),
+            candidates,
+            policy_version: MCP_POLICY_VERSION,
+          },
+        },
+      };
+    }
+
+    const del = await restFetch(`/v1/memories/${encodeURIComponent(memoryId)}`, { method: "DELETE" });
+    if (!del.ok) {
+      return toolError("confirmation_required", `Delete failed: ${del.error ?? "unknown"}`);
+    }
+    cache.invalidateScope(scopeCacheKey(containerTag));
     return {
-      content: [{ type: "text" as const, text: "Memory stored successfully." }],
+      content: [{ type: "text" as const, text: `Forgot memory ${memoryId}.` }],
       structuredContent: {
-        status: "saved",
-        decision: { code: "OK", message: "saved" },
-        data: { deduped: false, policy_version: MCP_POLICY_VERSION },
+        status: "forgot",
+        decision: { code: "OK", message: "deleted" },
+        data: { memory_id: memoryId, policy_version: MCP_POLICY_VERSION },
       },
     };
   } catch (err) {
-    const msg = parseErrorMessage(err, "Memory save failed");
+    const msg = parseErrorMessage(err, "Memory operation failed");
     return toolError("weak_signal", msg);
   } finally {
     policy.recordExecution({
-      actionId: "memory.save",
+      actionId,
       decision: decision.status,
       reason: decision.reasonCode,
       latencyMs: Date.now() - execStart,
-      sessionId: getScope().sessionId,
+      sessionId: scope.sessionId,
       scores: { similarity: decision.loopConfidence, novelty: decision.noveltyScore },
     });
-    policy.complete({ actionId: "memory.save", scope: getScope(), nowMs: Date.now(), contentText: content, nonce, timestampMs });
+    if (mustComplete) {
+      policy.complete({
+        actionId,
+        scope,
+        nowMs: Date.now(),
+        contentText: content,
+        nonce,
+        timestampMs,
+      });
+    }
   }
 });
 
@@ -538,21 +743,26 @@ server.registerTool("whoAmI", {
     client: z.string(),
     policy_version: z.string(),
   },
-}, async () => ({
-  content: [],
-  structuredContent: {
-    status: "ok",
-    identity: {
-      workspace_id: "stdio",
-      user_id: MCP_USER_ID,
-      namespace: MEMORYNODE_CONTAINER_TAG,
-      container_tag: MEMORYNODE_CONTAINER_TAG,
-      session_id: "stdio",
-      client: "memorynode-mcp-stdio",
-      policy_version: MCP_POLICY_VERSION,
+}, async () => {
+  const { user_id, namespace } = resolveStdioScope(null);
+  const scopedTag = scopedContainerTagForIdentity();
+  return {
+    content: [],
+    structuredContent: {
+      status: "ok",
+      identity: {
+        workspace_id: POLICY_WORKSPACE_ID,
+        user_id,
+        namespace,
+        container_tag: namespace,
+        session_id: MCP_SESSION_ID,
+        client: "memorynode-mcp-stdio",
+        policy_version: MCP_POLICY_VERSION,
+        ...(scopedTag ? { scoped_container_tag: scopedTag } : {}),
+      },
     },
-  },
-}));
+  };
+});
 
 // Alias compatibility
 server.registerTool("memory_search", {
@@ -612,20 +822,30 @@ server.registerTool("memory_insert", {
 }, async ({ content, metadata, nonce, timestampMs }) => {
   const alias = aliasBehavior("memory_insert", "memory");
   if (alias.blocked) return alias.response;
-  const decision = evaluate("memory.save", { contentText: content, nonce, timestampMs });
-  if (decision.status === "deny") return denied("memory.save", decision);
+  const scope = getScopeForTool(undefined);
+  const decision = evaluatePolicy("memory.save", undefined, { contentText: content, nonce, timestampMs });
+  if (decision.status === "deny") return denied("memory.save", decision, scope);
   try {
+    if (metadata !== undefined) {
+      const str = JSON.stringify(metadata);
+      if (str.length > METADATA_STRINGIFIED_MAX) {
+        return toolError("invalid_request", "metadata stringified exceeds 5KB");
+      }
+    }
+    const { user_id, namespace } = resolveStdioScope(undefined);
     const out = await restFetch("/v1/memories", {
       method: "POST",
       body: {
-        user_id: MCP_USER_ID,
-        namespace: MEMORYNODE_CONTAINER_TAG,
+        user_id,
+        namespace,
         text: content,
         ...(metadata && Object.keys(metadata).length > 0 ? { metadata } : {}),
       },
     });
-    if (!out.ok) throw new Error(JSON.stringify({ code: mapRestStatusToMcpCode(out.status), message: out.error ?? "Insert failed" }));
-    cache.invalidateScope(scopeKey());
+    if (!out.ok) {
+      return toolError("weak_signal", out.error ?? "Insert failed");
+    }
+    cache.invalidateScope(scopeCacheKey(undefined));
     return {
       content: [{ type: "text" as const, text: "Memory stored successfully." }],
       structuredContent: {
@@ -639,7 +859,7 @@ server.registerTool("memory_insert", {
     const msg = parseErrorMessage(err, "Insert failed");
     return toolError("weak_signal", msg);
   } finally {
-    policy.complete({ actionId: "memory.save", scope: getScope(), nowMs: Date.now(), contentText: content, nonce, timestampMs });
+    policy.complete({ actionId: "memory.save", scope, nowMs: Date.now(), contentText: content, nonce, timestampMs });
   }
 });
 
@@ -650,9 +870,57 @@ server.registerResource(
   async (uri) => {
     const q = uri.searchParams.get("q");
     if (!q || !q.trim()) throw new Error(JSON.stringify({ code: "invalid_request", message: "Missing required query param: q" }));
-    const rows = await searchRows(q, SEARCH_LIMIT_DEFAULT);
+    const rows = await searchRows(q, SEARCH_LIMIT_DEFAULT, undefined);
     const markdown = rows.map((r, i) => `## Result ${i + 1}\n**Score:** ${r.score.toFixed(2)}\n\n${r.text}\n`).join("\n");
     return { contents: [{ uri: uri.toString(), mimeType: "text/markdown", text: markdown }] };
+  },
+);
+
+server.registerResource(
+  "mn-profile",
+  "memorynode://profile",
+  {
+    description: "Recent memories as a lightweight profile view.",
+  },
+  async () => {
+    const { user_id, namespace } = resolveStdioScope(null);
+    const list = await restFetch(
+      `/v1/memories?user_id=${encodeURIComponent(user_id)}&namespace=${encodeURIComponent(namespace)}&page=1&page_size=${PROFILE_RESOURCE_PAGE_SIZE}`,
+      { method: "GET" },
+    );
+    const results = Array.isArray((list.data as { results?: { text?: string; created_at?: string }[] })?.results)
+      ? (list.data as { results: { text?: string; created_at?: string }[] }).results
+      : [];
+    const md =
+      results.length === 0
+        ? "_No memories yet for this scope._"
+        : results.map((r, i) => `### ${i + 1}\n${typeof r.text === "string" ? r.text : ""}`).join("\n\n");
+    return {
+      contents: [{ uri: "memorynode://profile", mimeType: "text/markdown", text: md }],
+    };
+  },
+);
+
+server.registerResource(
+  "mn-projects",
+  "memorynode://projects",
+  {
+    description: "How project scoping maps to MemoryNode (stdio defaults from environment).",
+  },
+  async () => {
+    const text = [
+      "## MemoryNode project scope",
+      "",
+      "- Use environment variable **`MEMORYNODE_CONTAINER_TAG`** (or **`MEMORYNODE_NAMESPACE`**) as the default namespace.",
+      `- **MEMORYNODE_USER_ID** sets the user slice (default **default**).`,
+      "- Per-call **`containerTag`** on tools overrides the namespace when provided.",
+      `- **MEMORYNODE_SCOPED_CONTAINER_TAG** pins the namespace (hosted **x-mn-container-tag** style) when set.`,
+      `- Stdio policy labels: workspace **${POLICY_WORKSPACE_ID}** · session **${MCP_SESSION_ID}**.`,
+      `- Policy contract version: **${MCP_POLICY_VERSION}**.`,
+    ].join("\n");
+    return {
+      contents: [{ uri: "memorynode://projects", mimeType: "text/markdown", text }],
+    };
   },
 );
 

@@ -40,6 +40,7 @@ import { checkGlobalCostGuard, AIBudgetExceededError } from "../costGuard.js";
 import { decideExtraction, type ExtractionSkipReason } from "../memories/extractionPolicy.js";
 import { logger } from "../logger.js";
 import { enforceIsolation } from "../middleware/isolation.js";
+import { maybeRespondTrialExpiredWrite } from "../trialWrites.js";
 import {
   computeIntelligenceScore,
   deterministicExtractFallback,
@@ -523,6 +524,8 @@ export function createMemoryHandlers(
       const auth = await authenticate(request, env, supabase, auditCtx);
       auditCtx.workspaceId = auth.workspaceId;
       requireWorkspaceId(auth.workspaceId);
+      const trialEarly = maybeRespondTrialExpiredWrite(auth, env, jsonResponse);
+      if (trialEarly) return trialEarly;
       const quota = await d.resolveQuotaForWorkspace(auth, supabase);
       if (quota.blocked) {
         return jsonResponse(
@@ -1675,6 +1678,8 @@ export function createMemoryHandlers(
       const d = (deps ?? defaultDeps) as MemoryHandlerDeps;
       const { jsonResponse } = d;
       const auth = await authenticate(request, env, supabase, auditCtx);
+      const trialEarly = maybeRespondTrialExpiredWrite(auth, env, jsonResponse);
+      if (trialEarly) return trialEarly;
       const quota = await d.resolveQuotaForWorkspace(auth, supabase);
       if (quota.blocked) {
         return jsonResponse(
@@ -1728,6 +1733,8 @@ export function createMemoryHandlers(
       const auth = await authenticate(request, env, supabase, auditCtx);
       auditCtx.workspaceId = auth.workspaceId;
       requireWorkspaceId(auth.workspaceId);
+      const trialEarly = maybeRespondTrialExpiredWrite(auth, env, jsonResponse);
+      if (trialEarly) return trialEarly;
       const quota = await d.resolveQuotaForWorkspace(auth, supabase);
       if (quota.blocked) {
         return jsonResponse(

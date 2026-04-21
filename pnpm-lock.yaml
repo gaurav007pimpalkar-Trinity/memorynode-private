@@ -53,6 +53,9 @@ importers:
       '@cfworker/json-schema':
         specifier: ^4.1.1
         version: 4.1.1
+      '@memorynodeai/mcp-core':
+        specifier: workspace:^
+        version: link:../../packages/mcp-core
       '@memorynodeai/shared':
         specifier: workspace:^
         version: link:../../packages/shared
@@ -115,8 +118,26 @@ importers:
 
   packages/cli: {}
 
+  packages/mcp-core:
+    dependencies:
+      '@memorynodeai/shared':
+        specifier: workspace:^
+        version: link:../shared
+      '@modelcontextprotocol/sdk':
+        specifier: ^1.27.1
+        version: 1.27.1(@cfworker/json-schema@4.1.1)(zod@3.25.76)
+      '@supabase/supabase-js':
+        specifier: ^2.45.2
+        version: 2.93.3
+      zod:
+        specifier: ^3.23.8
+        version: 3.25.76
+
   packages/mcp-server:
     dependencies:
+      '@memorynodeai/mcp-core':
+        specifier: workspace:*
+        version: link:../mcp-core
       '@memorynodeai/shared':
         specifier: workspace:*
         version: link:../shared
@@ -139,6 +160,9 @@ importers:
       '@memorynodeai/shared':
         specifier: workspace:^
         version: link:../shared
+      '@modelcontextprotocol/sdk':
+        specifier: ^1.27.1
+        version: 1.27.1(@cfworker/json-schema@4.1.1)(zod@3.25.76)
 
   packages/shared: {}
 

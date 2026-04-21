@@ -15,6 +15,7 @@ import { MemoryLinkCreateSchema, parseWithSchema } from "../contracts/index.js";
 import { requireWorkspaceId } from "../supabaseScoped.js";
 import type { MemoryHandlerDeps } from "./memories.js";
 import { enforceIsolation } from "../middleware/isolation.js";
+import { maybeRespondTrialExpiredWrite } from "../trialWrites.js";
 
 const MAX_OUTBOUND_LINKS = 20;
 
@@ -55,6 +56,8 @@ export function createMemoryLinkHandlers(defaultDeps: MemoryLinkHandlerDeps): {
       const { jsonResponse } = d;
       const auth = await authenticate(request, env, supabase, auditCtx);
       requireWorkspaceId(auth.workspaceId);
+      const trialEarly = maybeRespondTrialExpiredWrite(auth, env, jsonResponse);
+      if (trialEarly) return trialEarly;
       const quota = await d.resolveQuotaForWorkspace(auth, supabase);
       if (quota.blocked) {
         return jsonResponse(
@@ -185,6 +188,8 @@ export function createMemoryLinkHandlers(defaultDeps: MemoryLinkHandlerDeps): {
       const { jsonResponse } = d;
       const auth = await authenticate(request, env, supabase, auditCtx);
       requireWorkspaceId(auth.workspaceId);
+      const trialEarly = maybeRespondTrialExpiredWrite(auth, env, jsonResponse);
+      if (trialEarly) return trialEarly;
       const quota = await d.resolveQuotaForWorkspace(auth, supabase);
       if (quota.blocked) {
         return jsonResponse(

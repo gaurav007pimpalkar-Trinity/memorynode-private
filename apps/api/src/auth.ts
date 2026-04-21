@@ -3,6 +3,7 @@
  */
 
 import type { SupabaseClient } from "@supabase/supabase-js";
+import { productPlanFromWorkspacePlan, type ProductPlanId } from "@memorynodeai/shared";
 import { timingSafeEqual } from "node:crypto";
 import { createHmac } from "node:crypto";
 import { Buffer } from "node:buffer";
@@ -20,9 +21,26 @@ export interface AuthContext {
   apiKeyId?: string;
   scopedContainerTag?: string | null;
   plan: "pro" | "team";
+  /** Maps `workspaces.plan` row to indie | studio | team (PLAN §6) until DB stores product codes directly. */
+  productPlan: ProductPlanId;
   planStatus?: "trialing" | "active" | "past_due" | "canceled";
+  /** Workspace trial flag (`workspaces.trial`). */
+  trial?: boolean;
+  /** Trial end timestamp from `workspaces.trial_expires_at` when set. */
+  trialExpiresAt?: string | null;
   /** Set when authenticated via API key; used for new-key rate limit (15 RPM for first 48h). */
   keyCreatedAt?: string | null;
+}
+
+function workspaceTrialFields(row: {
+  trial?: boolean | null;
+  trial_expires_at?: string | null;
+} | null): { trial: boolean; trialExpiresAt: string | null } {
+  if (!row) return { trial: false, trialExpiresAt: null };
+  return {
+    trial: row.trial === true,
+    trialExpiresAt: typeof row.trial_expires_at === "string" ? row.trial_expires_at : null,
+  };
 }
 
 const ALLOWED_PLAN_STATUS = new Set(["trialing", "active", "past_due", "canceled"]);
@@ -168,12 +186,16 @@ export async function authenticateWorkspaceForWebhook(
     }
     const planRaw = (wsRow.plan as string) ?? "pro";
     const planStatus = normalizePlanStatus(wsRow.plan_status ?? "active") ?? "active";
+    const tf = workspaceTrialFields(wsRow as { trial?: boolean | null; trial_expires_at?: string | null });
     const ctx: AuthContext = {
       workspaceId,
       keyHash: `webhook:${workspaceId}`,
       scopedContainerTag: null,
       plan: planRaw === "team" ? "team" : "pro",
+      productPlan: productPlanFromWorkspacePlan(planRaw),
       planStatus,
+      trial: tf.trial,
+      trialExpiresAt: tf.trialExpiresAt,
       keyCreatedAt: null,
     };
     if (auditCtx) {
@@ -184,21 +206,30 @@ export async function authenticateWorkspaceForWebhook(
   }
 
   const { data, error } = await withSupabaseQueryRetry(async () =>
-    supabase.from("workspaces").select("id, plan, plan_status").eq("id", workspaceId).maybeSingle(),
+    supabase.from("workspaces").select("id, plan, plan_status, trial, trial_expires_at").eq("id", workspaceId).maybeSingle(),
   );
   if (error || !data || !(data as { id?: string }).id) {
     throw createHttpError(401, "UNAUTHORIZED", "Invalid workspace");
   }
-  const row = data as { plan?: string; plan_status?: AuthContext["planStatus"] };
-  const planRaw = row.plan;
+  const row = data as {
+    plan?: string;
+    plan_status?: AuthContext["planStatus"];
+    trial?: boolean | null;
+    trial_expires_at?: string | null;
+  };
+  const planRaw = row.plan ?? "pro";
   const planStatusRaw = normalizePlanStatus(row.plan_status);
   const plan: AuthContext["plan"] = planRaw === "team" ? "team" : "pro";
+  const tf = workspaceTrialFields(row);
   const ctx: AuthContext = {
     workspaceId,
     keyHash: `webhook:${workspaceId}`,
     scopedContainerTag: null,
     plan,
+    productPlan: productPlanFromWorkspacePlan(planRaw),
     planStatus: planStatusRaw ?? "past_due",
+    trial: tf.trial,
+    trialExpiresAt: tf.trialExpiresAt,
     keyCreatedAt: null,
   };
   if (shouldBindScopedClient(env)) {
@@ -243,29 +274,36 @@ export async function authenticate(
           keyHash: `dashboard:${dashSession.sessionId}`,
           apiKeyId: undefined,
           plan: "pro",
+          productPlan: productPlanFromWorkspacePlan("pro"),
           planStatus: "past_due",
         });
         return scoped
           .from("workspaces")
-          .select("plan, plan_status")
+          .select("plan, plan_status, trial, trial_expires_at")
           .eq("id", dashSession.workspaceId)
           .maybeSingle();
       }
       return supabase
         .from("workspaces")
-        .select("plan, plan_status")
+        .select("plan, plan_status, trial, trial_expires_at")
         .eq("id", dashSession.workspaceId)
         .maybeSingle();
     });
-    const planRaw = (ws as { plan?: string } | null)?.plan;
+    const planRaw = (ws as { plan?: string } | null)?.plan ?? "pro";
     const planStatusRaw = normalizePlanStatus((ws as { plan_status?: AuthContext["planStatus"] } | null)?.plan_status);
     const plan: AuthContext["plan"] = planRaw === "team" ? "team" : "pro";
+    const tf = workspaceTrialFields(
+      ws as { trial?: boolean | null; trial_expires_at?: string | null } | null,
+    );
     const ctx: AuthContext = {
       workspaceId: dashSession.workspaceId,
       keyHash: `dashboard:${dashSession.sessionId}`,
       scopedContainerTag: null,
       plan,
+      productPlan: productPlanFromWorkspacePlan(planRaw),
       planStatus: planStatusRaw ?? "past_due",
+      trial: tf.trial,
+      trialExpiresAt: tf.trialExpiresAt,
     };
     if (shouldBindScopedClient(env)) {
       bindScopedClient(supabase, await createRequestScopedSupabaseClient(env, ctx));
@@ -303,7 +341,16 @@ export async function authenticate(
     const wsRow = db?.workspaces?.find?.((w: StubRow) => w.id === workspaceId);
     const planRaw = (wsRow?.plan as string) ?? "pro";
     const planStatus = normalizePlanStatus(wsRow?.plan_status ?? "active") ?? "active";
-    return { workspaceId, keyHash: rawKey, plan: planRaw === "team" ? "team" : "pro", planStatus };
+    const tf = workspaceTrialFields(wsRow as { trial?: boolean | null; trial_expires_at?: string | null });
+    return {
+      workspaceId,
+      keyHash: rawKey,
+      plan: planRaw === "team" ? "team" : "pro",
+      productPlan: productPlanFromWorkspacePlan(planRaw),
+      planStatus,
+      trial: tf.trial,
+      trialExpiresAt: tf.trialExpiresAt,
+    };
   }
 
   const saltOutcome = await getApiKeySalt(env, supabase);
@@ -331,7 +378,7 @@ export async function authenticate(
     const fallback = await withSupabaseQueryRetry(async () =>
       supabase
         .from("api_keys")
-        .select("id, workspace_id, created_at, scoped_container_tag, workspaces(plan, plan_status)")
+        .select("id, workspace_id, created_at, scoped_container_tag, workspaces(plan, plan_status, trial, trial_expires_at)")
         .eq("key_hash", hashed)
         .is("revoked_at", null)
         .single(),
@@ -387,11 +434,27 @@ export async function authenticate(
     /* best-effort; stub Supabase may not implement .update */
   }
 
-  const nestedWorkspace = (apiKeyRow as { workspaces?: { plan?: string; plan_status?: AuthContext["planStatus"] } } | null)?.workspaces;
-  const workspace = apiKeyRow as { plan?: string; plan_status?: AuthContext["planStatus"] } | null;
-  const planRaw = workspace?.plan ?? nestedWorkspace?.plan;
+  const nestedWorkspace = (apiKeyRow as {
+    workspaces?: {
+      plan?: string;
+      plan_status?: AuthContext["planStatus"];
+      trial?: boolean | null;
+      trial_expires_at?: string | null;
+    };
+  } | null)?.workspaces;
+  const workspace = apiKeyRow as {
+    plan?: string;
+    plan_status?: AuthContext["planStatus"];
+    trial?: boolean | null;
+    trial_expires_at?: string | null;
+  } | null;
+  const planRaw = workspace?.plan ?? nestedWorkspace?.plan ?? "pro";
   const planStatusRaw = normalizePlanStatus(workspace?.plan_status ?? nestedWorkspace?.plan_status);
   const plan: AuthContext["plan"] = planRaw === "team" ? "team" : "pro";
+  const tf = workspaceTrialFields({
+    trial: workspace?.trial ?? nestedWorkspace?.trial,
+    trial_expires_at: workspace?.trial_expires_at ?? nestedWorkspace?.trial_expires_at,
+  });
 
   const createdAt = (apiKeyRow as { key_created_at?: string; created_at?: string } | null)?.key_created_at
     ?? (apiKeyRow as { created_at?: string } | null)?.created_at
@@ -402,7 +465,10 @@ export async function authenticate(
     apiKeyId: keyId,
     scopedContainerTag: ((apiKeyRow as { scoped_container_tag?: string | null } | null)?.scoped_container_tag ?? null),
     plan,
+    productPlan: productPlanFromWorkspacePlan(planRaw),
     planStatus: planStatusRaw ?? "past_due",
+    trial: tf.trial,
+    trialExpiresAt: tf.trialExpiresAt,
     keyCreatedAt: createdAt,
   };
   if (shouldBindScopedClient(env)) {

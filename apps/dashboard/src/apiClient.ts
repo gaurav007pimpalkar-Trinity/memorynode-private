@@ -55,16 +55,27 @@ type ApiErrorBody = {
   error?: { code?: string; message?: string; request_id?: string };
 };
 
+type ApiErrorPayload = ApiErrorBody & { upgrade_url?: string };
+
 export class ApiClientError extends Error {
   status: number;
   code?: string;
   /** Server correlation id when present on error responses */
   requestId?: string;
-  constructor(status: number, code: string | undefined, message: string, requestId?: string) {
+  /** Present on some 402 responses (e.g. trial ended, caps) when the API returns `upgrade_url`. */
+  upgradeUrl?: string;
+  constructor(
+    status: number,
+    code: string | undefined,
+    message: string,
+    requestId?: string,
+    upgradeUrl?: string,
+  ) {
     super(message);
     this.status = status;
     this.code = code;
     this.requestId = requestId;
+    this.upgradeUrl = upgradeUrl;
   }
 }
 
@@ -85,6 +96,11 @@ export function userFacingErrorMessage(err: unknown): string {
     if (err.status === 404) return "Not found.";
     if (code === "DAILY_CAP_EXCEEDED") return "Daily fair-use cap exceeded. Try again tomorrow.";
     if (code === "MONTHLY_CAP_EXCEEDED") return "Monthly cap exceeded. Upgrade to continue.";
+    if (code === "TRIAL_EXPIRED") {
+      return err.upgradeUrl?.trim()
+        ? `Your MemoryNode trial has ended. Continue with billing: ${err.upgradeUrl.trim()}`
+        : "Your MemoryNode trial has ended. Open Billing to add a payment method and continue saving changes.";
+    }
     if (err.status === 402) return "Usage cap exceeded. Upgrade or try again later.";
     if (err.status >= 500) {
       const base = "Something went wrong. Please try again.";
@@ -128,15 +144,18 @@ async function fetchJson<T>(
       setCsrfToken(null);
       onUnauthorized?.();
     }
-    const body = json as ApiErrorBody | null;
+    const body = json as ApiErrorPayload | null;
     const err = body?.error;
     const combinedRequestId =
       typeof err?.request_id === "string" && err.request_id.trim() ? err.request_id.trim() : headerRequestId;
+    const upgradeUrl =
+      typeof body?.upgrade_url === "string" && body.upgrade_url.trim() ? body.upgrade_url.trim() : undefined;
     throw new ApiClientError(
       res.status,
       err?.code,
       err?.message ?? `Request failed: ${res.status}`,
       combinedRequestId,
+      upgradeUrl,
     );
   }
   const data = ((json as T) ?? ({} as T)) as T;
@@ -163,13 +182,19 @@ export async function ensureDashboardSession(accessToken: string, workspaceId: s
     } catch {
       /* ignore */
     }
-    const err = (json as ApiErrorBody | null)?.error;
+    const payload = json as ApiErrorPayload | null;
+    const err = payload?.error;
     const combinedRid = typeof err?.request_id === "string" && err.request_id.trim() ? err.request_id.trim() : headerRid;
+    const upgradeUrl =
+      typeof payload?.upgrade_url === "string" && payload.upgrade_url.trim()
+        ? payload.upgrade_url.trim()
+        : undefined;
     throw new ApiClientError(
       res.status,
       err?.code,
       err?.message ?? `Session failed: ${res.status}`,
       combinedRid,
+      upgradeUrl,
     );
   }
   const data = (await res.json()) as { csrf_token?: string };

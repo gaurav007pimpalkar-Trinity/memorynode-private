@@ -9,6 +9,7 @@ import {
   parseWithSchema,
   type ConnectorSettingPatchPayload,
 } from "../contracts/index.js";
+import { maybeRespondTrialExpiredWrite } from "../trialWrites.js";
 
 const DEFAULT_CAPTURE_TYPES: Record<string, boolean> = {
   pdf: true,
@@ -93,6 +94,8 @@ export function createConnectorSettingsHandlers(
       const d = (deps ?? defaultDeps) as ConnectorSettingsHandlerDeps;
       const { jsonResponse } = d;
       const auth = await authenticate(request, env, supabase, auditCtx);
+      const trialEarly = maybeRespondTrialExpiredWrite(auth, env, jsonResponse);
+      if (trialEarly) return trialEarly;
       const rate = await rateLimit(auth.keyHash, env, auth, getRouteRateLimitMax(env, "default", auth.keyCreatedAt));
       if (!rate.allowed) {
         return jsonResponse({ error: { code: "rate_limited", message: "Rate limit exceeded" } }, 429, rate.headers);
