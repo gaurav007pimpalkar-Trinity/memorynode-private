@@ -4,6 +4,7 @@ import { BrowserRouter } from "react-router-dom";
 import { App } from "./App";
 import { FounderApp } from "./FounderApp";
 import { getAppSurface, isFounderPath } from "./appSurface";
+import "./tailwind-entry.css";
 import "./styles.css";
 
 const root = document.getElementById("root");
