@@ -26,11 +26,15 @@ jobs:
           BASE_URL: ${{ secrets.MEMORY_HYGIENE_BASE_URL }}
         run: |
           set -uo pipefail
+          trim() { sed -e 's/^[[:space:]]*//' -e 's/[[:space:]]*$//'; }
+          TOKEN="$(printf '%s' "${TOKEN:-}" | trim)"
+          WORKSPACE_ID="$(printf '%s' "${WORKSPACE_ID:-}" | trim)"
+          base="$(printf '%s' "${BASE_URL:-}" | trim)"
           if [[ -z "$TOKEN" || -z "$WORKSPACE_ID" ]]; then
             echo "Skipping: set MEMORY_HYGIENE_ADMIN_TOKEN and MEMORY_HYGIENE_WORKSPACE_ID in repo secrets to enable."
             exit 0
           fi
-          base="${BASE_URL:-https://api.memorynode.ai}"
+          base="${base:-https://api.memorynode.ai}"
           base="${base%/}"
           path="/admin/memory-hygiene"
           query="workspace_id=${WORKSPACE_ID}&dry_run=true&limit=200"
@@ -42,8 +46,9 @@ jobs:
           # PATH is url.pathname only (no query string).
           ts="$(date +%s%3N)"
           nonce="$(openssl rand -hex 16)"
+          # Use -hmac so keys containing ':' are not broken by -macopt key:value parsing.
           sig="$(printf '%s\n%s\n%s\n%s' "$method" "$path" "$ts" "$nonce" \
-                 | openssl dgst -sha256 -mac HMAC -macopt "key:${TOKEN}" -hex \
+                 | openssl dgst -sha256 -hmac "$TOKEN" \
                  | awk '{print $NF}')"
           if [[ -z "$sig" ]]; then
             echo "Result: Failed to compute admin signature (openssl error)."
