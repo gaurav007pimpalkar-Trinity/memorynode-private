@@ -17,7 +17,8 @@ This folder is the exact content that will become the public repo. It contains *
 
 | File | Purpose |
 |------|--------|
-| `README.md` | Product intro, features, how to get an API key, copy-paste quickstart, link to docs, license |
+| `README.md` | Onboarding when you are **inside the monorepo** — links to `../README.md` and `../docs/...` |
+| `README_PUBLIC_REPO.md` | **Standalone** intro for the [public GitHub mirror](PUBLIC_GITHUB_MIRROR.md) only (no `../` links to private paths). Synced as `README.md` on [memorynode](https://github.com/gaurav007pimpalkar-Trinity/memorynode). |
 | `package.json` | `memorynode-quickstart`, dependency on `@memorynodeai/sdk`, `start` script |
 | `index.mjs` | Runnable quickstart: add memory, search, log results; uses `API_KEY` and optional `BASE_URL` |
 | `.gitignore` | `node_modules/`, `.env`, `.env.*`, `*.log` |
@@ -33,7 +34,7 @@ No other files belong in the public repo. Do **not** add API source, Worker code
    Edit `public-onboarding/package.json` and set the `@memorynodeai/sdk` version (e.g. `"^0.2.0"`).
 
 3. **Push the updated content to the public GitHub repo**  
-   Copy the updated `public-onboarding/` contents (or push from a branch that only contains this folder) to the public repo so users get the new quickstart and dependency version.
+   Use the manifest-driven sync (recommended): [PUBLIC_GITHUB_MIRROR.md](./PUBLIC_GITHUB_MIRROR.md) — `pnpm sync:public-github` then `pnpm sync:public-github:push` with `PUBLIC_SYNC_CONFIRM=1`. Alternatively, manually copy only the manifest-listed files into [memorynode](https://github.com/gaurav007pimpalkar-Trinity/memorynode).
 
 ## What must never be included
 

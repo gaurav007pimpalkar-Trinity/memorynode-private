@@ -5,6 +5,8 @@ For exact API behavior, refer to:
 - `docs/external/API_USAGE.md`
 - `docs/external/openapi.yaml` (run `pnpm openapi:gen` to regenerate)
 
+**Monorepo product README** (overview, MCP, SDK quickstarts, curl, examples, trust): [../../README.md](../../README.md).
+
 ---
 
 # External docs hub

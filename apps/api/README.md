@@ -7,6 +7,8 @@ Always verify against actual infrastructure (Cloudflare, Supabase, etc.).
 
 # MemoryNode API (Cloudflare Worker)
 
+**Monorepo product README** (overview, MCP, SDK quickstarts, curl, examples, trust): [../../README.md](../../README.md).
+
 Canonical Wrangler v4 commands for this package:
 
 ```bash

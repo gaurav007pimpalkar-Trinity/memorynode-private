@@ -83,6 +83,9 @@
     "openapi:gen": "node apps/api/scripts/generate_openapi.mjs",
     "openapi:check": "node apps/api/scripts/generate_openapi.mjs --check",
     "check:docs-drift": "node scripts/check_docs_drift.mjs",
+    "sync:public-github": "node scripts/sync_public_github_repo.mjs",
+    "sync:public-github:commit": "node scripts/sync_public_github_repo.mjs --commit",
+    "sync:public-github:push": "node scripts/sync_public_github_repo.mjs --push",
     "push:gate": "pnpm secrets:check && pnpm secrets:check:tracked && pnpm lint && pnpm typecheck && pnpm test:ci"
   },
   "devDependencies": {

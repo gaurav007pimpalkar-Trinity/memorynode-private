@@ -1,0 +1,16 @@
+{
+  "description": "Files copied from the private monorepo into the public GitHub repo. Edit this list when adding/removing public-safe docs or quickstart assets.",
+  "cloneUrl": "https://github.com/gaurav007pimpalkar-Trinity/memorynode.git",
+  "stagingDir": ".public-github-sync",
+  "files": [
+    { "from": "public-onboarding/package.json", "to": "package.json" },
+    { "from": "public-onboarding/index.mjs", "to": "index.mjs" },
+    { "from": "public-onboarding/.gitignore", "to": ".gitignore" },
+    { "from": "public-onboarding/LICENSE", "to": "LICENSE" },
+    { "from": "public-onboarding/README_PUBLIC_REPO.md", "to": "README.md" },
+    { "from": "docs/external/TRUST.md", "to": "docs/TRUST.md", "transform": "publicDocs" },
+    { "from": "docs/SECURITY.md", "to": "docs/SECURITY.md", "transform": "publicDocs" },
+    { "from": "docs/DATA_RETENTION.md", "to": "docs/DATA_RETENTION.md", "transform": "publicDocs" },
+    { "from": "docs/external/POSITIONING.md", "to": "docs/POSITIONING.md", "transform": "publicDocs" }
+  ]
+}

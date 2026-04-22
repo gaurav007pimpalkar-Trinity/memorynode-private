@@ -8,7 +8,7 @@
     "start": "node index.mjs"
   },
   "dependencies": {
-    "@memorynodeai/sdk": "^0.1.0"
+    "@memorynodeai/sdk": "^1.0.0"
   },
   "engines": {
     "node": ">=20"

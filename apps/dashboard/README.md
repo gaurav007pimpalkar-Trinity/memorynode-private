@@ -7,6 +7,8 @@ Always verify against actual infrastructure (Cloudflare, Supabase, etc.).
 
 # MemoryNode Frontends
 
+**Monorepo product README** (overview, MCP, SDK quickstarts, curl, examples, trust): [../../README.md](../../README.md).
+
 Product positioning (ICP and non-goals): [docs/external/POSITIONING.md](../../docs/external/POSITIONING.md).
 
 Shared frontend codebase for:

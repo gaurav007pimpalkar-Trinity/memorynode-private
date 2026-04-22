@@ -24,6 +24,7 @@ Verify live configuration and [../external/API_USAGE.md](../external/API_USAGE.m
 - `docs/external/POSITIONING.md` – canonical ICP, promise, and non-goals (keep marketing aligned).
 - `docs/start-here/README.md` – get value quickly (API key, store, search).
 - `docs/external/API_USAGE.md` – how to call the API and SDK (inputs, outputs, errors).
+- `docs/internal/PUBLIC_GITHUB_MIRROR.md` – how the **public** `memorynode` GitHub repo stays in sync with this private monorepo (`pnpm sync:public-github*`).
 - `docs/internal/GTM_PLAYBOOK_2026.md` – messaging, agency one-pager, checklist, metrics (internal).
 
 ## Documentation Map (Reading Order)

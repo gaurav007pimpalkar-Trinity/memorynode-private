@@ -12,6 +12,9 @@ apps/dashboard/dist-console/
 apps/dashboard/dist-app/
 build/
 .turbo/
+# Ephemeral clone of the public GitHub repo (pnpm sync:public-github*)
+.public-github-sync/
+
 .vite/
 .wrangler/
 .cache/

@@ -1,19 +1,19 @@
-## ℹ️ Supporting Documentation
+## ℹ️ Supporting documentation
 
-This document is a guide.  
-For exact API behavior, refer to:
-- `docs/external/API_USAGE.md`
-- `docs/external/openapi.yaml` (run `pnpm openapi:gen` to regenerate)
+This folder is a **minimal runnable quickstart** for the hosted API. For exact HTTP behavior, see the monorepo:
+
+- [../docs/external/API_USAGE.md](../docs/external/API_USAGE.md)
+- [../docs/external/openapi.yaml](../docs/external/openapi.yaml) (regenerate from the monorepo with `pnpm openapi:gen`)
+
+**Full product README (marketing + API overview, MCP, examples):** [../README.md](../README.md)
 
 ---
 
-# MemoryNode
+# MemoryNode — public quickstart
 
-**Reliable per-user memory for customer-facing AI** — support bots, SMB chat, and SaaS copilots need persistent, queryable memory. MemoryNode provides store-and-retrieve memory and semantic search as a single API; embeddings and search infrastructure are managed for you.
+**Reliable per-user memory for customer-facing AI** — this package runs a short script that adds a memory, searches, and prints JSON using **`@memorynodeai/sdk`** against **`https://api.memorynode.ai`**.
 
-**Canonical story:** [docs/external/POSITIONING.md](../docs/external/POSITIONING.md) in the main repo.
-
-**Use it when** you're building chatbots, copilots, or agents that must remember users and context across sessions.
+**Canonical positioning:** [../docs/external/POSITIONING.md](../docs/external/POSITIONING.md)
 
 ---
 
@@ -36,8 +36,6 @@ Your app (Node, Python, etc.)
   → Drop into system prompt or context window
 ```
 
-You send text and optional metadata; you get back relevant memories. No vector DB or embedding pipeline to run.
-
 ---
 
 ## Get an API key
@@ -48,7 +46,7 @@ You send text and optional metadata; you get back relevant memories. No vector D
 
 ---
 
-## Quickstart (standalone package)
+## Quickstart (this folder)
 
 **Prerequisites:** Node.js 20+
 
@@ -60,7 +58,7 @@ export API_KEY=your_api_key_here
 npm start
 ```
 
-**From the MemoryNode monorepo root** (uses `pnpm` workspaces):
+**From the MemoryNode monorepo root** (pnpm workspaces):
 
 ```bash
 pnpm install
@@ -69,9 +67,9 @@ export API_KEY=your_api_key_here
 pnpm start
 ```
 
-**What happens:** The script adds a sample memory, runs a semantic search, and prints the results. You should see `Added memory: <id>` and a `Search results` JSON block. No code to write—`index.mjs` is ready to run.
+**What happens:** The script adds a sample memory, runs a semantic search, and prints the results. You should see `Added memory: <id>` and a `Search results` JSON block. No extra code required — `index.mjs` is ready to run.
 
-**Without cloning the monorepo:** `npm install @memorynodeai/sdk`, then use the same code as in `index.mjs` (see repo); set `API_KEY` and run `node index.mjs`.
+**Without cloning the monorepo:** `npm install @memorynodeai/sdk`, copy the pattern from `index.mjs`, set `API_KEY`, and run with Node.
 
 ---
 
@@ -97,7 +95,6 @@ await client.addMemory({
 // Semantic search
 const results = await client.search({
   userId: "quickstart-user",
-  // SDK field `namespace` maps to API `scope`.
   namespace: "default",
   query: "quickstart",
   topK: 5,
@@ -112,17 +109,16 @@ console.log("Search results:", JSON.stringify(results, null, 2));
 - **Base URL:** Default is `https://api.memorynode.ai`. Override with `BASE_URL` for self-hosted or staging.
 - **Secrets:** Keep `API_KEY` in environment or a secret manager; never commit it.
 - **Errors:** The SDK throws on non-2xx responses; handle network and rate-limit errors in your app.
-- **Limits and scaling:** See [docs/external/README.md](../docs/external/README.md) for usage caps, rate limits, and recipes.
+- **Limits and scaling:** [../docs/external/README.md](../docs/external/README.md) — usage caps, rate limits, and recipes.
 
 ---
 
-## Documentation
+## More documentation
 
+- **Full README:** [../README.md](../README.md) (MCP, curl, SDK, examples, trust)
 - **Recipes:** [support](../docs/external/RECIPE_SUPPORT_AGENT.md) · [SaaS copilot](../docs/external/RECIPE_SAAS_COPILOT.md) · [SMB](../docs/external/RECIPE_SMB_CHATBOT.md)
-- **Quickstart (curl):** [docs/start-here/README.md](../docs/start-here/README.md)
-- **Trust:** [docs/external/TRUST.md](../docs/external/TRUST.md)
-
-**Repository:** [github.com/gaurav007pimpalkar-Trinity/memorynode](https://github.com/gaurav007pimpalkar-Trinity/memorynode)
+- **Guided quickstart:** [../docs/start-here/README.md](../docs/start-here/README.md)
+- **Trust:** [../docs/external/TRUST.md](../docs/external/TRUST.md)
 
 ---
 
