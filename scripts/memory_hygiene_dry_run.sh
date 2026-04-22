@@ -12,13 +12,17 @@
 #                        "${METHOD}\n${PATH}\n${TS}\n${NONCE}") hex
 
 set -euo pipefail
+trim() { sed -e 's/^[[:space:]]*//' -e 's/[[:space:]]*$//'; }
+MASTER_ADMIN_TOKEN="$(printf '%s' "${MASTER_ADMIN_TOKEN:-}" | trim)"
+WORKSPACE_ID="$(printf '%s' "${WORKSPACE_ID:-}" | trim)"
+BASE_URL="$(printf '%s' "${BASE_URL:-}" | trim)"
 BASE_URL="${BASE_URL:-https://api.memorynode.ai}"
 BASE_URL="${BASE_URL%/}"
-if [[ -z "${MASTER_ADMIN_TOKEN:-}" ]]; then
+if [[ -z "${MASTER_ADMIN_TOKEN}" ]]; then
   echo "MASTER_ADMIN_TOKEN is required" >&2
   exit 1
 fi
-if [[ -z "${WORKSPACE_ID:-}" ]]; then
+if [[ -z "${WORKSPACE_ID}" ]]; then
   echo "WORKSPACE_ID is required (UUID of the workspace to check)" >&2
   exit 1
 fi
@@ -32,8 +36,9 @@ URL="${BASE_URL}${PATH_ONLY}?${QUERY}"
 
 TS="$(date +%s%3N)"
 NONCE="$(openssl rand -hex 16)"
+# Use -hmac so keys containing ':' are not broken by -macopt key:value parsing.
 SIG="$(printf '%s\n%s\n%s\n%s' "$METHOD" "$PATH_ONLY" "$TS" "$NONCE" \
-       | openssl dgst -sha256 -mac HMAC -macopt "key:${MASTER_ADMIN_TOKEN}" -hex \
+       | openssl dgst -sha256 -hmac "$MASTER_ADMIN_TOKEN" \
        | awk '{print $NF}')"
 
 curl -sS -X "$METHOD" \
