@@ -141,6 +141,7 @@ function main() {
 
   if (!status) {
     console.log("No changes — public repo already matches manifest.");
+    rmrf(stagingAbs);
     return;
   }
 
@@ -154,6 +155,26 @@ function main() {
   }
 
   execSync("git add -A", { cwd: stagingAbs, stdio: "inherit" });
+
+  let hasStagedDiff = true;
+  try {
+    execSync("git diff --cached --quiet", {
+      cwd: stagingAbs,
+      stdio: "pipe",
+    });
+    hasStagedDiff = false;
+  } catch {
+    hasStagedDiff = true;
+  }
+
+  if (!hasStagedDiff) {
+    console.log(
+      "No staged diff vs HEAD (working tree matched remote after normalize). Public repo is already up to date.",
+    );
+    rmrf(stagingAbs);
+    return;
+  }
+
   execSync(
     'git commit -m "chore: sync public mirror from memorynode-private"',
     { cwd: stagingAbs, stdio: "inherit" },
@@ -165,6 +186,8 @@ function main() {
   } else {
     console.log("Committed locally in staging. Run with --push + PUBLIC_SYNC_CONFIRM=1 to publish.");
   }
+
+  rmrf(stagingAbs);
 }
 
 main();
