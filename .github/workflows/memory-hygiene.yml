@@ -1,7 +1,13 @@
 # yaml-language-server: disable
 # Weekly memory-hygiene dry-run. Calls POST /admin/memory-hygiene with dry_run=true.
-# Required repo secrets: MEMORY_HYGIENE_ADMIN_TOKEN, MEMORY_HYGIENE_WORKSPACE_ID
-# Optional override: set BASE_URL in job env (default https://api.memorynode.ai)
+#
+# Required repo secrets:
+#   MEMORY_HYGIENE_ADMIN_TOKEN  -- MUST equal the Worker's MASTER_ADMIN_TOKEN
+#                                  (prod/staging require signed admin requests; the
+#                                  HMAC is computed with this token as the key).
+#   MEMORY_HYGIENE_WORKSPACE_ID -- UUID of the workspace to check.
+# Optional:
+#   MEMORY_HYGIENE_BASE_URL     -- override API base (default https://api.memorynode.ai)
 name: Memory hygiene (dry-run)
 
 on:
@@ -17,15 +23,41 @@ jobs:
         env:
           TOKEN: ${{ secrets.MEMORY_HYGIENE_ADMIN_TOKEN }}
           WORKSPACE_ID: ${{ secrets.MEMORY_HYGIENE_WORKSPACE_ID }}
+          BASE_URL: ${{ secrets.MEMORY_HYGIENE_BASE_URL }}
         run: |
+          set -uo pipefail
           if [[ -z "$TOKEN" || -z "$WORKSPACE_ID" ]]; then
             echo "Skipping: set MEMORY_HYGIENE_ADMIN_TOKEN and MEMORY_HYGIENE_WORKSPACE_ID in repo secrets to enable."
             exit 0
           fi
           base="${BASE_URL:-https://api.memorynode.ai}"
-          url="${base%/}/admin/memory-hygiene?workspace_id=${WORKSPACE_ID}&dry_run=true&limit=200"
-          echo "Calling API at ${base%/}/admin/memory-hygiene (workspace_id=***, dry_run=true)."
-          out=$(curl -sS -w "\nHTTP_CODE:%{http_code}" -X POST -H "x-admin-token: $TOKEN" --connect-timeout 30 --max-time 60 "$url") || true
+          base="${base%/}"
+          path="/admin/memory-hygiene"
+          query="workspace_id=${WORKSPACE_ID}&dry_run=true&limit=200"
+          url="${base}${path}?${query}"
+          method="POST"
+
+          # Signed admin headers (apps/api/src/auth.ts verifySignedAdminRequest):
+          #   sig = HMAC-SHA256(MASTER_ADMIN_TOKEN, "${METHOD}\n${PATH}\n${TS}\n${NONCE}") hex
+          # PATH is url.pathname only (no query string).
+          ts="$(date +%s%3N)"
+          nonce="$(openssl rand -hex 16)"
+          sig="$(printf '%s\n%s\n%s\n%s' "$method" "$path" "$ts" "$nonce" \
+                 | openssl dgst -sha256 -mac HMAC -macopt "key:${TOKEN}" -hex \
+                 | awk '{print $NF}')"
+          if [[ -z "$sig" ]]; then
+            echo "Result: Failed to compute admin signature (openssl error)."
+            exit 1
+          fi
+
+          echo "Calling ${base}${path} (workspace_id=***, dry_run=true)."
+          out=$(curl -sS -w "\nHTTP_CODE:%{http_code}" \
+            -X "$method" \
+            -H "x-admin-timestamp: $ts" \
+            -H "x-admin-nonce: $nonce" \
+            -H "x-admin-signature: $sig" \
+            --connect-timeout 30 --max-time 60 \
+            "$url") || true
           code=$(echo "$out" | sed -n 's/.*HTTP_CODE:\([0-9]*\)/\1/p')
           echo "$out" | sed 's/HTTP_CODE:.*/HTTP_CODE:<redacted>/'
           if [[ -z "$code" || "$code" = "000" ]]; then
@@ -36,5 +68,5 @@ jobs:
             echo "Result: Dry-run completed successfully (HTTP $code)."
             exit 0
           fi
-          echo "Result: API returned HTTP $code. Check token, workspace_id, and MEMORY_HYGIENE_BASE_URL."
+          echo "Result: API returned HTTP $code. Check that MEMORY_HYGIENE_ADMIN_TOKEN equals the Worker's MASTER_ADMIN_TOKEN, plus workspace_id and MEMORY_HYGIENE_BASE_URL."
           exit 1
