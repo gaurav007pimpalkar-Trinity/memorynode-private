@@ -1,213 +1,127 @@
-## ℹ️ Supporting Documentation
+# Security
 
-This document is a guide.  
-For exact API behavior, refer to:
-- `docs/external/API_USAGE.md`
-- `docs/external/openapi.yaml` (run `pnpm openapi:gen` to regenerate)
+Security posture of the MemoryNode Cloudflare Worker (`memorynode-api`) and its Supabase data plane, anchored to the code in `apps/api/src/` and `infra/sql/`. Report vulnerabilities privately to `security@memorynode.ai`.
 
----
+## 1. Threat model summary
 
-# MemoryNode Security
+- Tenants share one Worker and one Supabase Postgres project. Isolation is enforced through hashed API keys, workspace-scoped RPCs, and (in `rls-first`) Postgres RLS policies.
+- Billing is PayU-only. The Worker never sees card data; PayU handles the hosted checkout. Stripe paths are retired.
+- The Worker is the only first-party HTTP surface. Cloudflare Pages apps consume it via CORS + session cookie + CSRF.
 
-## Our Security Stance
+## 2. Authentication modes
 
-**What we do:**
+Full table in [docs/external/API_USAGE.md §1](./external/API_USAGE.md). Summary:
 
-- **Authentication:** Supabase Auth (magic link, OAuth); session tokens in httpOnly cookies for dashboard; API keys for programmatic access.
-- **Authorization (Phase A, startup-safe):** Request-path access remains on the current architecture, but critical tenant flows are fail-closed (no scoped-to-direct fallback), tenant isolation is enforced with workspace scoping + RLS policies, and CI blocks service-role creep via an explicit allowlist boundary. Service-role usage is allowed only in approved modules and rejected elsewhere by CI. Full `rls-first` request-scoped credentials are deferred to a later phase.
-- **Credentials:** We never store long-lived API keys in the browser. Keys are shown once at creation; thereafter only prefix in UI.
-- **Audit trail:** API request logs (route, method, status, workspace); billing webhook events; retention per DATA_RETENTION.md.
-- **Billing:** PayU with hash verification, verify-before-grant, idempotency. Webhook payloads do not grant access until verified.
-- **Headers:** CSP, X-Content-Type-Options, Referrer-Policy; CSRF protection on mutating dashboard calls.
+| Mode | How it's proved | Verifier |
+| --- | --- | --- |
+| API key | `Authorization: Bearer <key>` / `x-api-key` | SHA-256 + `API_KEY_SALT`, `authenticate_api_key` RPC |
+| Dashboard session | `Cookie: mn_session` + `x-csrf-token` | `dashboard_sessions` row + constant-time CSRF compare |
+| Admin | `x-admin-token` (legacy equality or HMAC-signed) | `MASTER_ADMIN_TOKEN`, optional `ADMIN_ALLOWED_IPS` |
+| Memory webhook | `X-MN-Webhook-Signature` | HMAC-SHA256 against `memory_ingest_webhooks.signing_secret` |
+| PayU webhook | form body | Reverse SHA-512 with `PAYU_MERCHANT_SALT`, HMAC-SHA256 fallback on `PAYU_WEBHOOK_SECRET` |
+| Internal MCP | `x-internal-mcp: 1` + `x-internal-secret` | Constant-time compare against `MCP_INTERNAL_SECRET` |
 
-**What we don’t do:**
+All comparisons that touch secrets use `crypto.timingSafeEqual` where available.
 
-- Store raw API keys in localStorage, sessionStorage, or IndexedDB.
-- Grant entitlements from unverified webhook payloads.
-- Ship demo or hardcoded auth in production.
+## 3. Secret handling
 
-**Data handling:** Where it lives, who can access, retention — see [DATA_RETENTION.md](./DATA_RETENTION.md).
+Secrets live only in Cloudflare Worker `wrangler secret` storage (never in `wrangler.toml [vars]`) or Supabase Vault.
 
----
+Required in production (enforced by `validateSecrets` in [apps/api/src/env.ts](../apps/api/src/env.ts)):
 
-## Secrets & Credential Hygiene
+- `SUPABASE_URL`, `SUPABASE_SERVICE_ROLE_KEY`, `SUPABASE_ANON_KEY`, `SUPABASE_JWT_SECRET`
+- `API_KEY_SALT` (≥ 16 chars), `MASTER_ADMIN_TOKEN` (≥ 24 chars)
+- `OPENAI_API_KEY` (when `EMBEDDINGS_MODE=openai`)
+- `AI_COST_BUDGET_INR` (`> 0`)
+- `PAYU_MERCHANT_KEY`, `PAYU_MERCHANT_SALT`, `PAYU_WEBHOOK_SECRET`
 
-## Rules
+Stub modes (`SUPABASE_MODE=stub`, `EMBEDDINGS_MODE=stub`) are forbidden in production by `validateStubModes`. `RATE_LIMIT_MODE=off` is forbidden in production by `validateRateLimitConfig`.
 
-- Never commit real credentials to git.
-- Use tracked templates only:
-  - `.env.example`
-  - `apps/api/.dev.vars.template`
-  - `apps/dashboard/.env.example`
-- Put real runtime secrets in Cloudflare Worker secrets (`wrangler secret put <NAME>` or Cloudflare Dashboard).
+## 4. Row-level security and tenant isolation
 
-## Local Files
+- `SUPABASE_ACCESS_MODE` ∈ `{ service-role-only (legacy, blocked in prod), rpc-first (current), rls-first (target) }`.
+- Every tenant-owned table has `alter table ... force row level security` set in [infra/sql/049_request_path_rls_first.sql](../infra/sql/049_request_path_rls_first.sql).
+- Request-path RPCs (`authenticate_api_key`, `touch_api_key_usage`, `get_memory_scoped`, `delete_memory_scoped`, `list_memories_scoped`) are fail-closed.
+- Cross-tenant adversarial tests run in CI.
+- `enforceIsolation` ([apps/api/src/middleware/isolation.ts](../apps/api/src/middleware/isolation.ts)) rejects any attempt to reach a namespace outside the caller's workspace with `403 FORBIDDEN`.
+- Service-role usage in the request path is allowlisted by `scripts/security/service_role_allowlist.json` and enforced by CI.
 
-- Real values belong in local untracked files only (`.env`, `.env.local`, `.dev.vars`, `.dev.vars.production`, etc.).
-- Do not add backup copies of env/wrangler files to git.
+See [docs/internal/LEAST_PRIVILEGE_ROADMAP.md](./internal/LEAST_PRIVILEGE_ROADMAP.md).
 
-## Required Scans
+## 5. Rate limiting, concurrency, cost guards
 
-- Staged diff scan (pre-commit style):
-  - `pnpm secrets:check`
-- Full tracked-file scan:
-  - `pnpm secrets:check:tracked`
-- CI enforces tracked-file scanning and fails fast on detection.
+- Per-key RPM (60, 15 for first 48 h of a new key) and per-workspace RPM (120, 300 on `scale`) via `RATE_LIMIT_DO` Durable Object.
+- Workspace concurrency cap of 8 in-flight quota-consuming requests (`WORKSPACE_CONCURRENCY_MAX`).
+- Cost/minute burst guard (`WORKSPACE_COST_PER_MINUTE_CAP_INR`, default 15 INR).
+- Quota reservations via `reserve_usage_if_within_cap` + `commit_usage_reservation` are atomic in Postgres.
+- Global AI spend guard (`AI_COST_BUDGET_INR`) fails closed in production; `AI_COST_GUARD_FAIL_OPEN` must not be set.
+- Circuit breakers (OpenAI embed, OpenAI extract, Supabase RPC, PayU verify) share state through `CIRCUIT_BREAKER_DO` when bound.
 
-## Optional Pre-Commit Hook
+## 6. Webhook signatures
 
-- Example hook script: `scripts/precommit.sh`
-- One simple setup:
-  - `cp scripts/precommit.sh .git/hooks/pre-commit`
-  - `chmod +x .git/hooks/pre-commit`
-- Husky users can call the same command sequence from `.husky/pre-commit`.
+### 6.1 PayU
 
----
+Handler: [apps/api/src/handlers/billingWebhook.ts](../apps/api/src/handlers/billingWebhook.ts).
 
-## PayU Secrets — Requirements, Storage, & Least-Privilege
+- Primary: reverse SHA-512 computed over the PayU fields using `PAYU_MERCHANT_SALT`.
+- Fallback: `x-payu-webhook-signature` as HMAC-SHA256 over the raw body keyed by `PAYU_WEBHOOK_SECRET`.
+- On signature failure → `billing_webhook_signature_invalid` event (alert **D2**).
+- Verify-before-grant: only after signature success **and** a successful PayU verify-API response does the Worker call `upsertWorkspaceEntitlementFromTransaction`.
+- Idempotent via `payu_webhook_events`.
 
-### Secret Inventory
+### 6.2 Memory ingest
 
-| Secret | Where stored | Purpose | Who needs access |
-| --- | --- | --- | --- |
-| `PAYU_MERCHANT_KEY` | Cloudflare Worker secret | Identifies the merchant for PayU API calls and webhook hash verification | API Worker only |
-| `PAYU_MERCHANT_SALT` | Cloudflare Worker secret | HMAC-SHA512 hash computation for checkout requests and webhook signature verification | API Worker only |
-| `PAYU_WEBHOOK_SECRET` | Cloudflare Worker secret | **Required in production** when billing is enabled (`scripts/check_config.mjs`); `x-payu-signature` verification when set in PayU dashboard | API Worker only |
+Handler: `POST /v1/webhooks/memory` in [apps/api/src/router.ts](../apps/api/src/router.ts).
 
-### Storage Rules
+- HMAC-SHA256 on the raw body keyed by `memory_ingest_webhooks.signing_secret` for the target workspace.
+- On success the Worker synthesizes an internal trusted auth header pair (`MEMORY_WEBHOOK_INTERNAL_TOKEN` — Worker-only secret) and forwards to `POST /v1/memories`.
 
-1. **Never** store PayU secrets in `wrangler.toml [vars]`, `.env` files committed to git, or CI logs.
-2. **Always** use `wrangler secret put` or the Cloudflare Dashboard Secrets UI.
-3. **Staging and production** MUST use separate PayU merchant accounts (or at minimum separate salt values).
-4. Secrets are accessible only to the Worker runtime — no dashboard user, CI pipeline, or log output should ever see the raw value.
+## 7. CSRF and session cookies
 
-### Least-Privilege Guidance
+- `mn_session` is HttpOnly, Secure, SameSite=Lax, Path=/, tied to one workspace.
+- CSRF double-submit is required on every non-GET `/v1/*` call from dashboard sessions; server compare is constant-time.
+- Sessions are cleaned up via `POST /admin/sessions/cleanup` (and a scheduled GitHub Action).
 
-- **API Worker**: needs `PAYU_MERCHANT_KEY` and `PAYU_MERCHANT_SALT` at runtime. Does NOT need PayU dashboard admin access.
-- **Operators/Founders**: need PayU dashboard access for configuration only. Should NOT have raw salt values in personal env files.
-- **CI/CD**: does NOT need PayU secrets. Deployments use `wrangler deploy`; secrets are already bound to the Worker.
-- **Dashboard app**: does NOT need PayU secrets. Billing flows go through the API.
+## 8. Origins and CORS
 
-### Mandatory Security Controls
+`ALLOWED_ORIGINS` is a comma-separated allowlist. The Worker rejects cross-origin requests from origins not on the list, except hosted MCP paths which must be permissive to support third-party clients. Responses always emit security headers (HSTS, X-Content-Type-Options, Referrer-Policy, etc.) from the ensemble in [apps/api/src/workerApp.ts](../apps/api/src/workerApp.ts).
 
-These are **non-negotiable** for production:
+## 9. Admin control plane
 
-1. **Webhook signature verification**: every inbound PayU callback MUST have its hash verified against `PAYU_MERCHANT_SALT` before any side-effects are applied. The API enforces this in the webhook handler — see `apps/api/src/handlers/webhooks.ts` → `isPayUWebhookSignatureValid()`.
+- `x-admin-token` required for `/admin/*` and `/v1/admin/*`.
+- Two modes:
+  - `legacy` — equality compare on `MASTER_ADMIN_TOKEN`.
+  - `signed-required` — HMAC-signed headers (timestamp-bound).
+- `ADMIN_ALLOWED_IPS` pins admin calls to a bastion/CI egress list (`*` disables — emergency only).
+- `ADMIN_BREAK_GLASS=1` is a narrowly-scoped override to fall back to legacy auth inside `signed-required`; disable by default.
+- When `DISABLE_SERVICE_ROLE_REQUEST_PATH=1`, admin routes return `503 CONTROL_PLANE_ONLY` — admin must be executed from a dedicated control-plane path.
 
-2. **Verify-before-grant**: entitlements (plan upgrades, subscription activation) are granted ONLY after the PayU Verify API confirms the transaction status. The webhook handler calls `reconcilePayUWebhook()` which includes verify-before-grant logic. This prevents:
-   - Forged webhook payloads from granting entitlements.
-   - Race conditions between webhook delivery and transaction settlement.
+## 10. Audit and request id
 
-3. **Idempotency**: duplicate webhook deliveries are safely handled via `event_id` deduplication (`webhook_replayed` event).
+- `x-request-id` on every response.
+- `emitAuditLog` writes `api_audit_log` rows with salted-SHA-256 of client IP (`AUDIT_IP_SALT`).
+- Structured `request_completed` log emitted on every request (see [docs/internal/OBSERVABILITY.md](./internal/OBSERVABILITY.md)).
 
-4. **Deferred processing**: if a webhook arrives before workspace mapping exists, it is parked (not dropped) and can be reprocessed via `POST /admin/webhooks/reprocess`.
+## 11. Secret rotation checklist
 
----
+Documented in [docs/internal/IDENTITY_TENANCY.md §5](./internal/IDENTITY_TENANCY.md). Hard rules:
 
-## Dashboard session (no API key in browser)
+- Never put live Stripe secrets into the Worker; Stripe is retired.
+- Rotate `MASTER_ADMIN_TOKEN` on any suspected compromise; log the rotation.
+- Rotate `API_KEY_SALT` only through the documented procedure (re-issuing customer keys in a scheduled window).
 
-- **No long-lived API keys in the dashboard.** The dashboard never stores API keys in `localStorage`, `sessionStorage`, or IndexedDB. CI gate G2 enforces an allowlist for browser storage (e.g. `theme`, `workspace_id` only).
-- **Session-based auth:** The dashboard authenticates to the API via a short-lived session token in an **httpOnly, SameSite=Lax, Secure** cookie (`mn_dash_session`). The token is minted by the Worker after validating the Supabase access token and workspace membership.
-- **Endpoints:** `POST /v1/dashboard/session` (body: `access_token`, `workspace_id`) creates a session and sets the cookie; response body includes `csrf_token` for mutating requests. `POST /v1/dashboard/logout` invalidates the session and clears the cookie.
-- **CSRF (locked approach):** SameSite=Lax cookies **plus** Origin validation **plus** CSRF token for all mutating dashboard API calls (POST/PUT/DELETE/PATCH). The Worker returns `csrf_token` in the session response; the dashboard sends it in the `X-CSRF-Token` header on every mutating request. **Allowed origins:** Configure `ALLOWED_ORIGINS` in the Worker (comma-separated). Must include the production dashboard origin (e.g. `https://console.memorynode.ai`), staging, and preview pattern (e.g. `https://*.vercel.app` or your PR preview URL). Browser requests with an `Origin` header are rejected if the origin is not in the allowlist. Non-browser API clients (no `Origin` header) are allowed on non-dashboard endpoints (e.g. programmatic API key calls).
-- **Session lifetime and refresh:** Access token (session cookie) TTL is **15 minutes**. There is no refresh cookie in Phase 0; when the session expires the user must sign in again (dashboard will get 401 and clear state). **Idle timeout** and **absolute max session** (e.g. 12 h) are documented here; optional enforcement can be added later (e.g. sliding expiry on activity, or max session length). Session loss on deploy is acceptable in Phase 0; users re-auth.
-- **API key create/reveal:** Keys are created via Supabase RPC (`create_api_key`). The plaintext key is shown **once** at creation; the dashboard does not store it. List/revoke use Supabase RPC and session-authenticated API where needed.
-- **Rotation and revoke:** **Revoke** is supported in both UI and API (e.g. `POST /v1/api-keys/revoke` with `api_key_id`; Supabase RPC `revoke_api_key(key_id)`). **Rotation** = create a new key (same workspace/name or new name) then revoke the old key. **Grace-period rotation:** When rotating, the old key can remain valid for a short window (e.g. 24 hours) so integrations can switch to the new key before the old one is revoked. Implement by: (1) create new key and distribute to clients, (2) wait for grace period (e.g. 24 h) or until clients confirm switch, (3) call revoke on the old key. Documented in API_REFERENCE.md.
+## 12. Known constraints
 
----
+- Stripe billing tables (`infra/sql/016_webhook_events.sql` and earlier) remain for historical queries; no code path writes to them.
+- `/v1/billing/portal` always returns 410. Customers manage subscriptions in the PayU dashboard.
+- Data plane is single-region Supabase; DR posture tracked in [docs/internal/INCIDENT_RUNBOOKS.md](./internal/INCIDENT_RUNBOOKS.md).
 
-## CSP and security headers (dashboard)
+## 13. Reporting
 
-- **Content-Security-Policy (CSP):** The dashboard deploy sends CSP via `public/_headers` (Cloudflare Pages) or `vercel.json` (Vercel). Script-src is `'self'` only (no `unsafe-inline` for scripts). **CSP exception process:** Any exception must have a **linked issue**, **reason**, **scope**, and **due date to remove**. Current exception: **style-src 'unsafe-inline'** — reason: inline styles in `index.html`; scope: dashboard; remove when styles are moved to external CSS.
-- **Other headers:** `X-Content-Type-Options: nosniff`, `Referrer-Policy`, `Permissions-Policy` (minimal). Set on the dashboard host (Pages/Vercel) so all dashboard responses include them.
-- **G5:** CI checks that the dashboard (PR preview or staging) returns CSP and required headers; see `scripts/ci_trust_gates.mjs` and workflow.
+Email `security@memorynode.ai` with:
 
----
+- Endpoint and request id (`x-request-id`) if reproducible.
+- Environment (`api.memorynode.ai` vs `api-staging.memorynode.ai`).
+- Steps to reproduce and expected vs observed behavior.
 
-## Rotation Playbook (if a secret is exposed)
-
-### General Steps
-
-1. Revoke/rotate immediately in provider dashboard.
-2. Update Cloudflare Worker secret values (staging + production).
-3. Redeploy and verify health/smoke checks.
-4. Invalidate dependent credentials/tokens (API keys, sessions, webhooks).
-5. Document incident, blast radius, and closure.
-
-### OpenAI (`OPENAI_API_KEY`)
-
-- Generate a new key in OpenAI dashboard.
-- Disable old key.
-- Update Worker secret and redeploy.
-
-### Supabase (`SUPABASE_SERVICE_ROLE_KEY`)
-
-- Rotate service-role key in Supabase project settings.
-- Update Worker secret and any secure automation that uses it.
-- Redeploy and run DB/API smoke tests.
-
-### PayU (`PAYU_MERCHANT_KEY`, `PAYU_MERCHANT_SALT`, optional `PAYU_WEBHOOK_SECRET`)
-
-**Rotation steps:**
-
-1. **Assess blast radius**: determine if the exposed secret was merchant key, salt, or both.
-   - If only `PAYU_MERCHANT_KEY`: attackers can identify the merchant but cannot forge signatures.
-   - If `PAYU_MERCHANT_SALT`: attackers can forge webhook signatures — **treat as critical**.
-2. **Rotate in PayU dashboard**:
-   - Log in to PayU merchant dashboard.
-   - Navigate to Settings → API Configuration.
-   - Generate new merchant key/salt.
-   - Note: PayU may require contacting support for salt rotation.
-3. **Update Worker secrets** (do staging first, then production):
-
-   ```bash
-   pnpm --filter @memorynode/api exec wrangler secret put PAYU_MERCHANT_KEY --env staging
-   pnpm --filter @memorynode/api exec wrangler secret put PAYU_MERCHANT_SALT --env staging
-   # Verify staging:
-   TARGET_ENV=staging STAGING_BASE_URL=https://api-staging.memorynode.ai API_KEY=<key> pnpm release:staging:validate
-
-   pnpm --filter @memorynode/api exec wrangler secret put PAYU_MERCHANT_KEY --env production
-   pnpm --filter @memorynode/api exec wrangler secret put PAYU_MERCHANT_SALT --env production
-   ```
-
-4. **Verify webhook path**: send a test PayU callback and confirm `webhook_verified` + `webhook_processed` appear in Worker logs.
-5. **Check for forged transactions**: query `billing_events` table for any transactions that arrived between exposure and rotation. Cross-reference with PayU dashboard transaction list.
-6. **If forged entitlements found**:
-   - Revoke affected workspace entitlements.
-   - Notify affected users.
-   - Document in incident report.
-
-**Downtime note**: between rotating in PayU dashboard and updating Worker secrets, inbound webhooks will fail signature verification (`billing_webhook_signature_invalid`). Keep this window as short as possible (<5 minutes).
-
-### Internal Admin Secrets (`MASTER_ADMIN_TOKEN`, `API_KEY_SALT`, optional `ADMIN_ALLOWED_IPS`)
-
-- Generate fresh random values.
-- Update Worker secrets.
-- For `API_KEY_SALT`, rotate API keys after update.
-- **`ADMIN_ALLOWED_IPS`**: optional comma-separated exact IPs for `x-admin-token` routes (`cf-connecting-ip`). Use in production to restrict admin API to known egress (CI, bastion). Set to `*` only as a temporary break-glass (disables IP check).
-- **Signed admin auth (recommended default for staging/prod):** require `x-admin-timestamp`, `x-admin-nonce`, and `x-admin-signature` (HMAC-SHA256 over `METHOD\\nPATH\\nTIMESTAMP\\nNONCE` using `MASTER_ADMIN_TOKEN` as key). Requests older than 5 minutes or nonce replays are rejected.
-- **Break-glass mode:** set `ADMIN_BREAK_GLASS=1` only during emergency operations to temporarily allow legacy `x-admin-token`; all break-glass auth events must be audited and rotated immediately after use.
-
----
-
-## Incident Response — PayU Secret Compromise
-
-| Step | Action | Owner | SLA |
-| --- | --- | --- | --- |
-| 1 | Confirm exposure scope (which secrets, which environments) | On-call | <15 min |
-| 2 | Rotate secrets in PayU dashboard | On-call + PayU admin | <30 min |
-| 3 | Update Worker secrets and redeploy | On-call | <15 min after step 2 |
-| 4 | Verify webhook flow end-to-end | On-call | <15 min after step 3 |
-| 5 | Audit transactions for forgery | On-call | <2 hours |
-| 6 | Revoke forged entitlements (if any) | On-call | <1 hour after step 5 |
-| 7 | Write incident report | On-call | <24 hours |
-
----
-
-## GitHub Secret Scanning
-
-- Enable GitHub Secret Scanning and Push Protection on the repository (if hosted on GitHub with eligible plan).
-- On alert:
-  1. Treat as active incident.
-  2. Rotate secret first, then clean repository/workflow exposure.
-  3. Close alert only after redeploy + verification.
+Do not open public issues for suspected vulnerabilities.

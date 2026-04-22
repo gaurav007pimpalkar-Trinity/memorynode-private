@@ -8,9 +8,6 @@
     { "from": "public-onboarding/.gitignore", "to": ".gitignore" },
     { "from": "public-onboarding/LICENSE", "to": "LICENSE" },
     { "from": "public-onboarding/README_PUBLIC_REPO.md", "to": "README.md" },
-    { "from": "docs/external/TRUST.md", "to": "docs/TRUST.md", "transform": "publicDocs" },
-    { "from": "docs/SECURITY.md", "to": "docs/SECURITY.md", "transform": "publicDocs" },
-    { "from": "docs/DATA_RETENTION.md", "to": "docs/DATA_RETENTION.md", "transform": "publicDocs" },
-    { "from": "docs/external/POSITIONING.md", "to": "docs/POSITIONING.md", "transform": "publicDocs" }
+    { "from": "docs/SECURITY.md", "to": "docs/SECURITY.md", "transform": "publicDocs" }
   ]
 }

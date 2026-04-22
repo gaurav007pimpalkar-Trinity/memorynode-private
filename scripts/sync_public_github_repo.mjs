@@ -46,34 +46,11 @@ function getPublicRemoteUrl(manifest) {
  * @param {string} content
  * @param {string} destPath path inside public repo (e.g. docs/TRUST.md)
  */
-function transformPublicDocs(content, destPath) {
-  let c = content.replace(SUPPORTING_BLOCK, "");
-  if (destPath === "docs/TRUST.md") {
-    c = c.replaceAll("](../SECURITY.md)", "](./SECURITY.md)");
-    c = c.replaceAll("](../DATA_RETENTION.md)", "](./DATA_RETENTION.md)");
-  }
-  if (destPath === "docs/DATA_RETENTION.md") {
-    c = c.replace(
-      "[API usage](./external/API_USAGE.md)",
-      "[HTTP API — @memorynodeai/sdk on npm](https://www.npmjs.com/package/@memorynodeai/sdk)",
-    );
-    c = c.replace(
-      "[external README](./external/README.md)",
-      "[Repository README](../README.md)",
-    );
-    c = c.replaceAll("./external/TRUST.md", "./TRUST.md");
-    c = c.replace(
-      "[external/TRUST.md](./TRUST.md)",
-      "[TRUST.md](./TRUST.md)",
-    );
-  }
-  if (destPath === "docs/POSITIONING.md") {
-    c = c.replace(
-      "See [MCP_SERVER.md](../MCP_SERVER.md).",
-      "See the [@memorynodeai/mcp-server package on npm](https://www.npmjs.com/package/@memorynodeai/mcp-server).",
-    );
-  }
-  return c;
+function transformPublicDocs(content, _destPath) {
+  // Strip the monorepo-only supporting header; the remaining mirror entries
+  // (README.md, docs/SECURITY.md) have no further link-rewriting requirements
+  // after the docs cleanup.
+  return content.replace(SUPPORTING_BLOCK, "");
 }
 
 function transformFile(content, destPath, transform) {
