@@ -1,74 +1,102 @@
-## ⚠️ Internal Operational Document
+# Supabase Google OAuth Setup
 
-This document may not reflect real-time production state.  
-Always verify against actual infrastructure (Cloudflare, Supabase, etc.).
+How the MemoryNode Pages dashboards exchange a Supabase Google OAuth access token for a server-side session on the `memorynode-api` Worker.
 
----
+Only the code-side steps below are directly verifiable from this repo. The Supabase and Google Cloud steps at the end are flagged as out-of-scope for the code-only scan and must be verified against the live Supabase project.
 
-# Supabase Google OAuth (console only)
+## 1. What the code actually does
 
-Use this when **Continue with Google** fails with Supabase `400` / `validation_failed` and **`Unsupported provider: provider is not enabled`**, or when redirects are rejected.
+### 1.1 Dashboard Supabase client
 
-The customer console calls `signInWithOAuth({ provider: "google", options: { redirectTo: window.location.origin } })` from `apps/dashboard/src/App.tsx`. Production uses `https://console.memorynode.ai` as `redirect_to`.
+[apps/dashboard/src/supabaseClient.ts:1-22](../../apps/dashboard/src/supabaseClient.ts):
 
-The founder app on `https://app.memorynode.ai/founder` does not use Supabase login; it stays admin-token protected.
+```ts
+const supabase = createClient(VITE_SUPABASE_URL, VITE_SUPABASE_ANON_KEY, {
+  auth: {
+    persistSession: true,
+    detectSessionInUrl: true,
+  },
+});
+```
 
----
+Required build-time env:
 
-## 1. Enable Google in Supabase
+- `VITE_SUPABASE_URL` — Supabase project URL.
+- `VITE_SUPABASE_ANON_KEY` — Supabase anon key.
 
-1. Open the **same** Supabase project as `VITE_SUPABASE_URL` on Cloudflare Pages (production console).
-2. **Authentication** → **Providers** → **Google**.
-3. Turn the provider **ON**.
-4. Paste **Client ID** and **Client Secret** from Google Cloud (see section 2).
+Missing either surfaces as `supabaseEnvError` in the UI.
 
----
+### 1.2 Browser handoff
 
-## 2. Google Cloud OAuth client
+After Supabase completes the Google OAuth redirect, the dashboard reads the access token and calls `ensureDashboardSession(access_token, workspace_id)` in `apps/dashboard/src/apiClient.ts`. That function POSTs to `/v1/dashboard/session`:
 
-1. [Google Cloud Console](https://console.cloud.google.com/) → APIs & Services → Credentials → **Create credentials** → **OAuth client ID** (or use an existing Web client).
-2. Application type: **Web application**.
-3. **Authorized redirect URIs** — add Supabase’s callback **exactly** as shown in Supabase (under Google provider), typically:
+```
+POST /v1/dashboard/session
+Content-Type: application/json
 
-   `https://<project-ref>.supabase.co/auth/v1/callback`
+{
+  "access_token": "<Supabase JWT>",
+  "workspace_id": "<uuid>"
+}
+```
 
-   Replace `<project-ref>` with your project reference from the Supabase project URL.
+### 1.3 Worker verification
 
-4. Save. Copy **Client ID** and **Client secret** into Supabase (step 1).
+`handleDashboardSession` in [apps/api/src/workerApp.ts](../../apps/api/src/workerApp.ts) does:
 
----
+1. Verify the Supabase JWT using `SUPABASE_JWT_SECRET`.
+2. Lookup the user via Supabase Auth `Get User` (requires `SUPABASE_ANON_KEY`).
+3. Confirm workspace membership (`workspace_members` via `is_workspace_member`).
+4. Insert a row into `dashboard_sessions` with an opaque server token + CSRF token.
+5. Respond with `Set-Cookie: mn_session=<opaque>; HttpOnly; Secure; SameSite=Lax` and body `{ csrf_token, expires_at }`.
 
-## 3. Redirect / Site URL allowlist
+See [DASHBOARD_SESSION_SETUP.md](./DASHBOARD_SESSION_SETUP.md) for the full request-time verification contract.
 
-1. Supabase → **Authentication** → **URL Configuration**.
-2. Ensure **Site URL** is appropriate (e.g. `https://console.memorynode.ai` for production, or your primary app URL).
-3. Under **Redirect URLs**, add:
+### 1.4 Worker env required
 
-   - `https://console.memorynode.ai`
-   - `http://localhost:5173` and/or `http://localhost:4173` if you test OAuth locally (match the port you use).
+Set on `memorynode-api` via `wrangler secret put`:
 
-If Supabase returns **`redirect_to is not allowed`**, the value sent by the app is not in this list — add the exact origin (no trailing slash unless you use it consistently).
+| Secret | Why |
+| --- | --- |
+| `SUPABASE_URL` | Supabase Auth API base |
+| `SUPABASE_ANON_KEY` | Calls `Get User` on the JWT |
+| `SUPABASE_JWT_SECRET` | Verifies the JWT signature |
+| `SUPABASE_SERVICE_ROLE_KEY` | Writes `dashboard_sessions` (Phase A) |
 
----
+`ALLOWED_ORIGINS` must include the surface hostnames (`https://console.memorynode.ai`, `https://app.memorynode.ai`) or the Worker rejects the POST at the CORS gate.
 
-## 4. End-to-end verification
+## 2. Supabase + Google configuration (manual — verify in the live Supabase project)
 
-1. Deploy or use production: open `https://console.memorynode.ai` (or local with matching redirect URL in Supabase).
-2. Click **Continue with Google**.
-3. Expected: browser goes to **Google consent**, not a JSON error page.
-4. After consent: redirect back to the console origin; session should be established.
+These steps are outside the code-only scan. Treat them as a checklist and verify each item in the Supabase and Google Cloud consoles before going live.
 
-**If the UI shows an error** (e.g. after recent dashboard changes): read the message — common cases:
+1. **Google Cloud → OAuth consent screen** published for the intended user set.
+2. **Google Cloud → Credentials** — create an OAuth 2.0 Web application client. Capture the client ID and secret.
+3. **Authorized redirect URIs** must include the Supabase callback: `https://<project-ref>.supabase.co/auth/v1/callback`.
+4. **Supabase → Authentication → Providers → Google** — paste the Google client ID and secret, enable the provider.
+5. **Supabase → Authentication → URL Configuration → Redirect URLs** — add the production surfaces: `https://console.memorynode.ai`, `https://app.memorynode.ai`, plus the staging and localhost hosts you use.
+6. **Supabase → Authentication → JWT Settings** — confirm the signing secret matches the `SUPABASE_JWT_SECRET` stored on the Worker. If you rotate here, you must `wrangler secret put` the new value and redeploy the Worker.
+7. **Supabase → Project Settings → API** — capture the `Project URL`, `anon key` (build-time for dashboards), and `service_role key` (Worker secret).
 
-| Symptom / message | Action |
-|-------------------|--------|
-| `Unsupported provider: provider is not enabled` | Enable Google provider in Supabase (section 1). |
-| `redirect_to is not allowed` | Add exact `redirect_to` origin to **Redirect URLs** (section 3). |
-| `invalid_client` | Fix Client ID/Secret pair in Supabase vs Google Cloud. |
-| Google “redirect_uri_mismatch” | Add `https://<ref>.supabase.co/auth/v1/callback` in Google Cloud (section 2). |
+## 3. Validation
 
----
+After deploy:
 
-## Related
+1. Sign in via the dashboard. Browser should return from Supabase with a Supabase session cookie (client-side).
+2. Network tab should show `POST /v1/dashboard/session` responding 200 with a `Set-Cookie: mn_session=...` header and `{ csrf_token, expires_at }` in the body.
+3. A subsequent mutating call (e.g. `PATCH /v1/profile/pins`) must include the cookie and an `x-csrf-token` header matching the returned CSRF token.
+4. `POST /v1/dashboard/logout` clears the cookie (`Set-Cookie: mn_session=; Max-Age=0`).
 
-- Console deploy: [DASHBOARD_DEPLOY.md](./DASHBOARD_DEPLOY.md)
+## 4. Troubleshooting
+
+| Symptom | Cause | Fix |
+| --- | --- | --- |
+| 401 on `POST /v1/dashboard/session` | `SUPABASE_JWT_SECRET` mismatch with Supabase project | Rotate and `wrangler secret put` |
+| CORS blocked in browser | Surface hostname missing from `ALLOWED_ORIGINS` | Update secret + redeploy |
+| User signs in but Supabase redirects to the wrong hostname | Supabase redirect URL list missing the surface | Add in Supabase → Authentication → URL Configuration |
+| 500 with Supabase user lookup error | `SUPABASE_ANON_KEY` unset | `wrangler secret put SUPABASE_ANON_KEY` |
+
+## 5. Related
+
+- [DASHBOARD_SESSION_SETUP.md](./DASHBOARD_SESSION_SETUP.md) — server-side session contract.
+- [DASHBOARD_DEPLOY.md](./DASHBOARD_DEPLOY.md) — Pages build/deploy.
+- [IDENTITY_TENANCY.md](./IDENTITY_TENANCY.md) — isolation rules for session callers.

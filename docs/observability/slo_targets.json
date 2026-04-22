@@ -1,23 +1,37 @@
 {
   "$schema": "https://memorynode.ai/schemas/slo_targets.json",
-  "version": "1",
+  "version": "2",
+  "description": "Service-level objectives aligned with alert_rules.json. Targets marked _source=code are derived from apps/api/src/resilienceConstants.ts or packages/shared/src/plans.ts.",
   "window_days": 28,
   "services": [
     {
       "id": "api",
+      "display_name": "MemoryNode API (memorynode-api Worker)",
       "availability_target_pct": 99.9,
       "latency_p99_ms_target": 2000,
-      "error_budget_policy": "freeze_nonessential_releases_on_exhaustion"
+      "latency_p95_ms_target": 1200,
+      "error_budget_policy": "freeze_nonessential_releases_on_exhaustion",
+      "paired_alerts": ["A1", "A2", "A3"],
+      "_source": "policy"
     },
     {
       "id": "billing_webhook",
+      "display_name": "PayU webhook ingest",
       "processing_within_seconds_target_pct": 99,
-      "processing_within_seconds": 300
+      "processing_within_seconds": 300,
+      "paired_alerts": ["D1", "D2", "D3", "D4"],
+      "retry_budget_ms": 1500,
+      "verify_timeout_ms": 10000,
+      "_source": "code",
+      "_code_anchor": "apps/api/src/resilienceConstants.ts:PAYU_VERIFY_TIMEOUT_MS=10000,PAYU_VERIFY_RETRY_DELAYS_MS=[500,1500]"
     },
     {
       "id": "dashboard_session",
+      "display_name": "POST /v1/dashboard/session",
       "availability_target_pct": 99.9,
-      "latency_p99_ms_target": 1000
+      "latency_p99_ms_target": 1000,
+      "paired_alerts": ["A1", "A2"],
+      "_source": "policy"
     }
   ],
   "paging": {
@@ -29,5 +43,17 @@
       "target_ack_minutes": 30,
       "target_mitigate_minutes": 240
     }
+  },
+  "rate_ceilings": {
+    "description": "Upper bounds on request volume derived from code. Used to size SLO burn budgets.",
+    "_source": "code",
+    "_code_anchor": "packages/shared/src/plans.ts, apps/api/src/resilienceConstants.ts",
+    "per_key_rpm_default": 60,
+    "per_key_rpm_new_key": 15,
+    "per_workspace_rpm_default": 120,
+    "per_workspace_rpm_scale": 300,
+    "workspace_concurrency_max": 8,
+    "embed_timeout_ms": 30000,
+    "extract_timeout_ms": 15000
   }
 }

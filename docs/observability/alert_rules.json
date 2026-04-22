@@ -1,29 +1,36 @@
 {
   "$schema": "https://memorynode.ai/schemas/alert_rules.json",
-  "version": "1",
+  "version": "2",
+  "description": "Alert rules grounded in events emitted by apps/api/src/*. See docs/internal/ALERTS.md for human description and docs/internal/INCIDENT_RUNBOOKS.md for response.",
   "measurement_window_minutes": 5,
   "alerts": [
     {
       "id": "A1",
       "name": "5xx error rate",
+      "category": "api_health",
       "source_filter": "event_name=\"request_completed\" AND status>=500",
+      "metric_fields": ["status", "latency_ms"],
       "warn": { "condition": "rate_pct > 1", "min_events": 5 },
       "critical": { "condition": "rate_pct > 3 OR count >= 20" },
-      "window_min": 5
+      "window_min": 5,
+      "runbook": "docs/internal/INCIDENT_RUNBOOKS.md#35-release-regression--rollback"
     },
     {
       "id": "A2",
       "name": "Auth failure rate (401/403)",
+      "category": "api_health",
       "source_filter": "event_name=\"request_completed\" AND status IN (401,403)",
       "warn": { "condition": "rate_pct > 20", "min_requests": 30 },
       "critical": { "condition": "rate_pct > 40", "min_requests": 50 },
-      "window_min": 10
+      "window_min": 10,
+      "runbook": "docs/internal/INCIDENT_RUNBOOKS.md#31-auth-outage--auth-failure-spike-a2"
     },
     {
       "id": "A3",
       "name": "p95 latency",
+      "category": "api_health",
       "source_filter": "event_name=\"request_completed\"",
-      "metric": "duration_ms",
+      "metric": "latency_ms",
       "percentile": 95,
       "warn_ms": 1200,
       "critical_ms": 2500,
@@ -32,6 +39,7 @@
     {
       "id": "B1",
       "name": "Cap exceeded (402)",
+      "category": "quota",
       "source_filter": "event_name=\"cap_exceeded\"",
       "warn_count": 50,
       "critical_count": 150,
@@ -40,14 +48,17 @@
     {
       "id": "B2",
       "name": "Rate-limit denials (429)",
+      "category": "quota",
       "source_filter": "event_name=\"request_completed\" AND error_code=\"rate_limited\"",
       "warn_count": 50,
       "critical_count": 150,
-      "window_min": 5
+      "window_min": 5,
+      "runbook": "docs/internal/INCIDENT_RUNBOOKS.md#34-rate-limit-infrastructure-outage--abuse-spike-b2b3"
     },
     {
       "id": "B3",
       "name": "Top rejecting workspaces",
+      "category": "quota",
       "source_filter": "event_name IN (\"cap_exceeded\") OR (event_name=\"request_completed\" AND error_code=\"rate_limited\")",
       "group_by": "workspace_id_redacted",
       "warn_per_workspace": 30,
@@ -56,18 +67,21 @@
     },
     {
       "id": "C1",
-      "name": "Embed latency",
+      "name": "Embed latency / errors",
+      "category": "external_ai",
       "source_filter": "event_name=\"embed_request\"",
       "metric": "embed_latency_ms",
       "percentile": 95,
       "warn_ms": 2000,
       "critical_ms": 5000,
       "critical_condition": "success=false burst >= 5 in 5 min",
+      "code_anchor": "apps/api/src/resilienceConstants.ts:EMBED_REQUEST_TIMEOUT_MS=30000",
       "window_min": 10
     },
     {
       "id": "C2",
       "name": "Search latency",
+      "category": "external_ai",
       "source_filter": "event_name=\"search_request\"",
       "metric": "search_latency_ms",
       "percentile": 95,
@@ -78,6 +92,7 @@
     {
       "id": "D1",
       "name": "Webhook failures",
+      "category": "billing_webhook",
       "source_filter": "event_name IN (\"webhook_failed\",\"billing_endpoint_error\")",
       "warn_count": 5,
       "critical_count": 20,
@@ -86,14 +101,17 @@
     {
       "id": "D2",
       "name": "Signature invalid",
+      "category": "billing_webhook",
       "source_filter": "event_name=\"billing_webhook_signature_invalid\"",
       "warn_count": 1,
       "critical_count": 5,
-      "window_min": 10
+      "window_min": 10,
+      "runbook": "docs/internal/INCIDENT_RUNBOOKS.md#33-billing-webhook-forgeryreplaysurge-d1-d4"
     },
     {
       "id": "D3",
       "name": "Workspace not found",
+      "category": "billing_webhook",
       "source_filter": "event_name=\"billing_webhook_workspace_not_found\"",
       "warn_count": 3,
       "critical_count": 10,
@@ -102,26 +120,31 @@
     {
       "id": "D4",
       "name": "Deferred backlog",
+      "category": "billing_webhook",
       "source_filter_deferred": "event_name=\"webhook_deferred\"",
       "source_filter_reconciled": "event_name=\"webhook_reconciled\"",
       "metric": "deferred_count - reconciled_count",
       "warn_count": 5,
       "critical_count": 15,
-      "window_min": 60
+      "window_min": 60,
+      "mitigation": "POST /admin/webhooks/reprocess"
     },
     {
       "id": "E1",
       "name": "DB RPC latency",
+      "category": "database",
       "source_filter": "event_name=\"db_rpc\"",
       "metric": "db_latency_ms",
       "percentile": 95,
       "warn_ms": 500,
       "critical_ms": 1500,
-      "window_min": 10
+      "window_min": 10,
+      "runbook": "docs/internal/INCIDENT_RUNBOOKS.md#32-db-degradation--rpc-failures-e1e2"
     },
     {
       "id": "E2",
       "name": "DB RPC failures",
+      "category": "database",
       "source_filter": "event_name=\"db_rpc\" AND success=false",
       "source_filter_alt": "event_name=\"request_completed\" AND error_code=\"DB_ERROR\"",
       "warn_count": 5,

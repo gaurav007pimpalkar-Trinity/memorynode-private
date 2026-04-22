@@ -1,94 +1,119 @@
-## ⚠️ Internal Operational Document
+# Dashboard Session Setup
 
-This document may not reflect real-time production state.  
-Always verify against actual infrastructure (Cloudflare, Supabase, etc.).
+How the MemoryNode Pages dashboards (`memorynode-console`, `memorynode-app`) authenticate users against the `memorynode-api` Worker.
 
----
+Source of truth:
 
-# Dashboard session setup (Phase 0.2)
+- Client: [apps/dashboard/src/supabaseClient.ts](../../apps/dashboard/src/supabaseClient.ts) and `apps/dashboard/src/apiClient.ts` (`ensureDashboardSession`).
+- Worker handler: `handleDashboardSession` + `handleDashboardLogout` in [apps/api/src/workerApp.ts](../../apps/api/src/workerApp.ts).
+- Schema: `infra/sql/023_dashboard_sessions.sql`, `024_dashboard_sessions_csrf.sql`.
 
-Follow these steps after implementing the dashboard session (no API key in browser).
+## 1. Flow
 
----
+```
+user → dashboard (Supabase JS)
+       │
+       ├─ Supabase Auth (Google OAuth) → access_token (JWT)
+       │
+       ├─ POST /v1/dashboard/session
+       │   body: { access_token, workspace_id }
+       │   Worker:
+       │     - verifies JWT via SUPABASE_JWT_SECRET
+       │     - confirms workspace membership (is_workspace_member)
+       │     - inserts dashboard_sessions row
+       │     - sets Set-Cookie: mn_session=<opaque>; HttpOnly; Secure; SameSite=Lax
+       │     - returns { csrf_token, expires_at }
+       │
+       └─ subsequent requests
+           Cookie: mn_session=<opaque>
+           x-csrf-token: <csrf_token>
+           Worker verifies cookie + CSRF double-submit on every mutating request.
+```
 
-## 1. Run the migrations so `dashboard_sessions` exists
+On sign-out the dashboard calls `POST /v1/dashboard/logout`, which deletes the row and clears the cookie.
 
-Tables/columns are in **`infra/sql/023_dashboard_sessions.sql`** and **`infra/sql/024_dashboard_sessions_csrf.sql`** (adds `csrf_token` for Phase 0 CSRF).
+## 2. Required env
 
-### Option A: Use the project’s migration script (recommended)
+### Worker (`memorynode-api`)
 
-1. **Get your Supabase Postgres URL**
-   - Supabase Dashboard → **Project settings** → **Database**.
-   - Copy **Connection string** (URI). Use “Direct connection” or “Session pool” depending on how you run migrations.
-   - It looks like:  
-     `postgresql://postgres.[ref]:[PASSWORD]@aws-0-[region].pooler.supabase.com:5432/postgres`
+| Secret | Required for | Notes |
+| --- | --- | --- |
+| `SUPABASE_URL` | Session handler (metadata lookups) | |
+| `SUPABASE_JWT_SECRET` | JWT verification on `POST /v1/dashboard/session` | Must match the active Supabase project signing secret |
+| `SUPABASE_ANON_KEY` | Metadata lookups (`auth.users`) via Supabase Auth API | |
+| `SUPABASE_SERVICE_ROLE_KEY` | Writing to `dashboard_sessions` (Phase A) | |
+| `ALLOWED_ORIGINS` | Must include the surface's hostname (`https://console.memorynode.ai`, `https://app.memorynode.ai`) | CORS gate in [workerApp.ts](../../apps/api/src/workerApp.ts) |
 
-2. **Set the URL and run migrations**
-   ```bash
-   # From repo root. Use the variable name your project expects:
-   export SUPABASE_DB_URL="postgresql://USER:PASSWORD@HOST:5432/postgres?sslmode=require"
-   # Or on Windows PowerShell:
-   # $env:SUPABASE_DB_URL = "postgresql://USER:PASSWORD@HOST:5432/postgres?sslmode=require"
+### Dashboard (Pages)
 
-   pnpm db:migrate
-   ```
-   This applies all pending migrations in `infra/sql/`, including `023_dashboard_sessions.sql`, and records them in `memorynode_migrations`.
+Only two Vite vars are required at build time (see `supabaseClient.ts:3-8`):
 
-3. **Confirm the table exists**
-   - In Supabase: **SQL Editor** → run:
-     ```sql
-     select * from dashboard_sessions limit 0;
-     ```
-   - Or use the schema check:
-     ```bash
-     pnpm db:verify-schema
-     ```
+- `VITE_SUPABASE_URL`
+- `VITE_SUPABASE_ANON_KEY`
 
-### Option B: Run the SQL file manually
+Plus `VITE_API_BASE_URL` (points to `https://api.memorynode.ai`) — used by `apiClient.ts`.
 
-If you don’t use `pnpm db:migrate` for this DB:
+## 3. Cookie + CSRF contract
 
-1. Open **Supabase Dashboard** → **SQL Editor**.
-2. Paste the contents of **`infra/sql/023_dashboard_sessions.sql`**.
-3. Run the script.
-4. If you use `memorynode_migrations` for tracking, insert a row so the migration script doesn’t try to re-apply it:
-   ```sql
-   insert into memorynode_migrations (filename, checksum)
-   values ('023_dashboard_sessions.sql', 'manual')
-   on conflict (filename) do nothing;
-   ```
+Set by the Worker on successful `POST /v1/dashboard/session`:
 
----
+```
+Set-Cookie: mn_session=<opaque>; HttpOnly; Secure; SameSite=Lax; Path=/; Max-Age=<ttl>
+```
 
-## 2. Set `SUPABASE_ANON_KEY` in the Worker (required in production)
+Response body:
 
-The Worker verifies the dashboard’s Supabase access token by calling **Supabase Auth API → Get User**. The project’s **anon (public) key** is required; in production, `check_config` (release:gate) fails if it is missing.
+```json
+{ "csrf_token": "<base64url>", "expires_at": "<iso-timestamp>" }
+```
 
-- **Production:** Set the secret so dashboard session creation works:
-  1. Supabase Dashboard → **Project settings** → **API**.
-  2. Copy **anon / public** key.
-  3. Set it in the Worker (e.g. Cloudflare):
-     ```bash
-     pnpm --filter @memorynode/api exec wrangler secret put SUPABASE_ANON_KEY
-     # Paste the anon key when prompted.
-     ```
-  4. Redeploy the Worker if needed.
+Dashboard stores `csrf_token` in memory (not localStorage) and attaches it as `x-csrf-token` on every non-GET `/v1/*` call. The Worker compares `x-csrf-token` to `dashboard_sessions.csrf_token` in constant time. Mismatch → 403.
 
----
+Session TTL is stored on the row; requests past `expires_at` return 401 and trigger a client-side re-login.
 
-## 3. Local dev: session cookie and HTTP
+## 4. Worker verification steps
 
-- **HTTPS (e.g. production):** The session cookie is set with **Secure**. Browsers only send it over HTTPS. Normal for production.
-- **HTTP (e.g. `http://localhost`):** The code sets the cookie **without** `Secure` when the request URL is `http://` so the cookie is sent on localhost. No extra config.
+On every tenant request:
 
-If you use a tunnel (e.g. ngrok) with HTTPS for local dev, the cookie will be Secure and will work over that HTTPS URL.
+1. `verifyDashboardSession` ([apps/api/src/auth.ts](../../apps/api/src/auth.ts)) loads the `dashboard_sessions` row by the opaque token (SHA-256 hashed before lookup).
+2. Rejects if expired, revoked, or absent.
+3. Rate-limits via `RATE_LIMIT_DASHBOARD_SESSION_MAX` and standard per-key / per-workspace limits.
+4. Emits an `api_audit_log` row with `actor_kind="dashboard_session"`.
 
----
+## 5. Operator tasks
 
-## 4. How it works (recap)
+### 5.1 Force logout all sessions for a workspace
 
-- **API keys** are still created in the dashboard via Supabase RPC (`create_api_key`). The plaintext key is shown **once**; the dashboard does **not** store or send it.
-- **Dashboard ↔ Worker:** All calls use the **session cookie** only (`mn_dash_session`). The dashboard calls `POST /v1/dashboard/session` with Supabase `access_token` and `workspace_id`; the Worker checks membership, creates a row in `dashboard_sessions`, and sets the httpOnly cookie. Later requests send that cookie; the Worker resolves the session and uses the linked project context (internal workspace).
-- **Sign out:** The dashboard calls `POST /v1/dashboard/logout` (and Supabase sign out). The Worker deletes the session and clears the cookie.
+```sql
+delete from dashboard_sessions
+where workspace_id = '<uuid>';
+```
 
-No long-lived API keys are stored in the browser; CI gate G2 enforces that.
+### 5.2 Clean expired sessions
+
+Runs automatically via admin cleanup:
+
+```bash
+curl -X POST https://api.memorynode.ai/admin/sessions/cleanup \
+  -H "x-admin-token: $MASTER_ADMIN_TOKEN"
+```
+
+The same endpoint is hit by the scheduled GitHub Action.
+
+### 5.3 Rotate `SUPABASE_JWT_SECRET`
+
+1. Generate a new JWT secret in Supabase.
+2. `wrangler secret put SUPABASE_JWT_SECRET`.
+3. Redeploy.
+4. Users will need to re-sign-in (their old access tokens no longer verify).
+
+## 6. Common failures
+
+| Symptom | Likely cause |
+| --- | --- |
+| `401 UNAUTHORIZED` on first `POST /v1/dashboard/session` | `SUPABASE_JWT_SECRET` mismatch with Supabase project |
+| `403 FORBIDDEN` with `error_code=CSRF_MISMATCH` | `x-csrf-token` header missing or stale |
+| CORS blocked in browser | `ALLOWED_ORIGINS` missing the surface hostname |
+| `500` in `auth.users` lookup | `SUPABASE_ANON_KEY` unset |
+
+Related: [DASHBOARD_DEPLOY.md](./DASHBOARD_DEPLOY.md), [SUPABASE_GOOGLE_OAUTH_SETUP.md](./SUPABASE_GOOGLE_OAUTH_SETUP.md).

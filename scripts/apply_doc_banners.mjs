@@ -1,7 +1,16 @@
 #!/usr/bin/env node
 /**
  * Idempotent governance banners (run: node scripts/apply_doc_banners.mjs).
- * Does not modify SOURCE_OF_TRUTH files except where listed for banner type.
+ * Trimmed to the post-cleanup kept tree:
+ *   Root:           README.md, docs/SECURITY.md
+ *   Truth docs:     docs/external/API_USAGE.md, docs/external/openapi.yaml, docs/MCP_SERVER.md,
+ *                   packages/sdk/README.md
+ *   Operator docs:  docs/PROD_SETUP_CHECKLIST.md, docs/internal/*.md
+ *   Observability:  docs/observability/alert_rules.json, slo_targets.json (JSON, no banner)
+ *
+ * Truth docs are intentionally left banner-free. Internal operator docs receive the
+ * "Internal Operational Document" banner. Root README and SECURITY receive the
+ * "Supporting Documentation" banner.
  */
 import { readFileSync, readdirSync, writeFileSync, statSync } from "node:fs";
 import { join } from "node:path";
@@ -52,33 +61,13 @@ function prepend(abs, banner, marker) {
   console.log("banner:", abs.replace(/\\/g, "/"));
 }
 
-// Internal tree
-for (const f of walkMd(join(root, "docs/internal"))) prepend(f, INTERNAL, "Internal Operational Document");
-
-// Apps — operational READMEs
-for (const f of [join(root, "apps/api/README.md"), join(root, "apps/dashboard/README.md")]) {
-  try {
-    statSync(f);
-    prepend(f, INTERNAL, "Internal Operational Document");
-  } catch {
-    /* skip */
-  }
+// Internal operator docs — the full kept docs/internal tree.
+for (const f of walkMd(join(root, "docs/internal"))) {
+  prepend(f, INTERNAL, "Internal Operational Document");
 }
 
-// Docs root — ops / incident / launch (not API truth)
-const internalTop = [
-  "docs/OPERATIONS.md",
-  "docs/INCIDENT_PROCESS.md",
-  "docs/BACKUP_RESTORE.md",
-  "docs/E2E_CRITICAL_PATH.md",
-  "docs/PRODUCTION_REQUIREMENTS.md",
-  "docs/PROD_SETUP_CHECKLIST.md",
-  "docs/LAUNCH_CHECKLIST.md",
-  "docs/LAUNCH_RUNBOOK.md",
-  "docs/SECURITY_READINESS_ONE_PAGER.md",
-  "docs/FOUNDER_SECRETS_CREDENTIALS_ACCESS_REGISTRY.md",
-];
-for (const rel of internalTop) {
+// Operator docs at docs/ root that are not truth docs.
+for (const rel of ["docs/PROD_SETUP_CHECKLIST.md"]) {
   try {
     prepend(join(root, rel), INTERNAL, "Internal Operational Document");
   } catch {
@@ -86,21 +75,17 @@ for (const rel of internalTop) {
   }
 }
 
-// Supporting: start-here, external (not API_USAGE), self-host
-for (const f of walkMd(join(root, "docs/start-here"))) prepend(f, SUPPORTING, "Supporting Documentation");
-
-for (const f of walkMd(join(root, "docs/external"))) {
-  if (f.replace(/\\/g, "/").endsWith("docs/external/API_USAGE.md")) continue;
-  prepend(f, SUPPORTING, "Supporting Documentation");
+// App operational READMEs (still present; not under docs/).
+for (const rel of ["apps/api/README.md", "apps/dashboard/README.md"]) {
+  try {
+    prepend(join(root, rel), INTERNAL, "Internal Operational Document");
+  } catch {
+    /* skip */
+  }
 }
 
-for (const f of walkMd(join(root, "docs/self-host"))) prepend(f, SUPPORTING, "Supporting Documentation");
-
-for (const f of walkMd(join(root, "examples"))) {
-  if (f.endsWith("README.md")) prepend(f, SUPPORTING, "Supporting Documentation");
-}
-
-for (const rel of ["README.md", "SECURITY.md", "docs/SECURITY.md", "docs/DATA_RETENTION.md", "docs/DOCUMENTATION_INDEX.md"]) {
+// Supporting banner for repo-root README and docs/SECURITY.md.
+for (const rel of ["README.md", "docs/SECURITY.md"]) {
   try {
     prepend(join(root, rel), SUPPORTING, "Supporting Documentation");
   } catch {
@@ -108,7 +93,8 @@ for (const rel of ["README.md", "SECURITY.md", "docs/SECURITY.md", "docs/DATA_RE
   }
 }
 
-for (const rel of ["packages/mcp-server/README.md", "packages/cli/README.md", "bruno/MemoryNode/README.md", "public-onboarding/README.md"]) {
+// Supporting banner for out-of-docs helper READMEs that still ship.
+for (const rel of ["packages/mcp-server/README.md", "packages/cli/README.md"]) {
   try {
     prepend(join(root, rel), SUPPORTING, "Supporting Documentation");
   } catch {

@@ -1,139 +1,111 @@
-## ⚠️ Internal Operational Document
+# Billing Runbook (PayU)
 
-This document may not reflect real-time production state.  
-Always verify against actual infrastructure (Cloudflare, Supabase, etc.).
+MemoryNode billing is PayU-only. The legacy Stripe webhook tables are retained for historical data; the Stripe portal endpoint (`POST /v1/billing/portal`) always returns `410 Gone`.
 
----
+Source of truth:
 
-# Billing Webhook Runbook (PayU)
+- Handlers: [apps/api/src/handlers/billingCheckout.ts](../../apps/api/src/handlers/billingCheckout.ts), [billingWebhook.ts](../../apps/api/src/handlers/billingWebhook.ts), [billingStatus.ts](../../apps/api/src/handlers/billingStatus.ts), [billingPortal.ts](../../apps/api/src/handlers/billingPortal.ts).
+- Plans: [packages/shared/src/plans.ts](../../packages/shared/src/plans.ts).
+- Schema: `infra/sql/021_payu_billing.sql`, `022_payu_transactions_entitlements.sql`, `037_plans_entitlements_v3.sql`, `063_workspace_trial.sql`.
 
-## Purpose
-Production operations guide for PayU billing webhook/callback incidents:
-- Hash/signature verification failures
-- Replay and idempotency behavior
-- Verify-before-grant (entitlements only after PayU verify API confirms)
-- Deferred and failed event handling
-- Safe reprocess and replay workflow
+## 1. Secrets and env
 
-## Webhook Safety Model
-- Endpoint: `POST /v1/billing/webhook`
-- Hash verification: PayU hash is computed from payload fields + `PAYU_MERCHANT_SALT` and `PAYU_MERCHANT_KEY`; request hash must match. Raw body must be unmodified for verification.
-- Verify-before-grant: Entitlements are granted only after the Worker calls the PayU verify API (`PAYU_VERIFY_URL`) and confirms matching `txnid`, amount, currency, and success status. Webhook payload alone does not grant access.
-- Idempotency: `payu_webhook_events.event_id` (primary key) ensures duplicate callbacks are replayed safely.
-- Processing status lifecycle in DB (`payu_webhook_events.status`):
-  - `processing`
-  - `processed`
-  - `deferred` (project mapping missing or verify failed; safe to retry)
-  - `ignored_stale` (older than current billing cursor)
-  - `failed` (safe to retry/replay)
-- Ordering cursor on `workspaces`:
-  - `payu_last_event_created`
-  - `payu_last_event_id`
-  - `payu_last_plan`, `payu_last_status`
-- Ambiguity reconciliation: Controlled by `BILLING_RECONCILE_ON_AMBIGUITY`. When enabled, Worker can use PayU verify API to resolve ordering conflicts.
+Set via `wrangler secret put` on `memorynode-api`:
 
-## Inspect Webhook State (SQL)
+| Secret | Purpose |
+| --- | --- |
+| `PAYU_MERCHANT_KEY` | PayU merchant key |
+| `PAYU_MERCHANT_SALT` | Used in request and webhook SHA-512 |
+| `PAYU_WEBHOOK_SECRET` | Used for `x-payu-webhook-signature` HMAC-SHA256 fallback |
+| `PAYU_LAUNCH_AMOUNT` / `PAYU_BUILD_AMOUNT` / `PAYU_DEPLOY_AMOUNT` / `PAYU_SCALE_AMOUNT` | Per-plan INR amounts (must match `plans.ts`) |
+| `PAYU_PRO_AMOUNT` | Legacy fallback |
+| `PAYU_PRODUCT_INFO`, `PAYU_SUCCESS_PATH`, `PAYU_CANCEL_PATH`, `PAYU_CURRENCY`, `PAYU_BASE_URL`, `PAYU_VERIFY_URL`, `PAYU_VERIFY_TIMEOUT_MS` | PayU hosted-checkout wiring |
+| `BILLING_WEBHOOKS_ENABLED` | Toggle (default on). `off` causes webhook to 503. |
+| `BILLING_RECONCILE_ON_AMBIGUITY` | `1` (default) runs PayU verify API on every ambiguous webhook |
 
-Recent PayU webhook events:
-```sql
-select
-  event_id,
-  txn_id,
-  payment_id,
-  event_type,
-  event_created,
-  status,
-  defer_reason,
-  request_id,
-  workspace_id,
-  payu_status,
-  left(coalesce(last_error, ''), 200) as last_error_preview,
-  processed_at,
-  received_at
-from payu_webhook_events
-order by coalesce(processed_at, received_at) desc
-limit 100;
+## 2. Request flow: `POST /v1/billing/checkout`
+
+1. Auth: API key or dashboard session.
+2. Validate `plan`. Only `launch`, `build`, `deploy`, `scale` are accepted.
+3. Insert `payu_transactions` row with a fresh `txnid` and status `initiated`.
+4. Build SHA-512 hash over `PAYU_MERCHANT_KEY|txnid|amount|productinfo|firstname|email|||||||||||PAYU_MERCHANT_SALT` (`buildPayURequestHashInput`).
+5. Return `{ url, method: "POST", fields }`. The dashboard auto-submits to PayU.
+
+## 3. Webhook flow: `POST /v1/billing/webhook`
+
+1. Accept raw `application/x-www-form-urlencoded` body.
+2. Try **reverse SHA-512** over the PayU-signed fields; on failure, try **HMAC-SHA256** over the raw body keyed by `PAYU_WEBHOOK_SECRET` via `x-payu-webhook-signature`.
+3. If both fail → emit `billing_webhook_signature_invalid` (alert **D2**) and return 400.
+4. Lookup `payu_transactions` by `txnid`. If missing → emit `billing_webhook_workspace_not_found` (alert **D3**) and return 404.
+5. Call PayU **verify API** (`verifyPayUTransactionViaApi`) with retry + timeout. On ambiguous result emit `webhook_deferred` (counts toward D4 backlog); otherwise continue.
+6. Idempotency: insert into `payu_webhook_events` (unique on `payu_mihpayid` + event type). Duplicate → 200 no-op.
+7. `upsertWorkspaceEntitlementFromTransaction` (Postgres RPC) writes/refreshes `workspace_entitlements` for the workspace.
+8. Log `webhook_reconciled` (clears D4 backlog pairing).
+
+Alerts: D1 `webhook_failed`/`billing_endpoint_error`, D2 signature invalid, D3 workspace missing, D4 `deferred − reconciled` backlog.
+
+## 4. Portal (retired)
+
+`POST /v1/billing/portal` always returns:
+
+```json
+{ "error": { "code": "GONE", "message": "Billing portal is retired; use PayU dashboard" } }
 ```
 
-Deferred backlog:
-```sql
-select status, defer_reason, count(*) as total
-from payu_webhook_events
-where status = 'deferred'
-group by status, defer_reason
-order by total desc;
+with status **410**. Do not re-enable a Stripe portal here. Customers manage subscriptions in the PayU dashboard.
+
+## 5. Operational tasks
+
+### 5.1 Reprocess deferred webhooks
+
+```bash
+curl -X POST https://api.memorynode.ai/admin/webhooks/reprocess \
+  -H "x-admin-token: $MASTER_ADMIN_TOKEN"
 ```
 
-Single event by PayU event id / txn id:
-```sql
-select * from payu_webhook_events where event_id = '...';
-select * from payu_webhook_events where txn_id = '...';
+Runs `reconcilePayUWebhook` over `webhook_deferred` events with no matching `webhook_reconciled`. Expect the D4 backlog metric to drain.
+
+### 5.2 Admin billing health
+
+```bash
+curl https://api.memorynode.ai/v1/admin/billing/health -H "x-admin-token: $MASTER_ADMIN_TOKEN"
 ```
 
-Project billing cursor (internal `workspaces` table):
-```sql
-select id, plan, plan_status,
-  payu_txn_id, payu_payment_id, payu_last_status, payu_last_plan,
-  payu_last_event_created, payu_last_event_id, updated_at
-from workspaces where id = '...';
+Returns a summary of PayU transaction state by status, webhook backlog, and last reconcile timestamp.
+
+### 5.3 Usage reservation refunds
+
+```bash
+curl -X POST https://api.memorynode.ai/admin/usage/reconcile \
+  -H "x-admin-token: $MASTER_ADMIN_TOKEN"
 ```
 
-Entitlements (granted after verify):
+Runs `process_usage_reservation_refunds()` — releases abandoned reservations so their quota returns to the workspace.
+
+### 5.4 Manual entitlement fix-up
+
+Only permitted for confirmed operator incidents. Direct Supabase SQL:
+
 ```sql
-select * from workspace_entitlements where workspace_id = '...' order by created_at desc;
+update workspace_entitlements
+set plan_id = 'build', current_period_end = now() + interval '30 days'
+where workspace_id = '<uuid>';
 ```
 
-## Log Queries (Cloudflare Worker Logs)
+Record the change in `api_audit_log` via an incident note, and confirm trial state (`workspace_trial`) is consistent.
 
-Use these event names:
-- `webhook_received`
-- `webhook_verified`
-- `webhook_processed`
-- `webhook_replayed`
-- `webhook_deferred`
-- `webhook_reconciled`
-- `webhook_failed`
-- `billing_webhook_workspace_not_found`
-- `billing_webhook_signature_invalid` (hash mismatch)
+## 6. Trial handling
 
-Recommended filters:
-- `event_name="webhook_failed"`
-- `event_name="webhook_deferred"`
-- `event_name="webhook_reconciled"`
-- `request_id="<x-request-id from client or PayU callback>"`
+`063_workspace_trial.sql` introduces `workspace_trial`. When a workspace's trial ends without a paid plan, billing-gated routes emit the `TRIAL_EXPIRED` error code; responses include `upgrade_url = ${PUBLIC_APP_URL}/billing` when `PUBLIC_APP_URL` is set.
 
-## Replay / Retry Procedure
+## 7. Non-PayU providers (historical)
 
-1. Confirm the webhook row in `payu_webhook_events`:
-   - If status is `processed` or `ignored_stale`, do **not** manually mutate billing state.
-   - If status is `deferred`, fix mapping (e.g. project for the payment) and replay or call admin reprocess.
-   - If status is `failed`, replay is safe (same event_id is retried).
-2. Fix root cause (hash/secret mismatch, DB outage, mapping gap, PayU verify API unreachable, etc.).
-3. Resend from PayU: Use PayU merchant dashboard to resend the callback to your webhook URL if supported; or use admin reprocess (below).
-4. Admin batch reprocess (requires `x-admin-token`):
-   - `POST /admin/webhooks/reprocess?status=deferred&limit=100`
-   - Also supports `status=failed` for retry batches.
-5. Verify:
-   - `payu_webhook_events.status` becomes `processed` or `ignored_stale` (or remains `deferred` if mapping still missing).
-   - `workspaces.payu_last_event_*` reflects newest event; `workspace_entitlements` updated when verify succeeds.
-   - Logs show `webhook_verified` and `webhook_processed` (or `webhook_replayed` / `webhook_deferred` / `webhook_reconciled` as applicable).
+### Historical: Stripe tables
 
-## Common Failure Modes
+Tables from the pre-PayU era (`infra/sql/016_webhook_events.sql` and earlier billing migrations) still exist so historical events remain queryable. No code path in `apps/api/src/` writes to them. They are intentionally frozen and may be dropped in a future migration.
 
-1. **Invalid hash (signature verification failure)**
-   - Symptoms: HTTP 400, `webhook_failed`, `billing_webhook_signature_invalid`.
-   - Fix: Verify `PAYU_MERCHANT_KEY` and `PAYU_MERCHANT_SALT`, endpoint URL, and ensure raw body is unmodified (no re-parsing that changes field order).
+## 8. Related
 
-2. **Project mapping not found**
-   - Symptoms: `billing_webhook_workspace_not_found`, `webhook_deferred`, HTTP 202 with deferred.
-   - Fix: Ensure the payment/callback is associated with a project (e.g. via udf/merchant param); backfill mapping if needed, then replay or call `/admin/webhooks/reprocess?status=deferred`.
-
-3. **Out-of-order events**
-   - Symptoms: Older callback delivered after newer one.
-   - Behavior: Without reconciliation, event can be marked `ignored_stale`; cursor not rolled back. With `BILLING_RECONCILE_ON_AMBIGUITY=1`, Worker can use PayU verify API to resolve.
-   - Action: Enable `BILLING_RECONCILE_ON_AMBIGUITY=1` in the environment if needed.
-
-4. **Transient DB or verify API failure**
-   - Symptoms: Event row marked `failed`.
-   - Behavior: Replay/resend is safe; same `event_id` can be retried.
-   - Action: Restore DB or network health, resend or reprocess, verify status transition to `processed`.
+- Incident response for billing webhooks: [INCIDENT_RUNBOOKS.md §3.3](./INCIDENT_RUNBOOKS.md).
+- Alert descriptions: [ALERTS.md](./ALERTS.md) (D1–D4).
+- Plan limits and overage rates: [packages/shared/src/plans.ts](../../packages/shared/src/plans.ts).

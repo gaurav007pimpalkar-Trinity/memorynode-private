@@ -1,288 +1,227 @@
-# API usage
+# MemoryNode API usage
+
+Canonical HTTP reference for the `memorynode-api` Cloudflare Worker. Source of truth: code in `apps/api/src/`. Regenerated OpenAPI spec at [docs/external/openapi.yaml](./openapi.yaml) (run `pnpm openapi:gen`).
 
-## ⚠️ Source of Truth
+- Production base: `https://api.memorynode.ai`
+- Hosted MCP base: `https://mcp.memorynode.ai` (same Worker)
+- Staging base: `https://api-staging.memorynode.ai`
+- Local dev: `http://127.0.0.1:8787`
+
+## 1. Authentication
+
+Dispatched in [apps/api/src/auth.ts](../../apps/api/src/auth.ts) and [apps/api/src/workerApp.ts](../../apps/api/src/workerApp.ts).
+
+| Mode | Trigger | Validation | Uses |
+| --- | --- | --- | --- |
+| API key (K) | `Authorization: Bearer <key>` or `x-api-key: <key>` | SHA-256 of key + `API_KEY_SALT` then `authenticate_api_key(p_key_hash)` RPC | All `/v1/*` tenant routes |
+| Dashboard session (S) | `Cookie: mn_session=<opaque>` + `x-csrf-token` | Row in `dashboard_sessions` + CSRF double-submit | `/v1/*` tenant routes from browser |
+| Admin (A) | `x-admin-token` | Equality against `MASTER_ADMIN_TOKEN` or HMAC-SHA256 signed form; optional IP allowlist (`ADMIN_ALLOWED_IPS`); `ADMIN_BREAK_GLASS` | `/admin/*`, `/v1/admin/*` |
+| Memory webhook (H) | `X-MN-Webhook-Signature` | HMAC-SHA256 over raw body keyed by `memory_ingest_webhooks.signing_secret` for the target workspace | `POST /v1/webhooks/memory` only |
+| PayU webhook (H) | form body | Reverse SHA-512 over PayU fields, or HMAC-SHA256 fallback over raw body keyed by `PAYU_WEBHOOK_SECRET` (`x-payu-webhook-signature`) | `POST /v1/billing/webhook` only |
+| Internal MCP (I) | `x-internal-mcp: 1` + `x-internal-secret: <MCP_INTERNAL_SECRET>` | Constant-time compare | Internal hosted-MCP → REST subrequests |
+| Public (P) | — | — | `/healthz`, `/ready`, `/v1/health` |
+
+API keys created through `POST /v1/api-keys` are rate-limited at **15 RPM** for the first 48 h after `api_keys.created_at`; after that the default is **60 RPM** per key. See [packages/shared/src/plans.ts](../../packages/shared/src/plans.ts).
+
+## 2. Middleware order
+
+From `handleRequestImpl` in [apps/api/src/workerApp.ts](../../apps/api/src/workerApp.ts):
+
+1. Request-id resolve, CORS + security headers ensemble.
+2. Short-circuit health endpoints (`/healthz`, `/ready`, `/v1/health`).
+3. CORS deny if `Origin` is not in `ALLOWED_ORIGINS` (except hosted MCP paths).
+4. `enforceRuntimeConfigGuards` and `ensureRateLimitDo`.
+5. `OPTIONS` short-circuit.
+6. `assertBodySize` (bounded by `MAX_BODY_BYTES` / `MAX_IMPORT_BYTES`).
+7. `KNOWN_PATH_ALLOWED_METHODS` 405 gate with `Allow:` header.
+8. Production dashboard `ALLOWED_ORIGINS` gate.
+9. `createSupabaseClient(env)` + `db_access_path_selected` log.
+10. Hosted MCP path → IP rate limit → `handleHostedMcpRequest`.
+11. Dashboard session POST/logout inline.
+12. If `DISABLE_SERVICE_ROLE_REQUEST_PATH=1`: reject admin and billing-webhook routes with `503 CONTROL_PLANE_ONLY`.
+13. Build `handlerDeps`, instantiate factories, call `route()`.
+14. `404` if `route()` returns null.
+15. Catch: `ApiError`-shaped response with `error_code`; else `500 INTERNAL`.
+16. Finally: `emitAuditLog`, `request_completed` structured log, `persistApiRequestEvent`.
+
+## 3. Error envelope
+
+Errors emitted by [apps/api/src/workerApp.ts:1093-1120](../../apps/api/src/workerApp.ts) use:
+
+```json
+{ "error": { "code": "STRING_CODE", "message": "human readable" } }
+```
+
+Typical codes: `BAD_REQUEST`, `UNAUTHORIZED`, `FORBIDDEN`, `NOT_FOUND`, `PAYLOAD_TOO_LARGE`, `RATE_LIMITED`, `CAP_EXCEEDED`, `TRIAL_EXPIRED`, `COST_BUDGET_EXCEEDED`, `CONTROL_PLANE_ONLY`, `INTERNAL`. Correlate responses with the `x-request-id` header.
+
+## 4. Rate limits, concurrency, quotas
+
+All defined in [apps/api/src/auth.ts](../../apps/api/src/auth.ts), [apps/api/src/usage/quotaReservation.ts](../../apps/api/src/usage/quotaReservation.ts), and [packages/shared/src/plans.ts](../../packages/shared/src/plans.ts).
+
+| Control | Default | Source |
+| --- | --- | --- |
+| Per-key RPM | 60 (15 for new keys, 48 h) | `RATE_LIMIT_MAX`, `RATE_LIMIT_RPM_NEW_KEY` |
+| Per-workspace RPM | 120 (300 for `scale`) | `WORKSPACE_RPM_DEFAULT`, `WORKSPACE_RPM_SCALE` |
+| Per-workspace in-flight | 8 | `WORKSPACE_CONCURRENCY_MAX`, TTL 30000 ms |
+| Cost/minute burst | 15 INR | `WORKSPACE_COST_PER_MINUTE_CAP_INR` |
+| Daily and period caps | atomic via Postgres | `reserve_usage_if_within_cap` / `commit_usage_reservation` |
+| Global AI cost budget | fail-closed (prod) | `AI_COST_BUDGET_INR`, 60 s cache |
+
+## 5. Plans
+
+From [packages/shared/src/plans.ts](../../packages/shared/src/plans.ts). `PlanId = "launch" | "build" | "deploy" | "scale" | "scale_plus"`. Checkout-accepted: `launch`, `build`, `deploy`, `scale`; `scale_plus` is custom/legacy.
+
+| Plan | INR | Period (d) | Writes | Reads | Embed tok | Gen tok | Storage GB | Retention (d) | Workspace RPM |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| launch | 399 | 7 | 250 | 1 000 | 100 000 | 150 000 | 0.5 | 30 | 120 |
+| build | 999 | 30 | 1 200 | 4 000 | 600 000 | 1 000 000 | 2 | 90 | 120 |
+| deploy | 2 999 | 30 | 5 000 | 15 000 | 3 000 000 | 5 000 000 | 10 | 180 | 120 |
+| scale | 8 999 | 30 | 20 000 | 60 000 | 12 000 000 | 20 000 000 | 50 | 365 | 300 |
+| scale_plus | custom | n/a | 100 000 | 200 000 | 200 000 000 | 200 000 000 | 250 | 365 | 300 |
+
+Overage rates per 1 k / per 1 M tok / per GB-mo are hard-coded per plan in `plans.ts:87-203`.
+
+## 6. Routes (tenant-facing)
+
+Dispatch is in [apps/api/src/router.ts](../../apps/api/src/router.ts). `K` = API key. `S` = dashboard session.
+
+### 6.1 Memories
+
+| Method | Path | Auth | Purpose |
+| --- | --- | --- | --- |
+| POST | `/v1/memories` | K/S | Create a memory; embed, chunk, optional extraction up to 10 child memories |
+| POST | `/v1/memories/conversation` | K/S | Create from transcript or messages (transforms → `/v1/memories`) |
+| GET | `/v1/memories` | K/S | Paginated list, filters: `namespace`, `user_id`, `owner_id`, `owner_type`, `memory_type`, `start_time`, `end_time`, `metadata` |
+| GET | `/v1/memories/:id` | K/S | Single memory |
+| DELETE | `/v1/memories/:id` | K/S | Cascade delete with chunks and links |
+| POST | `/v1/memories/:id/links` | K/S | Create `memory_links` edge (unique per workspace) |
+| DELETE | `/v1/memories/:id/links` | K/S | Delete edge |
+| POST | `/v1/ingest` | K/S | Discriminated dispatch → memory / conversation / import |
+| POST | `/v1/import` | K/S | Bulk import from base64 artifact, quota-checked before insert |
+
+### 6.2 Search and context
+
+| Method | Path | Auth | Purpose |
+| --- | --- | --- | --- |
+| POST | `/v1/search` | K/S | Embed query, pgvector search, optional rerank; header `x-save-history: 1` inserts `search_query_history` |
+| POST | `/v1/context` | K/S | Search + context assembly with citations and linked memories |
+| GET | `/v1/context/explain` | K/S | Per-chunk rank, recency, importance breakdown |
+| POST | `/v1/context/feedback` | K/S | Insert feedback row |
+| GET | `/v1/search/history` | K/S | Saved queries (paginated) |
+| POST | `/v1/search/replay` | K/S | Rerun from history by `query_id` |
+| POST | `/v1/explain/answer` | K/S | OpenAI completion over assembled context |
+| PATCH | `/v1/profile/pins` | K/S | Update pinned memories |
 
-This document must always reflect actual system behavior.
+### 6.3 Usage, audit, pruning
 
-If code changes:
+| Method | Path | Auth | Purpose |
+| --- | --- | --- | --- |
+| GET | `/v1/usage/today` | K/S | Caps vs consumed reads/writes/tokens |
+| GET | `/v1/audit/log` | K/S | Paginated `api_audit_log` rows |
+| GET | `/v1/pruning/metrics` | K/S | `workspace_pruning_metrics` RPC |
 
-→ This document **MUST** be updated in the same PR.
+### 6.4 Evals
 
-Do not merge changes that break this alignment.
+| Method | Path | Auth |
+| --- | --- | --- |
+| GET,POST | `/v1/evals/sets` | K/S |
+| DELETE | `/v1/evals/sets/:id` | K/S |
+| GET,POST | `/v1/evals/items` | K/S |
+| DELETE | `/v1/evals/items/:id` | K/S |
+| POST | `/v1/evals/run` | K/S |
 
----
+### 6.5 Connectors
 
-How to call the MemoryNode Worker API. Base URL: `https://api.memorynode.ai` (or your deployment).
+| Method | Path | Auth |
+| --- | --- | --- |
+| GET | `/v1/connectors/settings` | K/S |
+| PATCH | `/v1/connectors/settings` | K/S |
 
-**Authoritative code:** route table `apps/api/src/router.ts`; session + MCP entry `apps/api/src/workerApp.ts`; request bodies `apps/api/src/contracts/`. **Machine-readable:** `docs/external/openapi.yaml` (run `pnpm openapi:gen` after changing `apps/api/scripts/generate_openapi.mjs`).
+### 6.6 Workspaces and API keys
 
----
+| Method | Path | Auth |
+| --- | --- | --- |
+| POST | `/v1/workspaces` | admin-scoped K or A |
+| POST | `/v1/api-keys` | K/S |
+| GET | `/v1/api-keys` | K/S |
+| POST | `/v1/api-keys/revoke` | K/S |
 
-## Read order (recommended)
+### 6.7 Billing
 
-1. [../start-here/README.md](../start-here/README.md)
-2. [../start-here/PER_USER_MEMORY.md](../start-here/PER_USER_MEMORY.md)
-3. [../start-here/SCOPES.md](../start-here/SCOPES.md)
-4. [../start-here/ADVANCED_ISOLATION.md](../start-here/ADVANCED_ISOLATION.md)
-5. This page for full REST coverage.
+All PayU. The Stripe portal endpoint is retired and returns `410 Gone`.
 
----
+| Method | Path | Auth | Notes |
+| --- | --- | --- | --- |
+| GET | `/v1/billing/status` | K/S | `select workspace_entitlements` |
+| POST | `/v1/billing/checkout` | K/S | Body: `{plan, firstname?, email?, phone?}`. Inserts `payu_transactions`, computes SHA-512 request hash, returns `{url, method:"POST", fields}` for the PayU form. |
+| POST | `/v1/billing/portal` | K/S | **Always 410 Gone.** |
+| POST | `/v1/billing/webhook` | H | PayU callback. Verifies reverse SHA-512 (or HMAC-SHA256 fallback), calls PayU verify API, upserts entitlements. |
+| POST | `/v1/webhooks/memory` | H | HMAC-SHA256 via `X-MN-Webhook-Signature`. |
 
-## Authentication (API key routes)
+### 6.8 Dashboard
 
-On every request:
+| Method | Path | Auth | Notes |
+| --- | --- | --- | --- |
+| POST | `/v1/dashboard/session` | Supabase JWT in body | `{access_token, workspace_id}`; verifies via `SUPABASE_JWT_SECRET`, inserts `dashboard_sessions`, sets HttpOnly cookie, returns `csrf_token`. |
+| POST | `/v1/dashboard/logout` | S | Deletes session, clears cookie. |
+| GET | `/v1/dashboard/overview-stats` | S | `dashboard_console_overview_stats` RPC. |
 
-- `Authorization: Bearer <api_key>` **or**
-- `x-api-key: <api_key>`
+### 6.9 Health
 
-Responses include `x-request-id`. Include it when contacting support.
+| Method | Path | Auth | Notes |
+| --- | --- | --- | --- |
+| GET | `/healthz` | P | Validates critical env, returns `version` + `embedding_model`. |
+| GET | `/ready` | P | Circuit-breaker-wrapped `get_api_key_salt` RPC. |
+| GET | `/v1/health` | P | Same payload as `/healthz`. |
 
-**Exceptions (no project API key):**
+### 6.10 Admin
 
-- `POST /v1/webhooks/memory` — HMAC-signed body (see below).
-- `POST /v1/billing/webhook` — PayU callback (platform signature).
-- `POST /v1/dashboard/session` and `POST /v1/dashboard/logout` — browser session + Supabase access token (see [Dashboard session](#dashboard-session-console)).
-- Admin routes require `x-admin-token` (see [Admin & control plane](#admin--control-plane)).
+All auth with `x-admin-token` (legacy equality or HMAC-signed). If `DISABLE_SERVICE_ROLE_REQUEST_PATH=1`, these routes return `503 CONTROL_PLANE_ONLY`.
 
----
+| Method | Path | Notes |
+| --- | --- | --- |
+| POST | `/admin/webhooks/reprocess` | Rerun `reconcilePayUWebhook` for deferred events |
+| POST | `/admin/usage/reconcile` | `process_usage_reservation_refunds()` RPC |
+| POST | `/admin/sessions/cleanup` | Delete expired `dashboard_sessions` |
+| POST | `/admin/memory-hygiene` | `find_near_duplicate_memories(...)`; query: `dry_run`, `limit`, `workspace_id` |
+| POST | `/admin/memory-retention` | Archive per retention; query: `limit` |
+| GET | `/v1/admin/billing/health` | Billing health view |
+| GET | `/v1/admin/founder/phase1` | Metrics for internal dashboard |
 
-## Terminology (wire format)
+### 6.11 MCP
 
-| Concept | Fields | Notes |
-|--------|--------|------|
-| End-user id | `userId` **or** `user_id` | Accept either; same for list/search query params. |
-| Scope / container | `scope`, `namespace`, or `containerTag` | Aliases; resolved to a single namespace string server-side. |
-| Owner typing | `owner_id`, `owner_type`, legacy `entity_id`, `entity_type` | Must agree when multiple set; see contracts. |
-| Memory types | `memory_type` | `fact`, `preference`, `event`, `note`, `task`, `correction`, `pin` (see `MEMORY_TYPES` in `apps/api/src/contracts/search.ts`). |
+- `POST /v1/mcp`, `POST /mcp` → Streamable HTTP JSON-RPC (`handleHostedMcpRequest` in [apps/api/src/mcpHosted.ts](../../apps/api/src/mcpHosted.ts)).
+- `GET /v1/mcp`, `GET /mcp` → browser landing or SSE.
+- `DELETE /v1/mcp`, `DELETE /mcp` → close session.
 
-If no user/owner id is provided, routing falls back to shared app isolation (`shared_app` / `shared_default` behavior); see [ADVANCED_ISOLATION.md](../start-here/ADVANCED_ISOLATION.md).
+See [docs/MCP_SERVER.md](../MCP_SERVER.md) for the tool catalog.
 
----
+## 7. Canonical flows
 
-## Public API — core
+### 7.1 `POST /v1/memories`
+auth → per-key + per-workspace rate limit (`RATE_LIMIT_DO`) → workspace concurrency lease → `resolveQuotaForWorkspace` → `reserve_usage_if_within_cap` → `checkGlobalCostGuard` → OpenAI embed (circuit-breakered + retry + timeout) → insert `memories` and `memory_chunks` (RLS) → optional `gpt-4o-mini` extraction (up to 10 child memories) → `commit_usage_reservation` → audit.
 
-### Store a memory
+### 7.2 `POST /v1/search`
+auth → rate limit → read reservation → embed query → pgvector search + rerank → optional `search_query_history` insert → response.
 
-**`POST /v1/memories`**
+### 7.3 `POST /v1/billing/checkout`
+Insert `payu_transactions` row → build SHA-512 request hash (`buildPayURequestHashInput`) → return `{url, method:"POST", fields}`. The dashboard auto-submits the form.
 
-Body (subset; full schema in contracts): `text` (required), identity fields above, optional `metadata`, `memory_type`, `importance`, `chunk_profile` (`balanced` \| `dense` \| `document`), `extract` (default true), `effective_at`, `replaces_memory_id`, `idempotency_key`.
+### 7.4 `POST /v1/billing/webhook`
+Verify reverse SHA-512 (or HMAC-SHA256 fallback) → `verifyPayUTransactionViaApi` with retry and timeout → `upsertWorkspaceEntitlementFromTransaction` → `200`. Idempotent via `payu_webhook_events`.
 
-Response on 200: `stored: true`, optional `chunks`, optional `embedding: "skipped_due_to_budget"`, `extraction` status object, optional intelligence fields.
+### 7.5 `POST /v1/webhooks/memory`
+HMAC-SHA256 verify against `memory_ingest_webhooks.signing_secret` for the referenced workspace → synthesize trusted internal auth → forward to `POST /v1/memories`.
 
-### Conversation ingest
+## 8. Client headers you may see
 
-**`POST /v1/memories/conversation`**
+| Header | Meaning |
+| --- | --- |
+| `x-request-id` | Correlation id on every response |
+| `x-mn-resolved-container-tag` | Resolved tenant container (debug) |
+| `x-mn-routing-mode` | `service-role`, `rpc-first`, or `rls-first` (debug) |
+| `Retry-After` | Seconds (429 responses) |
 
-Provide non-empty `transcript` **or** `messages[]` with `{ role, content, at? }` where `role` is `user` \| `assistant` \| `system` \| `tool`, plus the same identity fields as `POST /v1/memories`.
+## 9. Changes and drift
 
-### Unified ingest
-
-**`POST /v1/ingest`**
-
-Discriminated `kind`:
-
-- `memory` → body matches memory insert.
-- `conversation` → body matches conversation insert.
-- `document` → body matches memory insert; default `chunk_profile` is `document` if omitted (see contracts).
-- `bundle` → body matches import (`artifact_base64`, `mode`, …).
-
-### List / get / delete
-
-- **`GET /v1/memories`** — Query: `page`, `page_size`, `user_id`, `owner_id`, `entity_id`, `owner_type`, `entity_type`, `namespace`, `memory_type`, `metadata` (JSON string), `start_time`, `end_time`.
-- **`GET /v1/memories/{uuid}`** — `:id` must be a UUID.
-- **`DELETE /v1/memories/{uuid}`**
-
-### Typed links (graph-lite)
-
-- **`POST /v1/memories/{uuid}/links`** — Body: `{ "to_memory_id": "<uuid>", "link_type": "related_to" | "about_ticket" | "same_topic" }`. Max **20** outbound links per source memory (`MAX_OUTBOUND_LINKS` in `handlers/memoryLinks.ts`).
-- **`DELETE /v1/memories/{uuid}/links?to_memory_id=&link_type=`**
-
-### Search
-
-**`POST /v1/search`**
-
-Body matches `SearchPayloadSchema` in contracts: `query` (required), identity/namespace fields, optional `top_k`, `page`, `page_size`, `explain`, `search_mode` (`hybrid` \| `vector` \| `keyword`), `min_score`, `retrieval_profile` (`balanced` \| `recall` \| `precision`), optional `filters` (`metadata`, `start_time`, `end_time`, `memory_type` as value or array, `filter_mode` `and` \| `or`).
-
-### Search history & replay
-
-- **`GET /v1/search/history`** — Optional query `limit` (capped).
-- **`POST /v1/search/replay`** — Body: `{ "query_id": "<uuid>" }`.
-
-### Context (prompt-ready)
-
-**`POST /v1/context`**
-
-Same body shape as search. Returns `context_text`, `citations`, pagination fields, optional `context_blocks`, bounded `profile`, optional `linked_memories`.
-
-### Profile pins
-
-**`PATCH /v1/profile/pins`**
-
-Body includes `memory_ids` (≤10 UUIDs) plus identity/scope fields per `ProfilePinsPatchSchema`. Replaces pinned set for that scope.
-
-### Context explain (debug)
-
-**`GET /v1/context/explain`**
-
-Query params include `query` (required) and identity fields (`userId`, `user_id`, `owner_id`, `scope`, `namespace`, …), plus optional `top_k`, `page`, `page_size`, `search_mode`, `min_score`, `retrieval_profile`.
-
-### Context feedback
-
-**`POST /v1/context/feedback`**
-
-Body: `trace_id` (required), optional `query_id`, `eval_set_id`, `chunk_ids_used`, `chunk_ids_unused` (see `ContextFeedbackRequest` in `@memorynodeai/shared`).
-
-### Pruning metrics
-
-**`GET /v1/pruning/metrics`** — Workspace pruning/dedupe counters.
-
-### Explain answer
-
-**`POST /v1/explain/answer`**
-
-Body: `{ "question": "...", "context": "..." }` — see `ExplainAnswerRequest` in shared types.
-
----
-
-## Usage, audit, dashboard aggregates
-
-- **`GET /v1/usage/today`** — Usage vs caps for the authenticated workspace key.
-- **`GET /v1/audit/log`** — Paginated API audit trail (`page`, `limit` query params).
-- **`GET /v1/dashboard/overview-stats`** — Console aggregates; optional `range=1d|7d|30d|all`.
-
----
-
-## Connectors
-
-- **`GET /v1/connectors/settings`**
-- **`PATCH /v1/connectors/settings`** — Partial update per connector row (`connector_id`, `sync_enabled`, `capture_types`).
-
----
-
-## Import
-
-**`POST /v1/import`**
-
-Body: `artifact_base64`, optional `mode`: `upsert` \| `skip_existing` \| `error_on_conflict` \| `replace_ids` \| `replace_all` (see `ImportPayloadSchema`).
-
-Free plans: **402** upgrade required when blocked.
-
----
-
-## Billing (PayU)
-
-- **`GET /v1/billing/status`** — Includes legacy `plan`, `plan_status`, and **`effective_plan`** for quotas/display. **`effective_plan` may be `launch` \| `build` \| `deploy` \| `scale` \| `scale_plus`** when derived from entitlements.
-- **`POST /v1/billing/checkout`** — Starts checkout. Optional body fields include `plan`, `firstname`, `email`, `phone`. **`plan` must be one of `launch`, `build`, `deploy`, `scale`** (`CHECKOUT_PLAN_IDS` in `handlers/billing.ts`). **`scale_plus` is not a checkout value** — it appears only as a possible **effective_plan** after billing/entitlements reconciliation, not as a PayU checkout selector.
-- **`POST /v1/billing/portal`** — Returns **410 Gone** (legacy self-serve portal removed).
-- **`POST /v1/billing/webhook`** — PayU server-to-server callback (not called with your API key).
-
----
-
-## Memory ingest webhook
-
-**`POST /v1/webhooks/memory`**
-
-Does **not** use the normal API key. Configure workspace webhook + `signing_secret`; send payload compatible with **`POST /v1/memories`** plus **`workspace_id`**; header **`X-MN-Webhook-Signature: sha256=<hex>`** where hex = HMAC-SHA256(secret, raw body bytes). Worker env **`MEMORY_WEBHOOK_INTERNAL_TOKEN`** gates internal forward path when configured.
-
----
-
-## Evaluation API
-
-Authenticated with project API key like other `/v1/*` routes:
-
-- **`GET /v1/evals/sets`** / **`POST /v1/evals/sets`** — List / create set (`name`).
-- **`DELETE /v1/evals/sets/{uuid}`**
-- **`GET /v1/evals/items?eval_set_id=`** / **`POST /v1/evals/items`**
-- **`DELETE /v1/evals/items/{uuid}`**
-- **`POST /v1/evals/run`** — Body per `EvalRunSchema` (`eval_set_id`, identity fields, `namespace`, `top_k`, `search_mode`, `min_score`).
-
----
-
-## Dashboard session (console)
-
-Used by `apps/dashboard` with Supabase login — **cookie** session, not the API key.
-
-- **`POST /v1/dashboard/session`** — Body: `{ "access_token": "<supabase jwt>", "workspace_id": "<uuid>" }`. Sets session cookie; response may include `csrf_token` for mutating calls.
-- **`POST /v1/dashboard/logout`** — Sends `x-csrf-token` when session exists. **200** `{ "ok": true }` and cleared session cookie.
-
-CORS: production requires `ALLOWED_ORIGINS` to include the console origin.
-
-### Memory Lab (Developer Console)
-
-The signed-in **Memory Lab** in the dashboard uses the same REST behavior as product integrations: **`POST /v1/search`**, **`POST /v1/context`**, optional **explain** and advanced routes (search history, replay, evals, context feedback) as listed in this document. Browser calls use the **dashboard session** (cookie + CSRF on writes), not `Authorization: Bearer`. In-app “copy as curl” helpers show an equivalent API-key request shape for debugging.
-
----
-
-## Hosted MCP
-
-Streamable HTTP MCP on the same Worker:
-
-- **`GET` / `POST` / `DELETE`** `https://api.memorynode.ai/v1/mcp` (also `/mcp` on dedicated host). **Authorization: Bearer** project API key. Details: [../MCP_SERVER.md](../MCP_SERVER.md).
-
----
-
-## Admin & control plane
-
-**`x-admin-token`** header (master admin secret):
-
-- **`POST /v1/workspaces`** — Create workspace.
-- **`POST /v1/api-keys`**, **`GET /v1/api-keys?workspace_id=`**, **`POST /v1/api-keys/revoke`**
-
-**Cron / operational (admin token + IP controls per deployment):**
-
-- `POST /admin/webhooks/reprocess`
-- `POST /admin/usage/reconcile`
-- `POST /admin/sessions/cleanup`
-- `POST /admin/memory-hygiene`
-- `POST /admin/memory-retention`
-
-**Read-only diagnostics:**
-
-- **`GET /v1/admin/billing/health`**
-- **`GET /v1/admin/founder/phase1`**
-
-In **RLS-first / service-role-disabled** modes some paths return **503** — see `workerApp.ts` `CONTROL_PLANE_ONLY`.
-
----
-
-## Health checks (no API key)
-
-- **`GET /healthz`**, **`GET /v1/health`**
-- **`GET /ready`** — Deep check (database).
-
----
-
-## Errors
-
-JSON shape: `{ "error": { "code": "...", "message": "..." }, "request_id": "..." }` (some errors omit fields). Upgrade-style **402** responses may also include top-level **`upgrade_url`** (e.g. `{app_origin}/billing`) when the Worker has **`PUBLIC_APP_URL`** configured.
-
-| HTTP | Meaning |
-|------|---------|
-| 400 | Validation / bad parameters |
-| 401 | Missing or invalid API key |
-| 402 | Plan / entitlement / caps / upgrade required — see **402 variants** below |
-| 403 | Permission denied (e.g. CSRF) |
-| 404 | Unknown route or resource |
-| 410 | Gone (`/v1/billing/portal`) |
-| 429 | Rate limited — honor `Retry-After` when present |
-| 503 | Billing disabled, control-plane disabled, or dependency unavailable |
-
-### 402 variants
-
-Common `error.code` values include entitlement and fair-use caps (`daily_cap_exceeded`, `monthly_cap_exceeded`, `ENTITLEMENT_REQUIRED`, etc.).
-
-**Trial ended (`TRIAL_EXPIRED`):** When the workspace is on a **time-limited trial** (`trial` true, `trial_expires_at` in the past), **mutating** API calls (create/update/delete memory, links, connector settings patch, import, eval set/item writes, etc.) return **402** with `error.code: "TRIAL_EXPIRED"` and `error.upgrade_required: true`. **Read-only** traffic (search, list/get memory, context, usage meters, billing status/checkout) is **not** blocked by this gate so clients can still open billing. Hosted MCP write tools mirror the same rule; **`billing_checkout_create`** / **`billing_portal_create`** stay available to attach payment.
-
----
-
-## TypeScript SDK
-
-Package `@memorynodeai/sdk` — class **`MemoryNodeClient`** (`packages/sdk/src/index.ts`):
-
-**API key methods:** `health`, `addMemory`, `addConversationMemory`, `ingest`, `search`, `listSearchHistory`, `replaySearch`, `context`, `contextExplain`, `sendContextFeedback`, `getPruningMetrics`, `explainAnswer`, `listMemories`, `getMemory`, `deleteMemory`, `importMemories`, `getUsageToday`, `listAuditLog`, `listEvalSets`, `createEvalSet`, `deleteEvalSet`, `listEvalItems`, `createEvalItem`, `deleteEvalItem`, `runEvalSet`.
-
-**Admin token methods:** `createWorkspace`, `createApiKey`, `listApiKeys`, `revokeApiKey`.
-
-Billing checkout/status are **not** wrapped in the SDK; call **`GET/POST /v1/billing/*`** with `fetch` or your HTTP client from a trusted backend.
-
-See [../../packages/sdk/README.md](../../packages/sdk/README.md).
+`docs/external/openapi.yaml` is generated from code by [apps/api/scripts/generate_openapi.mjs](../../apps/api/scripts/generate_openapi.mjs). CI enforces drift with `pnpm openapi:check` and `pnpm check:docs-drift`. See [.cursor/rules/documentation-governance.mdc](../../.cursor/rules/documentation-governance.mdc).

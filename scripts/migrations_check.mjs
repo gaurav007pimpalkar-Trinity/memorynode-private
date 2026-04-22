@@ -10,7 +10,6 @@ import {
 
 const DOCS_REQUIRE_MANIFEST = [
   "docs/internal/README.md",
-  "docs/self-host/LOCAL_DEV.md",
 ];
 
 function failWithIssues(issues) {
