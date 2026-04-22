@@ -232,3 +232,61 @@ jobs:
 
       - name: Deploy production API
         run: pnpm deploy:prod
+
+  deploy-dashboards-production:
+    needs: [deploy-production]
+    if: github.event_name == 'workflow_dispatch' && github.event.inputs.environment == 'production'
+    runs-on: ubuntu-latest
+    environment: ${{ 'production' }}
+    env:
+      VITE_API_BASE_URL: https://api.memorynode.ai
+      VITE_CONSOLE_BASE_URL: https://console.memorynode.ai
+      VITE_SUPABASE_URL: ${{ secrets.DASHBOARD_VITE_SUPABASE_URL }}
+      VITE_SUPABASE_ANON_KEY: ${{ secrets.DASHBOARD_VITE_SUPABASE_ANON_KEY }}
+      CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+      CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+        with:
+          fetch-depth: 1
+          token: ${{ secrets.GITHUB_TOKEN }}
+          persist-credentials: false
+          ref: ${{ inputs.ref || github.ref_name }}
+
+      - name: Setup Node
+        uses: actions/setup-node@v5
+        with:
+          node-version: '20'
+          package-manager-cache: false
+
+      - name: Enable corepack
+        run: corepack enable
+
+      - name: Prepare pnpm
+        run: corepack prepare pnpm@10.0.0 --activate
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Set VITE_BUILD_SHA from checked-out tree
+        run: |
+          head="$(git rev-parse HEAD)"
+          echo "VITE_BUILD_SHA=$head" >> "$GITHUB_ENV"
+          echo "Dashboard build/deploy will use VITE_BUILD_SHA=$head"
+
+      - name: Validate dashboard deploy secrets
+        run: |
+          missing=()
+          for key in CLOUDFLARE_API_TOKEN CLOUDFLARE_ACCOUNT_ID VITE_SUPABASE_URL VITE_SUPABASE_ANON_KEY; do
+            [[ -z "${!key}" ]] && missing+=("$key")
+          done
+          if [[ ${#missing[@]} -gt 0 ]]; then
+            echo "Missing required secrets/env for dashboard Pages deploy: ${missing[*]}"
+            echo "Set in repo Settings → Secrets (production env): CLOUDFLARE_API_TOKEN, CLOUDFLARE_ACCOUNT_ID,"
+            echo "DASHBOARD_VITE_SUPABASE_URL, DASHBOARD_VITE_SUPABASE_ANON_KEY (mapped to VITE_* for the console build)."
+            exit 1
+          fi
+
+      - name: Build both surfaces and deploy Pages
+        run: pnpm dashboard:deploy:pages

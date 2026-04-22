@@ -3,8 +3,10 @@
 MemoryNode ships from `main` through two GitHub Actions workflows:
 
 - [`.github/workflows/ci.yml`](../../.github/workflows/ci.yml) — build, test, and every `check:*` gate.
-- [`.github/workflows/api-deploy.yml`](../../.github/workflows/api-deploy.yml) — deploy the `memorynode-api` Worker.
-- [`.github/workflows/dashboard-pages-deploy.yml`](../../.github/workflows/dashboard-pages-deploy.yml) — deploy the two Pages projects.
+- [`.github/workflows/api-deploy.yml`](../../.github/workflows/api-deploy.yml) — deploys the `memorynode-api` Worker, and (production only) also runs `deploy-dashboards-production` to ship both Pages projects in the same run.
+- [`.github/workflows/dashboard-pages-deploy.yml`](../../.github/workflows/dashboard-pages-deploy.yml) — dashboard-only hotfix deploy, manual (`workflow_dispatch`).
+
+Cloudflare Pages "Connect to Git" is disconnected on both Pages projects; uploads happen only via `wrangler pages deploy` from the workflows above.
 
 Scheduled operations (memory hygiene, retention, etc.) run from their own GitHub Actions workflows (`memory-hygiene.yml`, `memory-retention.yml`). No Cloudflare Cron Triggers are used.
 
@@ -30,7 +32,12 @@ Post-deploy: run `pnpm release:staging:validate` locally against staging. Fix on
 
 ## 3. Production
 
-Manual only. Trigger `api-deploy.yml → deploy-production` with `workflow_dispatch`, `environment=production`, and an explicit `ref`.
+Manual only. Trigger `api-deploy.yml` with `workflow_dispatch`, `environment=production`, and an explicit `ref`. One click ships the Worker and both Pages projects:
+
+1. `deploy-production` (Worker).
+2. `deploy-dashboards-production` (`needs: [deploy-production]`) — builds both surfaces at the same `ref`, uploads to `memorynode-console` and `memorynode-app`.
+
+If the Worker step fails, the dashboard job is skipped automatically. If dashboard upload fails after the Worker succeeded, retry via the `Dashboard Pages Deploy` hotfix workflow — see [DASHBOARD_DEPLOY.md](./DASHBOARD_DEPLOY.md) §3.2.
 
 Extra gates vs staging (lines 187-234):
 
@@ -41,16 +48,19 @@ Extra gates vs staging (lines 187-234):
 
 Then `pnpm release:gate` with `CHECK_ENV=production`, then `pnpm deploy:prod`.
 
+Dashboard job requires `CLOUDFLARE_API_TOKEN`, `CLOUDFLARE_ACCOUNT_ID`, `DASHBOARD_VITE_SUPABASE_URL`, `DASHBOARD_VITE_SUPABASE_ANON_KEY` in the `production` GitHub environment.
+
 Post-deploy:
 
 1. `pnpm release:prod:validate` against `api.memorynode.ai`.
 2. `GET /healthz`, `GET /ready` → both 200.
 3. Hosted MCP smoke: `POST https://mcp.memorynode.ai/mcp` `initialize` → success.
-4. Monitor `request_completed` logs for the next 30 min; watch alerts A1 / A3 / D2.
+4. Dashboard smokes: `https://console.memorynode.ai` and `https://app.memorynode.ai` return 200 with the expected surface; `/version.json` matches the released SHA.
+5. Monitor `request_completed` logs for the next 30 min; watch alerts A1 / A3 / D2.
 
 ## 4. Dashboard (Pages)
 
-[`dashboard-pages-deploy.yml`](../../.github/workflows/dashboard-pages-deploy.yml) builds [apps/dashboard](../../apps/dashboard/) once per surface and deploys to two Pages projects:
+Two Pages projects are deployed from the single React app in [apps/dashboard](../../apps/dashboard/):
 
 | Surface | Project | `VITE_APP_SURFACE` | `VITE_APP_HOSTNAME` |
 | --- | --- | --- | --- |
@@ -58,6 +68,11 @@ Post-deploy:
 | app | `memorynode-app` | `app` | `app.memorynode.ai` |
 
 Each build needs `VITE_API_BASE_URL`, `VITE_SUPABASE_URL`, and `VITE_SUPABASE_ANON_KEY` injected.
+
+Deploy paths:
+
+- Coupled (default): `api-deploy.yml → deploy-dashboards-production` runs automatically after `deploy-production` succeeds. Same `ref`, same run id, same log trail.
+- Hotfix-only: [`dashboard-pages-deploy.yml`](../../.github/workflows/dashboard-pages-deploy.yml) for dashboard-only redeploys. Details in [DASHBOARD_DEPLOY.md](./DASHBOARD_DEPLOY.md).
 
 ## 5. Rollback
 
