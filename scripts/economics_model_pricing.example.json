@@ -1,0 +1,14 @@
+{
+  "_comment": "Example INR/token rates for scripts/workspace_unit_economics.mjs. Replace with your real provider rates and copy to a private file or pass via --model-pricing. All prices are INR per token unless noted.",
+  "embedding": { "per_token": 2.24e-7 },
+  "default_gen": { "input": 4e-5, "output": 8e-5 },
+  "storage": { "per_gb": 0.5 },
+  "models": {
+    "text-embedding-3-small": { "per_token": 2.24e-7 },
+    "text-embedding-3-large": { "per_token": 1.45e-6 },
+    "gpt-4o":      { "input": 4.15e-4,  "output": 1.245e-3 },
+    "gpt-4o-mini": { "input": 1.245e-5, "output": 4.98e-5 },
+    "gpt-4":       { "input": 2.49e-3,  "output": 4.98e-3 },
+    "gpt-3.5":     { "input": 4.15e-5,  "output": 1.245e-4 }
+  }
+}

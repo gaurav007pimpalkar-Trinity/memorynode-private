@@ -43,6 +43,7 @@
     "check:config": "node scripts/check_config.mjs",
     "check:docs-billing": "node scripts/check_docs_billing.mjs",
     "check:economics-gate": "node scripts/check_economics_gate.mjs",
+    "economics:workspaces": "node scripts/workspace_unit_economics.mjs",
     "ci:trust-gates": "node scripts/ci_trust_gates.mjs",
     "migrations:list": "node scripts/migrations_list.mjs",
     "migrations:check": "node scripts/migrations_check.mjs",

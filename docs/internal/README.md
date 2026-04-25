@@ -4,8 +4,8 @@ Operator-only docs for the MemoryNode Cloudflare Worker + Supabase data plane. S
 
 Running documentation checks expect the migration manifest tokens below. Values come from `pnpm migrations:list`.
 
-MIGRATIONS_TOTAL=65
-MIGRATIONS_LATEST=063_workspace_trial.sql
+MIGRATIONS_TOTAL=67
+MIGRATIONS_LATEST=065_workspace_billing_cycle_token_usage_by_model.sql
 
 ## Contents
 
