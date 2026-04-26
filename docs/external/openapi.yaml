@@ -22,6 +22,7 @@ info:
 
     **Also implemented in the Worker but omitted or summarized here:** `/healthz`, `/ready`, `/mcp`, PayU
     `/v1/billing/webhook`, admin cron endpoints (`/admin/*`), read-only `/v1/admin/*`, and `/v1/admin/founder/phase1`.
+    Dashboard routes use the browser session cookie in production; OpenAPI lists `BearerAuth` for generator consistency.
     See `apps/api/src/router.ts` and `workerApp.ts`.
   x-doc-governance: "SOURCE_OF_TRUTH: Regenerate via `pnpm openapi:gen` when `apps/api/scripts/generate_openapi.mjs`,
     `apps/api/src/contracts/`, or `apps/api/src/router.ts` change. Same PR as behavioral API changes. Human prose:
@@ -723,6 +724,13 @@ components:
         - memories
         - search_requests
         - container_tags
+    DashboardOpsEnvelope:
+      type: object
+      properties:
+        ok:
+          type: boolean
+      required:
+        - ok
     ConnectorCaptureTypes:
       type: object
       properties:
@@ -1674,6 +1682,579 @@ paths:
                 $ref: "#/components/schemas/DashboardOverviewResponse"
         "401":
           description: Unauthorized
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "500":
+          description: Server error
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+  /v1/dashboard/bootstrap:
+    post:
+      summary: "Pre-session workspace bootstrap: validates Supabase access_token, returns existing workspace or creates one
+        via create_workspace; client then establishes cookie via POST /v1/dashboard/session."
+      tags:
+        - Dashboard
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                access_token:
+                  type: string
+                workspace_name:
+                  type: string
+              required:
+                - access_token
+              additionalProperties: false
+      responses:
+        "200":
+          description: Workspace id and name; created indicates new workspace
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/DashboardOpsEnvelope"
+        "400":
+          description: Validation error
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "401":
+          description: Unauthorized
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "500":
+          description: Server error
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+  /v1/dashboard/workspaces:
+    get:
+      summary: List workspaces for the signed-in dashboard user (membership-scoped)
+      tags:
+        - Dashboard
+      security:
+        - BearerAuth: []
+      responses:
+        "200":
+          description: Workspace list
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/DashboardOpsEnvelope"
+        "401":
+          description: Unauthorized
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "500":
+          description: Server error
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+    post:
+      summary: Create a workspace (CSRF required)
+      tags:
+        - Dashboard
+      security:
+        - BearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                name:
+                  type: string
+              required:
+                - name
+              additionalProperties: false
+      responses:
+        "200":
+          description: Created workspace
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/DashboardOpsEnvelope"
+        "400":
+          description: Validation error
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "401":
+          description: Unauthorized
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "403":
+          description: Invalid CSRF
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "500":
+          description: Server error
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+  /v1/dashboard/api-keys:
+    get:
+      summary: List API keys for a workspace (query workspace_id optional; must match session workspace)
+      tags:
+        - Dashboard
+      security:
+        - BearerAuth: []
+      parameters:
+        - schema:
+            type: string
+            format: uuid
+            example: 00000000-0000-4000-8000-000000000000
+          required: false
+          name: workspace_id
+          in: query
+      responses:
+        "200":
+          description: API keys
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/DashboardOpsEnvelope"
+        "401":
+          description: Unauthorized
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "403":
+          description: Forbidden
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "500":
+          description: Server error
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+    post:
+      summary: Create API key (CSRF required)
+      tags:
+        - Dashboard
+      security:
+        - BearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                workspace_id:
+                  type: string
+                  format: uuid
+                name:
+                  type: string
+              required:
+                - workspace_id
+                - name
+              additionalProperties: false
+      responses:
+        "200":
+          description: New key material (once)
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/DashboardOpsEnvelope"
+        "400":
+          description: Validation error
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "401":
+          description: Unauthorized
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "403":
+          description: Invalid CSRF
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "500":
+          description: Server error
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+  /v1/dashboard/api-keys/revoke:
+    post:
+      summary: Revoke API key (CSRF required)
+      tags:
+        - Dashboard
+      security:
+        - BearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                api_key_id:
+                  type: string
+                  format: uuid
+              required:
+                - api_key_id
+              additionalProperties: false
+      responses:
+        "200":
+          description: Revocation result
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/DashboardOpsEnvelope"
+        "400":
+          description: Validation error
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "401":
+          description: Unauthorized
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "403":
+          description: Invalid CSRF
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "500":
+          description: Server error
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+  /v1/dashboard/members:
+    get:
+      summary: List workspace members (query workspace_id optional; must match session workspace)
+      tags:
+        - Dashboard
+      security:
+        - BearerAuth: []
+      parameters:
+        - schema:
+            type: string
+            format: uuid
+            example: 00000000-0000-4000-8000-000000000000
+          required: false
+          name: workspace_id
+          in: query
+      responses:
+        "200":
+          description: Members
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/DashboardOpsEnvelope"
+        "401":
+          description: Unauthorized
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "403":
+          description: Forbidden
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "500":
+          description: Server error
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+  /v1/dashboard/invites:
+    get:
+      summary: List pending workspace invites (query workspace_id optional; must match session workspace)
+      tags:
+        - Dashboard
+      security:
+        - BearerAuth: []
+      parameters:
+        - schema:
+            type: string
+            format: uuid
+            example: 00000000-0000-4000-8000-000000000000
+          required: false
+          name: workspace_id
+          in: query
+      responses:
+        "200":
+          description: Invites
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/DashboardOpsEnvelope"
+        "401":
+          description: Unauthorized
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "403":
+          description: Forbidden
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "500":
+          description: Server error
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+    post:
+      summary: Create workspace invite (CSRF required)
+      tags:
+        - Dashboard
+      security:
+        - BearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                workspace_id:
+                  type: string
+                  format: uuid
+                email:
+                  type: string
+                  format: email
+                role:
+                  type: string
+                  enum:
+                    - member
+                    - admin
+                    - owner
+              required:
+                - workspace_id
+                - email
+                - role
+              additionalProperties: false
+      responses:
+        "200":
+          description: Invite created
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/DashboardOpsEnvelope"
+        "400":
+          description: Validation error
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "401":
+          description: Unauthorized
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "403":
+          description: Invalid CSRF
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "500":
+          description: Server error
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+  /v1/dashboard/invites/revoke:
+    post:
+      summary: Revoke workspace invite (CSRF required)
+      tags:
+        - Dashboard
+      security:
+        - BearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                invite_id:
+                  type: string
+                  format: uuid
+              required:
+                - invite_id
+              additionalProperties: false
+      responses:
+        "200":
+          description: Revocation result
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/DashboardOpsEnvelope"
+        "400":
+          description: Validation error
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "401":
+          description: Unauthorized
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "403":
+          description: Invalid CSRF
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "500":
+          description: Server error
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+  /v1/dashboard/members/role:
+    post:
+      summary: Update member role (CSRF required)
+      tags:
+        - Dashboard
+      security:
+        - BearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                workspace_id:
+                  type: string
+                  format: uuid
+                user_id:
+                  type: string
+                  format: uuid
+                role:
+                  type: string
+                  enum:
+                    - member
+                    - admin
+                    - owner
+              required:
+                - workspace_id
+                - user_id
+                - role
+              additionalProperties: false
+      responses:
+        "200":
+          description: Update result
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/DashboardOpsEnvelope"
+        "400":
+          description: Validation error
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "401":
+          description: Unauthorized
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "403":
+          description: Invalid CSRF
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "500":
+          description: Server error
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+  /v1/dashboard/members/remove:
+    post:
+      summary: Remove workspace member (CSRF required)
+      tags:
+        - Dashboard
+      security:
+        - BearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                workspace_id:
+                  type: string
+                  format: uuid
+                user_id:
+                  type: string
+                  format: uuid
+              required:
+                - workspace_id
+                - user_id
+              additionalProperties: false
+      responses:
+        "200":
+          description: Removal result
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/DashboardOpsEnvelope"
+        "400":
+          description: Validation error
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "401":
+          description: Unauthorized
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "403":
+          description: Invalid CSRF
           content:
             application/json:
               schema:

@@ -160,11 +160,25 @@ All PayU. The Stripe portal endpoint is retired and returns `410 Gone`.
 
 ### 6.8 Dashboard
 
+Browser console routes use the dashboard session cookie (`S`) and request-scoped Supabase execution. **Mutating** `POST` routes also require a valid `x-csrf-token` (double-submit with the session bootstrap). JSON bodies use `{ ok: true, data: … }` on success or `{ ok: false, error: { code, message, details? } }` on failure unless noted.
+
 | Method | Path | Auth | Notes |
 | --- | --- | --- | --- |
+| POST | `/v1/dashboard/bootstrap` | Supabase JWT in body | `{ access_token, workspace_name? }`. Pre-cookie: resolves or creates the user’s default workspace via `create_workspace` when none exists; then the client calls `/v1/dashboard/session` with the chosen `workspace_id`. |
 | POST | `/v1/dashboard/session` | Supabase JWT in body | `{access_token, workspace_id}`; verifies via `SUPABASE_JWT_SECRET`, inserts `dashboard_sessions`, sets HttpOnly cookie, returns `csrf_token`. |
 | POST | `/v1/dashboard/logout` | S | Deletes session, clears cookie. |
 | GET | `/v1/dashboard/overview-stats` | S | `dashboard_console_overview_stats` RPC. |
+| GET | `/v1/dashboard/workspaces` | S | Lists workspaces the signed-in user belongs to (`id`, `name`, `role`). |
+| POST | `/v1/dashboard/workspaces` | S + CSRF | `{ name }`; `create_workspace` RPC. |
+| GET | `/v1/dashboard/api-keys` | S | Query `workspace_id?` (defaults to active session workspace; must match session). `list_api_keys` RPC. |
+| POST | `/v1/dashboard/api-keys` | S + CSRF | `{ workspace_id, name }`; `create_api_key` RPC (returns plaintext key once). |
+| POST | `/v1/dashboard/api-keys/revoke` | S + CSRF | `{ api_key_id }`; `revoke_api_key` RPC. |
+| GET | `/v1/dashboard/members` | S | Query `workspace_id?` (must match session). Direct `workspace_members` read for the workspace. |
+| GET | `/v1/dashboard/invites` | S | Query `workspace_id?` (must match session). Lists `workspace_invites` for the workspace. |
+| POST | `/v1/dashboard/invites` | S + CSRF | `{ workspace_id, email, role }` (`member` \| `admin` \| `owner`); `create_invite` RPC. |
+| POST | `/v1/dashboard/invites/revoke` | S + CSRF | `{ invite_id }`; `revoke_invite` RPC. |
+| POST | `/v1/dashboard/members/role` | S + CSRF | `{ workspace_id, user_id, role }`; `update_member_role` RPC. |
+| POST | `/v1/dashboard/members/remove` | S + CSRF | `{ workspace_id, user_id }`; `remove_member` RPC. |
 
 ### 6.9 Health
 
