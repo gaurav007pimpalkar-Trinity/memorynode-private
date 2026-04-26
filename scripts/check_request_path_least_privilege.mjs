@@ -85,6 +85,8 @@ const scopeViolations = scanWorkspaceScopeViolations({
     { fileIncludes: "payuReconcile.ts", table: "workspaces", op: "select" },
     { fileIncludes: "payuReconcile.ts", table: "workspaces", op: "update" },
     { fileIncludes: "handlers/auditLog.ts", table: "api_audit_log", op: "select" },
+    // Dashboard bootstrap/workspace listing use user-token-scoped clients with membership joins.
+    { fileIncludes: "handlers/dashboardOps.ts", table: "workspaces", op: "select" },
   ],
 });
 for (const v of scopeViolations) {

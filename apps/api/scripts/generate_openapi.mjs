@@ -842,6 +842,293 @@ registry.registerPath({
   },
 });
 
+const DashboardOpsEnvelope = z
+  .object({ ok: z.boolean() })
+  .passthrough()
+  .openapi("DashboardOpsEnvelope");
+
+registry.registerPath({
+  method: "post",
+  path: "/v1/dashboard/bootstrap",
+  summary:
+    "Pre-session workspace bootstrap: validates Supabase access_token, returns existing workspace or creates one via create_workspace; client then establishes cookie via POST /v1/dashboard/session.",
+  tags: ["Dashboard"],
+  request: {
+    body: {
+      required: true,
+      content: {
+        "application/json": {
+          schema: z
+            .object({
+              access_token: z.string(),
+              workspace_name: z.string().optional(),
+            })
+            .strict(),
+        },
+      },
+    },
+  },
+  responses: {
+    200: {
+      description: "Workspace id and name; created indicates new workspace",
+      content: { "application/json": { schema: DashboardOpsEnvelope } },
+    },
+    400: errorRef("Validation error"),
+    401: errorRef("Unauthorized"),
+    500: errorRef("Server error"),
+  },
+});
+
+registry.registerPath({
+  method: "get",
+  path: "/v1/dashboard/workspaces",
+  summary: "List workspaces for the signed-in dashboard user (membership-scoped)",
+  tags: ["Dashboard"],
+  security: [{ [bearerAuth.name]: [] }],
+  responses: {
+    200: { description: "Workspace list", content: { "application/json": { schema: DashboardOpsEnvelope } } },
+    401: errorRef("Unauthorized"),
+    500: errorRef("Server error"),
+  },
+});
+
+registry.registerPath({
+  method: "post",
+  path: "/v1/dashboard/workspaces",
+  summary: "Create a workspace (CSRF required)",
+  tags: ["Dashboard"],
+  security: [{ [bearerAuth.name]: [] }],
+  request: {
+    body: {
+      required: true,
+      content: { "application/json": { schema: z.object({ name: z.string() }).strict() } },
+    },
+  },
+  responses: {
+    200: { description: "Created workspace", content: { "application/json": { schema: DashboardOpsEnvelope } } },
+    400: errorRef("Validation error"),
+    401: errorRef("Unauthorized"),
+    403: errorRef("Invalid CSRF"),
+    500: errorRef("Server error"),
+  },
+});
+
+registry.registerPath({
+  method: "get",
+  path: "/v1/dashboard/api-keys",
+  summary: "List API keys for a workspace (query workspace_id optional; must match session workspace)",
+  tags: ["Dashboard"],
+  security: [{ [bearerAuth.name]: [] }],
+  request: {
+    query: z.object({
+      workspace_id: z.string().uuid().optional().openapi({ example: "00000000-0000-4000-8000-000000000000" }),
+    }),
+  },
+  responses: {
+    200: { description: "API keys", content: { "application/json": { schema: DashboardOpsEnvelope } } },
+    401: errorRef("Unauthorized"),
+    403: errorRef("Forbidden"),
+    500: errorRef("Server error"),
+  },
+});
+
+registry.registerPath({
+  method: "post",
+  path: "/v1/dashboard/api-keys",
+  summary: "Create API key (CSRF required)",
+  tags: ["Dashboard"],
+  security: [{ [bearerAuth.name]: [] }],
+  request: {
+    body: {
+      required: true,
+      content: {
+        "application/json": {
+          schema: z
+            .object({
+              workspace_id: z.string().uuid(),
+              name: z.string(),
+            })
+            .strict(),
+        },
+      },
+    },
+  },
+  responses: {
+    200: { description: "New key material (once)", content: { "application/json": { schema: DashboardOpsEnvelope } } },
+    400: errorRef("Validation error"),
+    401: errorRef("Unauthorized"),
+    403: errorRef("Invalid CSRF"),
+    500: errorRef("Server error"),
+  },
+});
+
+registry.registerPath({
+  method: "post",
+  path: "/v1/dashboard/api-keys/revoke",
+  summary: "Revoke API key (CSRF required)",
+  tags: ["Dashboard"],
+  security: [{ [bearerAuth.name]: [] }],
+  request: {
+    body: {
+      required: true,
+      content: { "application/json": { schema: z.object({ api_key_id: z.string().uuid() }).strict() } },
+    },
+  },
+  responses: {
+    200: { description: "Revocation result", content: { "application/json": { schema: DashboardOpsEnvelope } } },
+    400: errorRef("Validation error"),
+    401: errorRef("Unauthorized"),
+    403: errorRef("Invalid CSRF"),
+    500: errorRef("Server error"),
+  },
+});
+
+registry.registerPath({
+  method: "get",
+  path: "/v1/dashboard/members",
+  summary: "List workspace members (query workspace_id optional; must match session workspace)",
+  tags: ["Dashboard"],
+  security: [{ [bearerAuth.name]: [] }],
+  request: {
+    query: z.object({
+      workspace_id: z.string().uuid().optional().openapi({ example: "00000000-0000-4000-8000-000000000000" }),
+    }),
+  },
+  responses: {
+    200: { description: "Members", content: { "application/json": { schema: DashboardOpsEnvelope } } },
+    401: errorRef("Unauthorized"),
+    403: errorRef("Forbidden"),
+    500: errorRef("Server error"),
+  },
+});
+
+registry.registerPath({
+  method: "get",
+  path: "/v1/dashboard/invites",
+  summary: "List pending workspace invites (query workspace_id optional; must match session workspace)",
+  tags: ["Dashboard"],
+  security: [{ [bearerAuth.name]: [] }],
+  request: {
+    query: z.object({
+      workspace_id: z.string().uuid().optional().openapi({ example: "00000000-0000-4000-8000-000000000000" }),
+    }),
+  },
+  responses: {
+    200: { description: "Invites", content: { "application/json": { schema: DashboardOpsEnvelope } } },
+    401: errorRef("Unauthorized"),
+    403: errorRef("Forbidden"),
+    500: errorRef("Server error"),
+  },
+});
+
+registry.registerPath({
+  method: "post",
+  path: "/v1/dashboard/invites",
+  summary: "Create workspace invite (CSRF required)",
+  tags: ["Dashboard"],
+  security: [{ [bearerAuth.name]: [] }],
+  request: {
+    body: {
+      required: true,
+      content: {
+        "application/json": {
+          schema: z
+            .object({
+              workspace_id: z.string().uuid(),
+              email: z.string().email(),
+              role: z.enum(["member", "admin", "owner"]),
+            })
+            .strict(),
+        },
+      },
+    },
+  },
+  responses: {
+    200: { description: "Invite created", content: { "application/json": { schema: DashboardOpsEnvelope } } },
+    400: errorRef("Validation error"),
+    401: errorRef("Unauthorized"),
+    403: errorRef("Invalid CSRF"),
+    500: errorRef("Server error"),
+  },
+});
+
+registry.registerPath({
+  method: "post",
+  path: "/v1/dashboard/invites/revoke",
+  summary: "Revoke workspace invite (CSRF required)",
+  tags: ["Dashboard"],
+  security: [{ [bearerAuth.name]: [] }],
+  request: {
+    body: {
+      required: true,
+      content: { "application/json": { schema: z.object({ invite_id: z.string().uuid() }).strict() } },
+    },
+  },
+  responses: {
+    200: { description: "Revocation result", content: { "application/json": { schema: DashboardOpsEnvelope } } },
+    400: errorRef("Validation error"),
+    401: errorRef("Unauthorized"),
+    403: errorRef("Invalid CSRF"),
+    500: errorRef("Server error"),
+  },
+});
+
+registry.registerPath({
+  method: "post",
+  path: "/v1/dashboard/members/role",
+  summary: "Update member role (CSRF required)",
+  tags: ["Dashboard"],
+  security: [{ [bearerAuth.name]: [] }],
+  request: {
+    body: {
+      required: true,
+      content: {
+        "application/json": {
+          schema: z
+            .object({
+              workspace_id: z.string().uuid(),
+              user_id: z.string().uuid(),
+              role: z.enum(["member", "admin", "owner"]),
+            })
+            .strict(),
+        },
+      },
+    },
+  },
+  responses: {
+    200: { description: "Update result", content: { "application/json": { schema: DashboardOpsEnvelope } } },
+    400: errorRef("Validation error"),
+    401: errorRef("Unauthorized"),
+    403: errorRef("Invalid CSRF"),
+    500: errorRef("Server error"),
+  },
+});
+
+registry.registerPath({
+  method: "post",
+  path: "/v1/dashboard/members/remove",
+  summary: "Remove workspace member (CSRF required)",
+  tags: ["Dashboard"],
+  security: [{ [bearerAuth.name]: [] }],
+  request: {
+    body: {
+      required: true,
+      content: {
+        "application/json": {
+          schema: z.object({ workspace_id: z.string().uuid(), user_id: z.string().uuid() }).strict(),
+        },
+      },
+    },
+  },
+  responses: {
+    200: { description: "Removal result", content: { "application/json": { schema: DashboardOpsEnvelope } } },
+    400: errorRef("Validation error"),
+    401: errorRef("Unauthorized"),
+    403: errorRef("Invalid CSRF"),
+    500: errorRef("Server error"),
+  },
+});
+
 registry.registerPath({
   method: "get",
   path: "/v1/connectors/settings",
@@ -1484,7 +1771,7 @@ const doc = generator.generateDocument({
       "Store, search, and prompt-ready context over HTTPS; hybrid retrieval is server-managed.\n\n" +
       "This file is produced by `pnpm openapi:gen` from `apps/api/scripts/generate_openapi.mjs` (schemas aligned with `apps/api/src/contracts/`).\n\n" +
       "**Also implemented in the Worker but omitted or summarized here:** `/healthz`, `/ready`, `/mcp`, PayU `/v1/billing/webhook`, " +
-      "admin cron endpoints (`/admin/*`), read-only `/v1/admin/*`, and `/v1/admin/founder/phase1`. See `apps/api/src/router.ts` and `workerApp.ts`.",
+      "admin cron endpoints (`/admin/*`), read-only `/v1/admin/*`, and `/v1/admin/founder/phase1`. Dashboard routes use the browser session cookie in production; OpenAPI lists `BearerAuth` for generator consistency. See `apps/api/src/router.ts` and `workerApp.ts`.",
     "x-doc-governance":
       "SOURCE_OF_TRUTH: Regenerate via `pnpm openapi:gen` when `apps/api/scripts/generate_openapi.mjs`, `apps/api/src/contracts/`, or `apps/api/src/router.ts` change. Same PR as behavioral API changes. Human prose: `docs/external/API_USAGE.md`.",
   },

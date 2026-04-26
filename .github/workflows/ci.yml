@@ -305,6 +305,7 @@ jobs:
           DATABASE_URL: postgresql://ci_user:ci_pass@ci-db.invalid:5432/memorynode?sslmode=require
           EMBEDDINGS_MODE: openai
           OPENAI_API_KEY: ci_openai_key_value
+          AI_COST_BUDGET_INR: "100"
           BILLING_WEBHOOKS_ENABLED: "0"
         run: pnpm check:config
 

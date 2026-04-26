@@ -230,6 +230,78 @@ export interface RouterHandlers {
     supabase: SupabaseClient,
     deps: HandlerDeps,
   ) => Promise<Response>;
+  handleDashboardCreateWorkspace: (
+    request: Request,
+    env: Env,
+    supabase: SupabaseClient,
+    deps: HandlerDeps,
+  ) => Promise<Response>;
+  handleDashboardBootstrap: (
+    request: Request,
+    env: Env,
+    supabase: SupabaseClient,
+    deps: HandlerDeps,
+  ) => Promise<Response>;
+  handleDashboardListWorkspaces: (
+    request: Request,
+    env: Env,
+    supabase: SupabaseClient,
+    deps: HandlerDeps,
+  ) => Promise<Response>;
+  handleDashboardListApiKeys: (
+    request: Request,
+    env: Env,
+    supabase: SupabaseClient,
+    deps: HandlerDeps,
+  ) => Promise<Response>;
+  handleDashboardCreateApiKey: (
+    request: Request,
+    env: Env,
+    supabase: SupabaseClient,
+    deps: HandlerDeps,
+  ) => Promise<Response>;
+  handleDashboardRevokeApiKey: (
+    request: Request,
+    env: Env,
+    supabase: SupabaseClient,
+    deps: HandlerDeps,
+  ) => Promise<Response>;
+  handleDashboardCreateInvite: (
+    request: Request,
+    env: Env,
+    supabase: SupabaseClient,
+    deps: HandlerDeps,
+  ) => Promise<Response>;
+  handleDashboardRevokeInvite: (
+    request: Request,
+    env: Env,
+    supabase: SupabaseClient,
+    deps: HandlerDeps,
+  ) => Promise<Response>;
+  handleDashboardUpdateMemberRole: (
+    request: Request,
+    env: Env,
+    supabase: SupabaseClient,
+    deps: HandlerDeps,
+  ) => Promise<Response>;
+  handleDashboardRemoveMember: (
+    request: Request,
+    env: Env,
+    supabase: SupabaseClient,
+    deps: HandlerDeps,
+  ) => Promise<Response>;
+  handleDashboardListMembers: (
+    request: Request,
+    env: Env,
+    supabase: SupabaseClient,
+    deps: HandlerDeps,
+  ) => Promise<Response>;
+  handleDashboardListInvites: (
+    request: Request,
+    env: Env,
+    supabase: SupabaseClient,
+    deps: HandlerDeps,
+  ) => Promise<Response>;
   handleReprocessDeferredWebhooks: (
     request: Request,
     env: Env,
@@ -544,6 +616,54 @@ export async function route(
 
   if (request.method === "POST" && url.pathname === "/v1/api-keys/revoke") {
     return handlers.handleRevokeApiKey(request, env, supabase, handlerDeps);
+  }
+
+  if (request.method === "POST" && url.pathname === "/v1/dashboard/workspaces") {
+    return handlers.handleDashboardCreateWorkspace(request, env, supabase, handlerDeps);
+  }
+
+  if (request.method === "POST" && url.pathname === "/v1/dashboard/bootstrap") {
+    return handlers.handleDashboardBootstrap(request, env, supabase, handlerDeps);
+  }
+
+  if (request.method === "GET" && url.pathname === "/v1/dashboard/workspaces") {
+    return handlers.handleDashboardListWorkspaces(request, env, supabase, handlerDeps);
+  }
+
+  if (request.method === "GET" && url.pathname === "/v1/dashboard/api-keys") {
+    return handlers.handleDashboardListApiKeys(request, env, supabase, handlerDeps);
+  }
+
+  if (request.method === "POST" && url.pathname === "/v1/dashboard/api-keys") {
+    return handlers.handleDashboardCreateApiKey(request, env, supabase, handlerDeps);
+  }
+
+  if (request.method === "POST" && url.pathname === "/v1/dashboard/api-keys/revoke") {
+    return handlers.handleDashboardRevokeApiKey(request, env, supabase, handlerDeps);
+  }
+
+  if (request.method === "POST" && url.pathname === "/v1/dashboard/invites") {
+    return handlers.handleDashboardCreateInvite(request, env, supabase, handlerDeps);
+  }
+
+  if (request.method === "POST" && url.pathname === "/v1/dashboard/invites/revoke") {
+    return handlers.handleDashboardRevokeInvite(request, env, supabase, handlerDeps);
+  }
+
+  if (request.method === "POST" && url.pathname === "/v1/dashboard/members/role") {
+    return handlers.handleDashboardUpdateMemberRole(request, env, supabase, handlerDeps);
+  }
+
+  if (request.method === "POST" && url.pathname === "/v1/dashboard/members/remove") {
+    return handlers.handleDashboardRemoveMember(request, env, supabase, handlerDeps);
+  }
+
+  if (request.method === "GET" && url.pathname === "/v1/dashboard/members") {
+    return handlers.handleDashboardListMembers(request, env, supabase, handlerDeps);
+  }
+
+  if (request.method === "GET" && url.pathname === "/v1/dashboard/invites") {
+    return handlers.handleDashboardListInvites(request, env, supabase, handlerDeps);
   }
 
   if (request.method === "POST" && url.pathname === "/admin/webhooks/reprocess") {

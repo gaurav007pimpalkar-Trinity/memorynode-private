@@ -39,6 +39,7 @@ const RELEVANT_ENV_KEYS = [
   "PUBLIC_APP_URL",
   "PAYU_SUCCESS_PATH",
   "PAYU_CANCEL_PATH",
+  "AI_COST_BUDGET_INR",
 ];
 
 function runCheckConfig(overrides: Record<string, string | undefined>) {
@@ -83,8 +84,9 @@ const STRICT_BASE = {
   PAYU_BASE_URL: "https://secure.payu.in",
   PAYU_VERIFY_URL: "https://info.payu.in/merchant/postservice?form=2",
   PUBLIC_APP_URL: "https://console.memorynode.ai",
-  PAYU_SUCCESS_PATH: "/settings/billing?status=success",
-  PAYU_CANCEL_PATH: "/settings/billing?status=canceled",
+  PAYU_SUCCESS_PATH: "/billing?status=success",
+  PAYU_CANCEL_PATH: "/billing?status=canceled",
+  AI_COST_BUDGET_INR: "5000",
 };
 
 describe("check_config", () => {
@@ -145,6 +147,24 @@ describe("check_config", () => {
     });
     expect(result.status).toBe(1);
     expect(result.output).toContain("Missing SUPABASE_ANON_KEY");
+  });
+
+  it("fails in production when AI_COST_BUDGET_INR is missing", () => {
+    const result = runCheckConfig({
+      ...STRICT_BASE,
+      AI_COST_BUDGET_INR: undefined,
+    });
+    expect(result.status).toBe(1);
+    expect(result.output).toContain("Missing AI_COST_BUDGET_INR");
+  });
+
+  it("fails in production when AI_COST_BUDGET_INR is non-positive", () => {
+    const result = runCheckConfig({
+      ...STRICT_BASE,
+      AI_COST_BUDGET_INR: "0",
+    });
+    expect(result.status).toBe(1);
+    expect(result.output).toContain("AI_COST_BUDGET_INR must be a positive number");
   });
 
   it("fails in production when ADMIN_AUTH_MODE=legacy", () => {

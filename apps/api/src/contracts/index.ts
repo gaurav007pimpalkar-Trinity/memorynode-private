@@ -71,6 +71,24 @@ export {
   type RevokeApiKeyPayload,
 } from "./admin.js";
 export {
+  DashboardBootstrapSchema,
+  DashboardCreateWorkspaceSchema,
+  DashboardCreateApiKeySchema,
+  DashboardRevokeApiKeySchema,
+  DashboardCreateInviteSchema,
+  DashboardRevokeInviteSchema,
+  DashboardUpdateMemberRoleSchema,
+  DashboardRemoveMemberSchema,
+  type DashboardBootstrapPayload,
+  type DashboardCreateWorkspacePayload,
+  type DashboardCreateApiKeyPayload,
+  type DashboardRevokeApiKeyPayload,
+  type DashboardCreateInvitePayload,
+  type DashboardRevokeInvitePayload,
+  type DashboardUpdateMemberRolePayload,
+  type DashboardRemoveMemberPayload,
+} from "./dashboardOps.js";
+export {
   CAPTURE_TYPE_KEYS,
   CaptureTypesSchema,
   ConnectorSettingPatchSchema,

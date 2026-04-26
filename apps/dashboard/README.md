@@ -66,15 +66,14 @@ Use the **anon** (not service-role) key so browser traffic is RLS-enforced. Foun
 ## Import tab (paid)
 
 - Import supports artifact-based bulk ingest through Worker API `POST /v1/import`.
-- Free plans receive `402 UPGRADE_REQUIRED`; paid plans can run import modes (`upsert`, `skip_existing`, `error_on_conflict`, `replace_ids`, `replace_all`).
+- Workspaces that are not on paid access (for example unpaid or trial-ended per API billing rules) may receive `402 UPGRADE_REQUIRED`. After checkout, paid tiers (Launch–Scale; see [packages/shared/src/plans.ts](../../packages/shared/src/plans.ts)) can run import modes (`upsert`, `skip_existing`, `error_on_conflict`, `replace_ids`, `replace_all`).
 
 ## Billing
 
 - Uses Worker API endpoints:
   - `GET /v1/billing/status` (shows plan, plan_status, effective_plan, renewal/cancel flags)
   - `POST /v1/billing/checkout` (opens PayU checkout)
-- Buttons:
-  - **Upgrade to Pro (PayU)** → opens checkout in a new tab.
+- **Plans** tab: per-plan **Upgrade** buttons call checkout with `launch`, `build`, `deploy`, or `scale` (amounts and limits are defined in [packages/shared/src/plans.ts](../../packages/shared/src/plans.ts) and [docs/external/API_USAGE.md](../../docs/external/API_USAGE.md)).
 - Query params `?status=success|canceled` render a small banner after returning from checkout.
 
 ## Production build (local or CI)
@@ -90,8 +89,19 @@ Use the **anon** (not service-role) key so browser traffic is RLS-enforced. Foun
 
 **Both production surfaces from one checkout:** from repo root, `pnpm dashboard:build:prod-surfaces` or `pnpm dashboard:deploy:pages` (see [`docs/internal/DASHBOARD_DEPLOY.md`](../../docs/internal/DASHBOARD_DEPLOY.md)).
 
-## Commands
+## Commands (founder-safe)
 
-- `pnpm dev --filter @memorynode/dashboard`
-- `pnpm build --filter @memorynode/dashboard`
-- `pnpm preview --filter @memorynode/dashboard`
+Core day-to-day:
+
+- `pnpm --filter @memorynode/dashboard dev` - run local dashboard
+- `pnpm --filter @memorynode/dashboard test` - run dashboard tests
+- `pnpm --filter @memorynode/dashboard build` - production build check
+- `pnpm --filter @memorynode/dashboard deploy:pages` - deploy dashboard to Pages
+- `pnpm --filter @memorynode/dashboard verify:pages` - verify deployed Pages build
+
+Advanced (engineering only):
+
+- `pnpm --filter @memorynode/dashboard preview`
+- `pnpm --filter @memorynode/dashboard lint`
+- `pnpm --filter @memorynode/dashboard typecheck`
+- `pnpm --filter @memorynode/dashboard build:prod:surfaces`

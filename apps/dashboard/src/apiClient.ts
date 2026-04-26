@@ -1,3 +1,4 @@
+import { API_PATHS } from "./config/apiPaths";
 /**
  * Dashboard API client — browser calls against the Worker with `credentials: "include"`.
  *
@@ -56,6 +57,9 @@ type ApiErrorBody = {
 };
 
 type ApiErrorPayload = ApiErrorBody & { upgrade_url?: string };
+type DashboardEnvelope<T> =
+  | { ok: true; data: T }
+  | { ok: false; error?: { code?: string; message?: string; details?: unknown } };
 
 export class ApiClientError extends Error {
   status: number;
@@ -167,7 +171,7 @@ export async function ensureDashboardSession(accessToken: string, workspaceId: s
   if (!API_BASE_URL) {
     throw new ApiClientError(0, "CONFIG", apiEnvError ?? "VITE_API_BASE_URL is not configured.");
   }
-  const res = await fetch(new URL("/v1/dashboard/session", API_BASE_URL).toString(), {
+  const res = await fetch(new URL(API_PATHS.dashboard.session, API_BASE_URL).toString(), {
     method: "POST",
     credentials: "include",
     headers: { "content-type": "application/json" },
@@ -225,7 +229,7 @@ export async function dashboardLogout(): Promise<void> {
   if (!API_BASE_URL) return;
   const headers: Record<string, string> = { "content-type": "application/json" };
   if (csrfToken) headers["x-csrf-token"] = csrfToken;
-  await fetch(new URL("/v1/dashboard/logout", API_BASE_URL).toString(), {
+  await fetch(new URL(API_PATHS.dashboard.logout, API_BASE_URL).toString(), {
     method: "POST",
     credentials: "include",
     headers,
@@ -241,6 +245,40 @@ export async function apiPost<T>(path: string, body: unknown = {}, extraHeaders?
 export async function apiGet<T>(path: string): Promise<T> {
   const { data } = await apiGetWithMeta<T>(path);
   return data;
+}
+
+function unwrapDashboardEnvelope<T>(
+  envelope: DashboardEnvelope<T>,
+  statusFallback = 400,
+): T {
+  if (envelope && typeof envelope === "object" && "ok" in envelope && envelope.ok === true) {
+    return envelope.data;
+  }
+  const code =
+    envelope && typeof envelope === "object" && "error" in envelope
+      ? envelope.error?.code
+      : "DASHBOARD_API_ERROR";
+  const message =
+    envelope && typeof envelope === "object" && "error" in envelope
+      ? envelope.error?.message ?? "Dashboard API request failed"
+      : "Dashboard API request failed";
+  throw new ApiClientError(statusFallback, code, message);
+}
+
+/** Dashboard endpoint helper for `{ ok, data, error }` envelopes. */
+export async function dashboardApiGet<T>(path: string): Promise<T> {
+  const { data } = await apiGetWithMeta<DashboardEnvelope<T>>(path);
+  return unwrapDashboardEnvelope(data);
+}
+
+/** Dashboard endpoint helper for `{ ok, data, error }` envelopes. */
+export async function dashboardApiPost<T>(
+  path: string,
+  body: unknown = {},
+  extraHeaders?: Record<string, string>,
+): Promise<T> {
+  const { data } = await apiPostWithMeta<DashboardEnvelope<T>>(path, body, extraHeaders);
+  return unwrapDashboardEnvelope(data);
 }
 
 export async function apiDelete<T>(path: string): Promise<T> {
