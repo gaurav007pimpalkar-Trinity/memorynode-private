@@ -1,5 +1,5 @@
 /**
- * Persist control-plane admin actions to `admin_audit_log` (see infra/sql/023_admin_audit_log.sql).
+ * Persist control-plane admin actions to `admin_audit_log` (see infra/sql/067_admin_audit_log.sql).
  */
 
 import type { SupabaseClient } from "@supabase/supabase-js";
