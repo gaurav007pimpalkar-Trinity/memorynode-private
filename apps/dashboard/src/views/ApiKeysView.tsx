@@ -2,7 +2,6 @@ import { useEffect, useState } from "react";
 import { Panel } from "../components/Panel";
 import { dashboardApiGet, dashboardApiPost, userFacingErrorMessage } from "../apiClient";
 import { API_PATHS } from "../config/apiPaths";
-import { MN_CONSOLE_LAST_API_KEY_PLAINTEXT } from "../config/storageKeys";
 import type { ApiKeyRow } from "../types";
 
 export function ApiKeysView({
@@ -56,7 +55,8 @@ export function ApiKeysView({
       if (data.api_key) {
         setPlaintextKey(data.api_key);
         try {
-          sessionStorage.setItem(MN_CONSOLE_LAST_API_KEY_PLAINTEXT, data.api_key);
+          // Keep literal here so CI trust gate G2 can resolve the key without cross-file parsing.
+          sessionStorage.setItem("mn_console_last_api_key_plaintext", data.api_key);
         } catch {
           /* ignore */
         }
