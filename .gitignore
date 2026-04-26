@@ -90,6 +90,11 @@ _founder_notes/
 __pycache__/
 
 ##########
+# Local-only scripts (never commit — contains no secrets but founder policy)
+##########
+scripts/create_prod_api_key.sh
+
+##########
 # Local audit/report artifacts (do not commit)
 ##########
 /docs/generated/

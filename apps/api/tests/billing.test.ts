@@ -681,11 +681,33 @@ describe("billing checkout + portal", () => {
     expect(json.url).toContain("payu");
     expect(json.fields).toBeTruthy();
     expect(typeof json.fields.hash).toBe("string");
+    expect(json.fields.surl).toBe("https://app.example.com/billing?status=success");
+    expect(json.fields.furl).toBe("https://app.example.com/billing?status=canceled");
     expect(supabase.workspace.payu_txn_id).toMatch(/^mn/);
     const txn = supabase.getTransactionRow(String(supabase.workspace.payu_txn_id));
     expect(txn?.status).toBe("initiated");
     expect(txn?.amount).toBe("999.00");
     expect(txn?.currency).toBe("INR");
+  });
+
+  it("prefers explicit PAYU success/cancel paths when configured", async () => {
+    const supabase = makeSupabase({ plan: "free", plan_status: "free" });
+    const res = await handleBillingCheckout(
+      new Request("http://localhost/v1/billing/checkout", {
+        method: "POST",
+        headers: { authorization: "Bearer mn_live_test" },
+      }),
+      makeEnv({
+        PAYU_SUCCESS_PATH: "/projects?status=success",
+        PAYU_CANCEL_PATH: "/projects?status=canceled",
+      }),
+      supabase as SupabaseClient,
+      {},
+    );
+    expect(res.status).toBe(200);
+    const json = await res.json();
+    expect(json.fields.surl).toBe("https://app.example.com/projects?status=success");
+    expect(json.fields.furl).toBe("https://app.example.com/projects?status=canceled");
   });
 
   it("rejects legacy pro/team and enterprise checkout plans", async () => {

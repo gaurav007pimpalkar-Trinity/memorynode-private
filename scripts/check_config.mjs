@@ -196,6 +196,16 @@ if (strictStage) {
       "SUPABASE_ANON_KEY",
       "Required for dashboard session (Supabase Auth Get User). Set in Worker secrets.",
     );
+    requireVar(
+      errors,
+      "AI_COST_BUDGET_INR",
+      "Required in production (`> 0`) so runtime cost guard can enforce budget ceilings.",
+    );
+    const budgetRaw = `${env.AI_COST_BUDGET_INR ?? ""}`.trim();
+    const budget = Number(budgetRaw);
+    if (budgetRaw && (!Number.isFinite(budget) || budget <= 0)) {
+      errors.push("[production] AI_COST_BUDGET_INR must be a positive number.");
+    }
   }
   if (checkMode === "ci") {
     notes.push(

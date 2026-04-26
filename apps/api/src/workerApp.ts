@@ -69,6 +69,7 @@ import { createMemoryWebhookHandlers } from "./handlers/memoryWebhook.js";
 import { createConnectorSettingsHandlers } from "./handlers/connectorSettings.js";
 import { createWorkspacesHandlers, type WorkspacesHandlerDeps } from "./handlers/workspaces.js";
 import { createApiKeysHandlers, type ApiKeysHandlerDeps } from "./handlers/apiKeys.js";
+import { createDashboardOpsHandlers, type DashboardOpsHandlerDeps, defaultDashboardOpsHandlerDeps } from "./handlers/dashboardOps.js";
 import { createEvalHandlers, type EvalHandlerDeps } from "./handlers/evals.js";
 import { createPruningHandlers } from "./handlers/pruning.js";
 import { createExplainHandlers } from "./handlers/explain.js";
@@ -95,6 +96,7 @@ import {
   createAnonSupabaseClient,
   createRequestScopedSupabaseClient,
   createServiceRoleSupabaseClient,
+  createUserAccessTokenSupabaseClient,
 } from "./dbClientFactory.js";
 import { chunkParamsForProfile, type ChunkProfile } from "./contracts/memories.js";
 import {
@@ -160,8 +162,8 @@ const MEMORIES_MAX_BODY_BYTES = 1_000_000; // 1 MB for ingest
 const SEARCH_MAX_BODY_BYTES = 200_000; // 200 KB for search/context
 const ADMIN_MAX_BODY_BYTES = 100_000; // 100 KB for admin/control plane ops
 const RRF_K = 60;
-const DEFAULT_SUCCESS_PATH = "/settings/billing?status=success";
-const DEFAULT_CANCEL_PATH = "/settings/billing?status=canceled";
+const DEFAULT_SUCCESS_PATH = "/billing?status=success";
+const DEFAULT_CANCEL_PATH = "/billing?status=canceled";
 
 type ProductEventContext = {
   workspaceId?: string | null;
@@ -466,7 +468,22 @@ function resolveBodyLimit(method: string, path: string, env: Env): number {
     return Math.min(base, MEMORIES_MAX_BODY_BYTES);
   }
   if (method === "POST" && path === "/v1/import") return Number(env.MAX_IMPORT_BYTES ?? DEFAULT_MAX_IMPORT_BYTES);
-  if (method === "POST" && (path === "/v1/workspaces" || path === "/v1/api-keys" || path === "/v1/api-keys/revoke"))
+  if (
+    method === "POST"
+    && (
+      path === "/v1/workspaces"
+      || path === "/v1/api-keys"
+      || path === "/v1/api-keys/revoke"
+      || path === "/v1/dashboard/workspaces"
+      || path === "/v1/dashboard/bootstrap"
+      || path === "/v1/dashboard/api-keys"
+      || path === "/v1/dashboard/api-keys/revoke"
+      || path === "/v1/dashboard/invites"
+      || path === "/v1/dashboard/invites/revoke"
+      || path === "/v1/dashboard/members/role"
+      || path === "/v1/dashboard/members/remove"
+    )
+  )
     return Math.min(base, ADMIN_MAX_BODY_BYTES);
   return base;
 }
@@ -518,6 +535,15 @@ const KNOWN_PATH_ALLOWED_METHODS: Array<{ test: (path: string) => boolean; allow
   { test: (p) => p === "/admin/memory-retention", allow: "POST" },
   { test: (p) => p === "/v1/dashboard/session", allow: "POST" },
   { test: (p) => p === "/v1/dashboard/logout", allow: "POST" },
+  { test: (p) => p === "/v1/dashboard/bootstrap", allow: "POST" },
+  { test: (p) => p === "/v1/dashboard/workspaces", allow: "GET, POST" },
+  { test: (p) => p === "/v1/dashboard/api-keys", allow: "GET, POST" },
+  { test: (p) => p === "/v1/dashboard/api-keys/revoke", allow: "POST" },
+  { test: (p) => p === "/v1/dashboard/invites", allow: "GET, POST" },
+  { test: (p) => p === "/v1/dashboard/invites/revoke", allow: "POST" },
+  { test: (p) => p === "/v1/dashboard/members", allow: "GET" },
+  { test: (p) => p === "/v1/dashboard/members/role", allow: "POST" },
+  { test: (p) => p === "/v1/dashboard/members/remove", allow: "POST" },
 ];
 
 /** If path is known but method is not allowed, returns Allow header value; otherwise null (use 404). */
@@ -944,7 +970,8 @@ async function handleRequestImpl(request: Request, env: Env): Promise<Response> 
         AdminHandlerDeps &
         ImportHandlerDeps &
         WorkspacesHandlerDeps &
-        ApiKeysHandlerDeps = {
+        ApiKeysHandlerDeps &
+        DashboardOpsHandlerDeps = {
         jsonResponse,
         safeParseJson,
         chunkText: chunkTextWithProfile,
@@ -1011,6 +1038,12 @@ async function handleRequestImpl(request: Request, env: Env): Promise<Response> 
         hashApiKey,
         getFounderPhase1Metrics,
         setStubApiKeyIfPresent,
+        getDashboardSession,
+        validateDashboardCsrf,
+        parseAllowedOrigins,
+        createRequestScopedSupabaseClient,
+        createUserAccessTokenSupabaseClient,
+        verifySupabaseAccessToken,
       };
       const memoryHandlers = createMemoryHandlers(handlerDeps, defaultMemoryHandlerDeps);
       const memoryLinkHandlers = createMemoryLinkHandlers({
@@ -1045,6 +1078,7 @@ async function handleRequestImpl(request: Request, env: Env): Promise<Response> 
       const connectorSettingsHandlers = createConnectorSettingsHandlers(handlerDeps, { jsonResponse });
       const workspacesHandlers = createWorkspacesHandlers(handlerDeps, defaultWorkspacesHandlerDeps);
       const apiKeysHandlers = createApiKeysHandlers(handlerDeps, defaultApiKeysHandlerDeps);
+      const dashboardOpsHandlers = createDashboardOpsHandlers(handlerDeps, defaultDashboardOpsHandlerDeps);
       const evalHandlers = createEvalHandlers(handlerDeps, defaultEvalHandlerDeps);
       const pruningHandlers = createPruningHandlers(
         {
@@ -1078,6 +1112,7 @@ async function handleRequestImpl(request: Request, env: Env): Promise<Response> 
           ...connectorSettingsHandlers,
           ...workspacesHandlers,
           ...apiKeysHandlers,
+          ...dashboardOpsHandlers,
           ...evalHandlers,
           ...pruningHandlers,
           ...explainHandlers,

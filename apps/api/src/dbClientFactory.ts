@@ -27,6 +27,17 @@ export function createAnonSupabaseClient(env: Env): SupabaseClient {
   return createSupabaseClientWithKey(env, env.SUPABASE_ANON_KEY);
 }
 
+export function createUserAccessTokenSupabaseClient(env: Env, accessToken: string): SupabaseClient {
+  if (!env.SUPABASE_URL || !env.SUPABASE_ANON_KEY) {
+    throw createHttpError(500, "CONFIG_ERROR", "SUPABASE_URL and SUPABASE_ANON_KEY must be configured");
+  }
+  const token = accessToken.trim();
+  if (!token) {
+    throw createHttpError(401, "UNAUTHORIZED", "Supabase access token is required");
+  }
+  return createSupabaseClientWithKey(env, env.SUPABASE_ANON_KEY, token);
+}
+
 export function createServiceRoleSupabaseClient(env: Env): SupabaseClient {
   if (!env.SUPABASE_URL || !env.SUPABASE_SERVICE_ROLE_KEY) {
     throw createHttpError(500, "CONFIG_ERROR", "Supabase env vars not set");

@@ -3,10 +3,33 @@ import { Navigate, NavLink, useLocation, useNavigate } from "react-router-dom";
 import { Session, type AuthChangeEvent } from "@supabase/supabase-js";
 import { supabase, supabaseEnvError } from "./supabaseClient";
 import { buildPaletteSectionRows, pushRecentCommandId, type PaletteCommand } from "./consoleCommandPalette";
-import { pathForTab, tabFromPath, tabsRequiringWorkspace, UNIFIED_SIDEBAR_GROUPS, type Tab } from "./consoleRoutes";
-import { ApiKeyRow, ConnectorSettingRow, InviteRow, MemoryRow, UsageRow } from "./types";
+import {
+  billingReturnNoticeFromSearch,
+  pathForTab,
+  tabFromPath,
+  tabsRequiringWorkspace,
+  UNIFIED_SIDEBAR_GROUPS,
+  type BillingReturnNotice,
+  type Tab,
+} from "./consoleRoutes";
+import { ConnectorSettingRow, MemoryRow } from "./types";
 import { loadWorkspaceId, persistWorkspaceId } from "./state";
-import { apiDelete, apiEnvError, apiGet, apiPatch, apiPost, ensureDashboardSession, dashboardLogout, setOnUnauthorized, userFacingErrorMessage } from "./apiClient";
+import {
+  apiDelete,
+  apiEnvError,
+  apiGet,
+  apiPatch,
+  apiPost,
+  dashboardApiGet,
+  dashboardApiPost,
+  ensureDashboardSession,
+  dashboardLogout,
+  setOnUnauthorized,
+  userFacingErrorMessage,
+} from "./apiClient";
+import { API_PATHS } from "./config/apiPaths";
+import { MN_CONSOLE_LAST_API_KEY_PLAINTEXT } from "./config/storageKeys";
+import { ROUTES } from "./config/routes";
 import { DashboardBuildFooter } from "./DashboardBuildFooter";
 import { EmptyState } from "./components/EmptyState";
 import { Panel, Shell } from "./components/Panel";
@@ -15,32 +38,9 @@ import { DashboardSessionAuthNote } from "./components/DashboardSessionAuthNote"
 import { OverviewView } from "./views/OverviewView";
 import { MemoryLabView } from "./views/MemoryLabView";
 import { ImportView } from "./views/ImportView";
-
-/** Same value as SESSION_LAST_API_KEY_PLAINTEXT in consoleCommandPalette.ts (literal for CI trust-gate resolution). */
-const MN_CONSOLE_LAST_API_KEY_PLAINTEXT = "mn_console_last_api_key_plaintext";
-
-function seatCapForPlan(planCode: string | null | undefined): number {
-  const normalized = (planCode ?? "launch").toLowerCase();
-  if (normalized === "launch" || normalized === "build" || normalized === "pro" || normalized === "solo") {
-    return 1;
-  }
-  if (normalized === "deploy" || normalized === "scale" || normalized === "team") {
-    return 10;
-  }
-  // Legacy enterprise-like plans are tolerated for existing workspaces.
-  if (normalized === "scale_plus") {
-    return 25;
-  }
-  return 10;
-}
-
-async function sha256Hex(input: string): Promise<string> {
-  const enc = new TextEncoder();
-  const digest = await crypto.subtle.digest("SHA-256", enc.encode(input));
-  return Array.from(new Uint8Array(digest))
-    .map((b) => b.toString(16).padStart(2, "0"))
-    .join("");
-}
+import { BillingUsageView, BillingView } from "./views/BillingView";
+import { WorkspacesView as WorkspacesPanel } from "./views/WorkspacesView";
+import { ApiKeysView as ApiKeysPanel } from "./views/ApiKeysView";
 
 function userInitials(session: Session): string {
   const meta = session.user.user_metadata as Record<string, unknown> | undefined;
@@ -160,6 +160,10 @@ export function App(): JSX.Element {
   const workspaceBootstrapAttemptedRef = useRef(false);
 
   const resolvedTab = tabFromPath(location.pathname);
+  const billingReturnNotice = useMemo(() => {
+    if (resolvedTab !== "billing") return null;
+    return billingReturnNoticeFromSearch(location.search);
+  }, [resolvedTab, location.search]);
 
   const missingEnv = useMemo(() => {
     const errs: string[] = [];
@@ -221,29 +225,17 @@ export function App(): JSX.Element {
     let cancelled = false;
     const bootstrapWorkspace = async () => {
       try {
-        const { data: memberships, error: listError } = await supabase
-          .from("workspace_members")
-          .select("workspace_id")
-          .order("created_at", { ascending: false })
-          .limit(1);
-        if (listError) throw listError;
-
-        const existingWorkspaceId = (memberships?.[0] as { workspace_id?: string } | undefined)?.workspace_id?.trim() ?? "";
-        if (existingWorkspaceId) {
-          if (cancelled) return;
-          setWorkspaceId(existingWorkspaceId);
-          persistWorkspaceId(existingWorkspaceId);
-          setAlert("We selected your latest project so you can continue.");
-          return;
-        }
-
-        const { data: created, error: createError } = await supabase.rpc("create_workspace", { p_name: "My Project" });
-        if (createError) throw createError;
-        const createdWorkspaceId = (created?.[0] as { workspace_id?: string } | undefined)?.workspace_id?.trim() ?? "";
+        const accessToken = session.access_token?.trim() ?? "";
+        if (!accessToken) throw new Error("missing_access_token");
+        const boot = await dashboardApiPost<{ workspace_id?: string; name?: string; created?: boolean }>(
+          API_PATHS.dashboard.bootstrap,
+          { access_token: accessToken, workspace_name: "My Project" },
+        );
+        const createdWorkspaceId = (boot.workspace_id ?? "").trim();
         if (!createdWorkspaceId || cancelled) return;
         setWorkspaceId(createdWorkspaceId);
         persistWorkspaceId(createdWorkspaceId);
-        setAlert("Your first project is ready. You're good to go.");
+        setAlert(boot.created ? "Your first project is ready. You're good to go." : "We selected your latest project so you can continue.");
       } catch {
         if (!cancelled) {
           setAlert("We couldn't finish setup automatically. You can complete it below.");
@@ -263,7 +255,7 @@ export function App(): JSX.Element {
     }
     if (!sessionReady) return;
     let cancelled = false;
-    void apiGet<{ effective_plan?: string; plan?: string }>("/v1/billing/status")
+    void apiGet<{ effective_plan?: string; plan?: string }>(API_PATHS.billing.status)
       .then((res) => {
         if (cancelled) return;
         const p = (res.effective_plan ?? res.plan ?? "launch").toString();
@@ -936,7 +928,7 @@ export function App(): JSX.Element {
                   hasApiKey={firstApiKeyCreated}
                   onQuickSetup={() => {
                     setOnboardingCollapsed(false);
-                    if (workspaceReady) navigate("/api-keys");
+                    if (workspaceReady) navigate(ROUTES.apiKeys);
                   }}
                 />
               )}
@@ -948,7 +940,7 @@ export function App(): JSX.Element {
               {tab === "usage" && <RequestsView workspaceId={effectiveWorkspaceId} />}
               {tab === "import" && <ImportView isPaid={planBadge !== "FREE"} />}
               {tab === "api_keys" && (
-                <ApiKeysView
+                <ApiKeysPanel
                   workspaceId={workspaceClaim || workspaceId}
                   onApiKeyCreated={() => {
                     if (!firstApiKeyCreated) setFirstApiKeyCreated(true);
@@ -958,7 +950,7 @@ export function App(): JSX.Element {
               {tab === "mcp" && <McpView />}
               {tab === "connectors" && <ConnectorSettingsView />}
               {tab === "workspaces" && (
-                <WorkspacesView
+                <WorkspacesPanel
                   workspaceId={workspaceClaim || workspaceId}
                   sessionUserId={session.user.id}
                   onSelectWorkspace={(id) => {
@@ -968,7 +960,7 @@ export function App(): JSX.Element {
                   }}
                 />
               )}
-              {tab === "billing" && <BillingConsoleView workspaceId={effectiveWorkspaceId} />}
+              {tab === "billing" && <BillingView workspaceId={effectiveWorkspaceId} returnNotice={billingReturnNotice} />}
             </div>
           </ErrorBoundary>
         </div>
@@ -1112,13 +1104,13 @@ function SaasContinuityView({ workspaceId }: { workspaceId: string }): JSX.Eleme
     setLastInteractionAt(null);
     setWithMemoryResponse("");
     try {
-      await apiPost<{ memory_id: string; stored: boolean }>("/v1/memories", {
+      await apiPost<{ memory_id: string; stored: boolean }>(API_PATHS.memories.create, {
         user_id: normalizedUserId,
         namespace: "saas-demo",
         text: normalizedMemory,
       });
 
-      const context = await apiPost<{ context_text?: string }>("/v1/context", {
+      const context = await apiPost<{ context_text?: string }>(API_PATHS.context.resolve, {
         user_id: normalizedUserId,
         namespace: "saas-demo",
         query: "What do we know about this user's preferences?",
@@ -1263,12 +1255,12 @@ function AssistantMemoryView(): JSX.Element {
     setBusy(true);
     setMessage(null);
     try {
-      await apiPost("/v1/memories", {
+      await apiPost(API_PATHS.memories.create, {
         userId: targetUserId,
         scope: "assistant-demo",
         text,
       });
-      const retrieval = await apiPost<{ context_text?: string }>("/v1/context", {
+      const retrieval = await apiPost<{ context_text?: string }>(API_PATHS.context.resolve, {
         userId: targetUserId,
         scope: "assistant-demo",
         query: `What do we know about this user? ${text.slice(0, 120)}`,
@@ -1293,7 +1285,7 @@ function AssistantMemoryView(): JSX.Element {
     setBusy(true);
     setMessage(null);
     try {
-      const res = await apiPost<{ context_text?: string }>("/v1/context", {
+      const res = await apiPost<{ context_text?: string }>(API_PATHS.context.resolve, {
         userId: targetUserId,
         scope: "assistant-demo",
         query: recallQuery.trim(),
@@ -1332,7 +1324,7 @@ function AssistantMemoryView(): JSX.Element {
     setMessage(null);
     try {
       await apiDelete(`/v1/memories/${encodeURIComponent(memory.id)}`);
-      await apiPost("/v1/memories", {
+      await apiPost(API_PATHS.memories.create, {
         user_id: memory.user_id,
         namespace: memory.namespace,
         text: editedText.trim(),
@@ -1452,7 +1444,7 @@ function RequestsView({ workspaceId }: { workspaceId: string }) {
   return (
     <Panel title="Usage">
       {workspaceId ? (
-        <UsageView workspaceId={workspaceId} embedded />
+        <BillingUsageView workspaceId={workspaceId} embedded />
       ) : (
         <EmptyState title="No usage yet" subtitle="Usage events appear here once your app starts making API calls." />
       )}
@@ -1469,7 +1461,7 @@ function ConnectorSettingsView() {
     setBusy(true);
     setMessage(null);
     try {
-      const res = await apiGet<{ settings: ConnectorSettingRow[] }>("/v1/connectors/settings");
+      const res = await apiGet<{ settings: ConnectorSettingRow[] }>(API_PATHS.connectors.settings);
       setRows(Array.isArray(res.settings) ? res.settings : []);
     } catch (err: unknown) {
       setMessage(userFacingErrorMessage(err));
@@ -1509,7 +1501,7 @@ function ConnectorSettingsView() {
     setBusy(true);
     setMessage(null);
     try {
-      const saved = await apiPatch<ConnectorSettingRow>("/v1/connectors/settings", {
+      const saved = await apiPatch<ConnectorSettingRow>(API_PATHS.connectors.settings, {
         connector_id: connectorId,
         sync_enabled: syncEnabled,
         capture_types: captureTypes,
@@ -1592,737 +1584,3 @@ function McpView() {
   );
 }
 
-function BillingConsoleView({ workspaceId }: { workspaceId: string }) {
-  const [billTab, setBillTab] = useState<"plans" | "usage">("plans");
-  return (
-    <Panel title="Billing">
-      <nav className="tabs">
-        <button className={billTab === "plans" ? "tab active" : "tab"} onClick={() => setBillTab("plans")}>Plans</button>
-        <button className={billTab === "usage" ? "tab active" : "tab"} onClick={() => setBillTab("usage")}>Usage</button>
-      </nav>
-      {billTab === "plans" && <PlansView workspaceId={workspaceId} />}
-      {billTab === "usage" && <UsageView workspaceId={workspaceId} embedded />}
-    </Panel>
-  );
-}
-
-function PlansView({ workspaceId }: { workspaceId: string }) {
-  const plans = [
-    { id: "launch", label: "Solo Launch", price: "Rs 299 / 7 days", seats: "1 member" },
-    { id: "build", label: "Solo Build", price: "Rs 499 / month", seats: "1 member" },
-    { id: "deploy", label: "Team Deploy", price: "Rs 1999 / month", seats: "Up to 10 members" },
-    { id: "scale", label: "Team Scale", price: "Rs 4999 / month", seats: "Up to 10 members" },
-  ];
-  const [loadingPlan, setLoadingPlan] = useState<string | null>(null);
-  const [message, setMessage] = useState<string | null>(null);
-
-  const checkout = async (plan: string) => {
-    if (!workspaceId) return;
-    setLoadingPlan(plan);
-    setMessage(null);
-    try {
-      const res = await apiPost<{ url: string; method?: string; fields?: Record<string, string> }>("/v1/billing/checkout", { plan });
-      if ((res.method ?? "GET").toUpperCase() === "POST" && res.fields && Object.keys(res.fields).length > 0) {
-        const target = window.open("", "_blank", "noopener");
-        if (!target) {
-          setMessage("Popup blocked by browser. Allow popups and try again.");
-          return;
-        }
-        const html = `<!doctype html><html><body><form id="payu-form" method="POST" action="${res.url}">
-${Object.entries(res.fields).map(([k, v]) => `<input type="hidden" name="${k}" value="${String(v).replace(/"/g, "&quot;")}" />`).join("\n")}
-</form><script>document.getElementById("payu-form").submit();</script></body></html>`;
-        target.document.write(html);
-        target.document.close();
-      } else {
-        window.open(res.url, "_blank", "noopener");
-      }
-    } catch (err: unknown) {
-      setMessage(userFacingErrorMessage(err));
-    } finally {
-      setLoadingPlan(null);
-    }
-  };
-
-  return (
-    <div className="list">
-      {message ? (
-        <div
-          className={`alert ${message.includes("Popup") ? "alert--warning" : "alert--error"}`}
-          role="alert"
-        >
-          {message}
-        </div>
-      ) : null}
-      {!workspaceId ? (
-        <div className="alert alert--warning" role="status">
-          Set your project first to checkout a plan.
-        </div>
-      ) : null}
-      <div className="pricing-grid">
-        {plans.map((plan) => (
-          <div key={plan.id} className="card">
-            <strong>{plan.label}</strong>
-            <div>{plan.price}</div>
-            <div className="muted small">{plan.seats}</div>
-            <button disabled={!workspaceId || !!loadingPlan} onClick={() => checkout(plan.id)}>
-              {loadingPlan === plan.id ? "Opening checkout..." : "Upgrade"}
-            </button>
-          </div>
-        ))}
-      </div>
-    </div>
-  );
-}
-
-function WorkspacesView({
-  workspaceId,
-  sessionUserId,
-  onSelectWorkspace,
-}: {
-  workspaceId: string;
-  sessionUserId: string;
-  onSelectWorkspace: (workspaceId: string) => void;
-}) {
-  const [list, setList] = useState<{ id: string; name: string; role: string }[]>([]);
-  const [loading, setLoading] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-  const [newName, setNewName] = useState("");
-  const hasWorkspaceSwitcher = list.length > 1;
-
-  const load = async () => {
-    setLoading(true);
-    setError(null);
-    const { data, error } = await supabase
-      .from("workspace_members")
-      .select("workspace_id, role, workspaces(name)")
-      .order("created_at", { ascending: false });
-    setLoading(false);
-    if (error) {
-      setError(error.message);
-      return;
-    }
-    const rows =
-      data?.map((r) => ({
-        id: r.workspace_id as string,
-        name: (r as { workspaces?: { name?: string } }).workspaces?.name ?? "Unnamed",
-        role: (r as { role?: string }).role ?? "member",
-      })) ?? [];
-    setList(rows);
-  };
-
-  useEffect(() => {
-    load();
-  }, []);
-
-  const create = async () => {
-    if (!newName.trim()) return;
-    const { data, error } = await supabase.rpc("create_workspace", { p_name: newName.trim() });
-    if (error) {
-      setError(error.message);
-      return;
-    }
-    setNewName("");
-    if (data?.[0]?.workspace_id) {
-      const createdWorkspaceId = data[0].workspace_id as string;
-      setList([{ id: createdWorkspaceId, name: data[0].name as string, role: "owner" }, ...list]);
-      onSelectWorkspace(createdWorkspaceId);
-    } else {
-      load();
-    }
-  };
-
-  return (
-    <Panel title="Projects">
-      <p className="muted small">
-        Create a project or pick one you already belong to.
-      </p>
-      <div className="row">
-        <input value={newName} onChange={(e) => setNewName(e.target.value)} placeholder="New project name" />
-        <button onClick={create} disabled={!newName.trim()}>
-          Create project
-        </button>
-      </div>
-      {!hasWorkspaceSwitcher && list.length === 1 && (
-        <div className="muted small">You have one project. Create another only if you need separate teams or environments.</div>
-      )}
-      {hasWorkspaceSwitcher && <div className="muted small">Switching appears because you now have multiple projects.</div>}
-      {loading ? (
-        <div className="ds-inline-loading" role="status">
-          <span className="ds-spinner" aria-hidden />
-          Loading…
-        </div>
-      ) : null}
-      {error ? (
-        <div className="alert alert--error" role="alert">
-          {error}
-        </div>
-      ) : null}
-      <ul className="list">
-        {list.map((w) => (
-          <li key={w.id} className="card">
-            <div className="row-space">
-              <div>
-                <strong>{w.name}</strong>
-                <details className="console-advanced-details">
-                  <summary className="muted small">Advanced details</summary>
-                  <div className="muted small mt-sm">Project ID: {w.id}</div>
-                </details>
-              </div>
-              <div className="row">
-                <span className="badge">{w.role}</span>
-                <button
-                  className="ghost"
-                  onClick={() => {
-                    devLog({
-                      sessionId: "aa3f1d",
-                      runId: "pre-fix",
-                      hypothesisId: "H1",
-                      location: "apps/dashboard/src/App.tsx:workspace",
-                      message: "set workspace clicked",
-                      data: { selectedWorkspaceId: w.id, currentWorkspaceId: workspaceId },
-                      timestamp: Date.now(),
-                    });
-                    onSelectWorkspace(w.id);
-                  }}
-                >
-                  Use this project
-                </button>
-              </div>
-            </div>
-          </li>
-        ))}
-      </ul>
-      <RoutingPreviewCard />
-      <MembersView workspaceId={workspaceId} currentUserId={sessionUserId} />
-    </Panel>
-  );
-}
-
-function RoutingPreviewCard(): JSX.Element {
-  const [userId, setUserId] = useState("user_123");
-  const [scope, setScope] = useState("default");
-  const [preview, setPreview] = useState<{ routingMode: string; resolvedContainerTag: string; explanation: string }>({
-    routingMode: "derived",
-    resolvedContainerTag: "",
-    explanation: "Using userId + scope -> internal isolation key.",
-  });
-
-  useEffect(() => {
-    let cancelled = false;
-    const run = async () => {
-      const normalizedUserId = userId.trim();
-      const normalizedScope = (scope.trim() || "default").toLowerCase().replace(/[^a-z0-9_.:-]/g, "_").slice(0, 96) || "default";
-      if (!normalizedUserId) {
-        if (!cancelled) {
-          setPreview({
-            routingMode: "shared_default",
-            resolvedContainerTag: "st:app|sid:shared_app|sc:shared",
-            explanation: "No userId provided -> shared app bucket.",
-          });
-        }
-        return;
-      }
-
-      const subjectId = (await sha256Hex(`user|${normalizedUserId}`)).slice(0, 26);
-      const sid = (await sha256Hex(subjectId)).slice(0, 20);
-      if (!cancelled) {
-        setPreview({
-          routingMode: "derived",
-          resolvedContainerTag: `st:u|sid:${sid}|sc:${normalizedScope}`,
-          explanation: "Using userId + scope -> internal isolation key.",
-        });
-      }
-    };
-    void run();
-    return () => {
-      cancelled = true;
-    };
-  }, [userId, scope]);
-
-  return (
-    <div className="card mt-lg">
-      <strong>Memory Routing Preview</strong>
-      <div className="muted small mt-sm">Preview how userId + scope map into an internal isolation key.</div>
-      <div className="row mt-sm">
-        <input value={userId} onChange={(e) => setUserId(e.target.value)} placeholder="user_123" aria-label="Routing preview userId" />
-        <input value={scope} onChange={(e) => setScope(e.target.value)} placeholder="default" aria-label="Routing preview scope" />
-      </div>
-      <div className="muted small mt-sm">Mode: {preview.routingMode}</div>
-      <div className="muted small">Scoped API keys override this derived route.</div>
-      <code className="code-block">{preview.resolvedContainerTag}</code>
-      <div className="muted small">{preview.explanation}</div>
-    </div>
-  );
-}
-
-function ApiKeysView({
-  workspaceId,
-  onApiKeyCreated,
-}: {
-  workspaceId: string;
-  onApiKeyCreated: () => void;
-}) {
-  const [keys, setKeys] = useState<ApiKeyRow[]>([]);
-  const [loading, setLoading] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-  const [newName, setNewName] = useState("");
-  const [plaintextKey, setPlaintextKey] = useState<string | null>(null);
-  const [creating, setCreating] = useState(false);
-
-  const load = async () => {
-    if (!workspaceId) return;
-    setLoading(true);
-    setError(null);
-    try {
-      const { data } = await supabase.rpc("list_api_keys", { p_workspace_id: workspaceId });
-      setKeys((data as ApiKeyRow[] | null) ?? []);
-    } catch (err: unknown) {
-      setError(userFacingErrorMessage(err));
-    } finally {
-      setLoading(false);
-    }
-  };
-
-  useEffect(() => {
-    load();
-  }, [workspaceId]);
-
-  const createKey = async () => {
-    if (!workspaceId || !newName.trim()) return;
-    setCreating(true);
-    setError(null);
-    try {
-      const { data, error } = await supabase.rpc("create_api_key", {
-        p_name: newName.trim(),
-        p_workspace_id: workspaceId,
-      });
-      if (error) throw error;
-      const row = Array.isArray(data) ? (data[0] as { api_key?: string }) : undefined;
-      if (row?.api_key) {
-        setPlaintextKey(row.api_key);
-        try {
-          sessionStorage.setItem(MN_CONSOLE_LAST_API_KEY_PLAINTEXT, row.api_key);
-        } catch {
-          /* ignore */
-        }
-        onApiKeyCreated();
-      }
-      setNewName("");
-      load();
-    } catch (err: unknown) {
-      setError(userFacingErrorMessage(err));
-    } finally {
-      setCreating(false);
-    }
-  };
-
-  const revoke = async (id: string) => {
-    const { error } = await supabase.rpc("revoke_api_key", { p_key_id: id });
-    if (error) {
-      setError(error.message);
-      return;
-    }
-    load();
-  };
-
-  return (
-    <Panel title="API Keys">
-      {!workspaceId && <div className="muted small">Connect a project to load keys.</div>}
-      <div className="muted small">Create an API key for your app. You can revoke keys anytime.</div>
-      <div className="row">
-        <input
-          value={newName}
-          onChange={(e) => setNewName(e.target.value)}
-          placeholder="Key name (for example, production-app)"
-        />
-        <button disabled={!workspaceId || !newName.trim() || creating} onClick={createKey}>
-          {creating ? "Creating…" : "Create API key"}
-        </button>
-      </div>
-      {loading ? (
-        <div className="ds-inline-loading" role="status">
-          <span className="ds-spinner" aria-hidden />
-          Loading…
-        </div>
-      ) : null}
-      {error ? (
-        <div className="alert alert--error" role="alert">
-          {error}
-        </div>
-      ) : null}
-      {!loading && keys.length === 0 && <div className="muted small">No keys yet.</div>}
-      <ul className="list">
-        {keys.map((k) => (
-          <li key={k.id} className="card">
-            <div className="row-space">
-              <div>
-                <strong>{k.name}</strong>
-                <div className="muted small">Created {new Date(k.created_at).toLocaleString()}</div>
-                {k.last_used_at && (
-                  <div className="muted small">
-                    Last used {new Date(k.last_used_at).toLocaleString()}
-                    {k.last_used_ip ? ` from ${k.last_used_ip}` : ""}
-                  </div>
-                )}
-                <details className="console-advanced-details mt-sm">
-                  <summary className="muted small">Advanced details</summary>
-                  <div className="muted small mt-sm">
-                    Key preview: {k.key_prefix ?? "mn_live"}…{k.key_last4 ?? "****"}
-                  </div>
-                </details>
-              </div>
-              <div className="row">
-                <span className="badge">{k.revoked_at ? "revoked" : "active"}</span>
-                {!k.revoked_at && (
-                  <button className="ghost" onClick={() => revoke(k.id)}>
-                    Revoke
-                  </button>
-                )}
-              </div>
-            </div>
-          </li>
-        ))}
-      </ul>
-      {plaintextKey && (
-        <div className="modal">
-          <div className="modal-card">
-            <h3>Save this key now</h3>
-            <p className="muted small">For safety, we only show it once. Copy it to your secrets manager.</p>
-            <code className="code-block">{plaintextKey}</code>
-            <div className="row">
-              <button
-                onClick={() => {
-                  void navigator.clipboard.writeText(plaintextKey);
-                }}
-              >
-                Copy
-              </button>
-              <button className="ghost" onClick={() => setPlaintextKey(null)}>
-                I saved it
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
-    </Panel>
-  );
-}
-
-function UsageView({ workspaceId, embedded = false }: { workspaceId: string; embedded?: boolean }) {
-  const [usage, setUsage] = useState<UsageRow | null>(null);
-  const [loading, setLoading] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-
-  if (!workspaceId?.trim()) {
-    const emptyWorkspace = (
-      <div className="alert alert--warning" role="status">
-        Set your project first to view usage and limits.
-      </div>
-    );
-    return embedded ? emptyWorkspace : <Panel title="Usage">{emptyWorkspace}</Panel>;
-  }
-
-  const load = async () => {
-    setLoading(true);
-    setError(null);
-    try {
-      const res = await apiGet<UsageRow>("/v1/usage/today");
-      setUsage(res);
-    } catch (err: unknown) {
-      setError(userFacingErrorMessage(err));
-    } finally {
-      setLoading(false);
-    }
-  };
-
-  useEffect(() => {
-    void load();
-  }, [workspaceId]);
-
-  const content = (
-    <>
-      <div className="muted small">Using session (scoped to this project).</div>
-      <div className="muted small">Enforcement: daily fair-use cap (hard) and billing-period cap (hard).</div>
-      {loading ? (
-        <div className="ds-inline-loading" role="status">
-          <span className="ds-spinner" aria-hidden />
-          Loading…
-        </div>
-      ) : null}
-      {error ? (
-        <div className="alert alert--error" role="alert">
-          <div>{error}</div>
-          <div className="row mt-sm">
-            <button type="button" className="ghost" onClick={load} disabled={loading}>
-              Retry
-            </button>
-          </div>
-        </div>
-      ) : null}
-      {usage && (
-        <div className="list">
-          {usage.cap_alerts && usage.cap_alerts.length > 0 && (
-            <div className="card mt-sm">
-              <strong className="small">Usage caps</strong>
-              <ul className="muted small usage-cap-alert-list">
-                {usage.cap_alerts.map((a) => (
-                  <li key={`${a.resource}-${a.severity}`}>
-                    <span className="badge">{a.severity}</span> {a.resource}: {a.used} / {a.cap} (
-                    {Math.round(a.ratio * 100)}% of daily cap)
-                  </li>
-                ))}
-              </ul>
-            </div>
-          )}
-          <div className="card">
-            <div className="row-space">
-              <strong>{usage.day}</strong>
-              {usage.plan && <span className="badge">{usage.plan}</span>}
-              {usage.operational_mode && usage.operational_mode !== "normal" && (
-                <span className="badge">{usage.operational_mode}</span>
-              )}
-            </div>
-            <div className="row-space">
-              <span>Writes</span>
-              <span>
-                {usage.writes} / {usage.limits?.writes ?? "?"}
-              </span>
-            </div>
-            <div className="row-space">
-              <span>Reads</span>
-              <span>
-                {usage.reads} / {usage.limits?.reads ?? "?"}
-              </span>
-            </div>
-            <div className="row-space">
-              <span>Embeds</span>
-              <span>
-                {usage.embeds} / {usage.limits?.embeds ?? "?"}
-              </span>
-            </div>
-            {(usage as { period?: { start?: string | null; end?: string | null } }).period && (
-              <div className="muted small mt-sm">
-                Billing period: {(usage as { period?: { start?: string | null } }).period?.start ?? "n/a"} to {(usage as { period?: { end?: string | null } }).period?.end ?? "n/a"}
-              </div>
-            )}
-          </div>
-        </div>
-      )}
-      {!loading && !usage && !error && <div className="muted small">No usage yet.</div>}
-    </>
-  );
-  return embedded ? content : <Panel title="Usage">{content}</Panel>;
-}
-
-function MembersView({ workspaceId, currentUserId }: { workspaceId: string; currentUserId: string }) {
-  const [members, setMembers] = useState<Array<{ user_id: string; role: string; created_at: string }>>([]);
-  const [invites, setInvites] = useState<InviteRow[]>([]);
-  const [seatCap, setSeatCap] = useState<number>(10);
-  const [effectivePlan, setEffectivePlan] = useState<string>("team");
-  const [loading, setLoading] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-  const [newEmail, setNewEmail] = useState("");
-  const [inviteRole, setInviteRole] = useState<"member" | "admin" | "owner">("member");
-  const [busy, setBusy] = useState(false);
-
-  const load = useCallback(() => {
-    if (!workspaceId) return;
-    setLoading(true);
-    setError(null);
-    Promise.all([
-      supabase
-        .from("workspace_members")
-        .select("user_id, role, created_at")
-        .eq("workspace_id", workspaceId)
-        .order("created_at", { ascending: false }),
-      supabase
-        .from("workspace_invites")
-        .select("id, workspace_id, email, role, created_at, expires_at, accepted_at, revoked_at")
-        .eq("workspace_id", workspaceId)
-        .order("created_at", { ascending: false }),
-    ])
-      .then(([mem, inv]) => {
-        devLog({
-          sessionId: "aa3f1d",
-          runId: "pre-fix",
-          hypothesisId: "H2",
-          location: "apps/dashboard/src/App.tsx:members",
-          message: "members and invites query settled",
-          data: { memberError: mem.error?.message ?? null, inviteError: inv.error?.message ?? null },
-          timestamp: Date.now(),
-        });
-        const nextError = mem.error?.message ?? inv.error?.message ?? null;
-        if (nextError) setError(nextError);
-        setMembers(mem.data ?? []);
-        setInvites(inv.data as InviteRow[] ?? []);
-      })
-      .finally(() => setLoading(false));
-  }, [workspaceId]);
-
-  const loadSeatCap = useCallback(async () => {
-    if (!workspaceId) return;
-    try {
-      const billing = await apiGet<{ effective_plan?: string; plan?: string }>("/v1/billing/status");
-      const plan = billing.effective_plan ?? billing.plan ?? "launch";
-      setEffectivePlan(plan);
-      setSeatCap(seatCapForPlan(plan));
-    } catch {
-      // Keep fallback seat cap when billing status is unavailable.
-      setEffectivePlan("team");
-      setSeatCap(10);
-    }
-  }, [workspaceId]);
-
-  useEffect(() => {
-    load();
-    void loadSeatCap();
-  }, [load, loadSeatCap]);
-
-  const createInvite = async () => {
-    if (!workspaceId || !newEmail.trim()) return;
-    const currentSeats = members.length + invites.filter((invite) => !invite.accepted_at && !invite.revoked_at).length;
-    if (currentSeats >= seatCap) {
-      setError(`Seat cap reached for ${effectivePlan} plan (${seatCap} seats). Upgrade to add more members.`);
-      return;
-    }
-    setBusy(true);
-    setError(null);
-    const { error } = await supabase.rpc("create_invite", {
-      p_workspace_id: workspaceId,
-      p_email: newEmail.trim(),
-      p_role: inviteRole,
-    });
-    if (error) setError(error.message);
-    setNewEmail("");
-    setBusy(false);
-    load();
-  };
-
-  const revokeInvite = async (id: string) => {
-    setBusy(true);
-    await supabase.rpc("revoke_invite", { p_invite_id: id });
-    setBusy(false);
-    load();
-  };
-
-  const updateRole = async (userId: string, role: string) => {
-    setBusy(true);
-    const { error } = await supabase.rpc("update_member_role", {
-      p_workspace_id: workspaceId,
-      p_user_id: userId,
-      p_role: role,
-    });
-    if (error) setError(error.message);
-    setBusy(false);
-    load();
-  };
-
-  const removeMember = async (userId: string) => {
-    setBusy(true);
-    const { error } = await supabase.rpc("remove_member", {
-      p_workspace_id: workspaceId,
-      p_user_id: userId,
-    });
-    if (error) setError(error.message);
-    setBusy(false);
-    load();
-  };
-
-  if (!workspaceId) return null;
-
-  return (
-    <div className="panel mt-md">
-      <div className="panel-head">Members & Invites</div>
-      <div className="row-space">
-        <span className="muted small">Plan: {effectivePlan}</span>
-        <span className="badge badge--accent">
-          Seats used: {members.length}/{seatCap}
-        </span>
-      </div>
-      {error ? (
-        <div className="alert alert--error" role="alert">
-          {error}
-        </div>
-      ) : null}
-      {loading ? (
-        <div className="ds-inline-loading" role="status">
-          <span className="ds-spinner" aria-hidden />
-          Loading…
-        </div>
-      ) : null}
-
-      <div className="stack">
-        <div className="row">
-          <input
-            value={newEmail}
-            onChange={(e) => setNewEmail(e.target.value)}
-            placeholder="invitee@example.com"
-          />
-          <select value={inviteRole} onChange={(e) => setInviteRole(e.target.value as typeof inviteRole)} title="Invite role">
-            <option value="member">Member</option>
-            <option value="admin">Admin</option>
-            <option value="owner">Owner</option>
-          </select>
-          <button onClick={createInvite} disabled={!newEmail.trim() || busy}>
-            {busy ? "Saving…" : "Send invite"}
-          </button>
-        </div>
-        <div className="muted small">
-          Pending invites count toward seat limits. Solo plans allow 1 member. Team plans allow up to 10 members.
-        </div>
-      </div>
-
-      <div className="muted small mt-sm">Members</div>
-      {!loading && members.length === 0 && <div className="muted small">No members found.</div>}
-      <ul className="list">
-        {members.map((m) => (
-          <li key={`${m.user_id}-${m.role}`} className="row-space card">
-            <div>
-              <strong>{m.user_id}</strong>
-              <div className="muted small">{new Date(m.created_at).toLocaleString()}</div>
-            </div>
-            <div className="row">
-              <select
-                value={m.role}
-                onChange={(e) => updateRole(m.user_id, e.target.value)}
-                disabled={busy}
-                title="Member role"
-              >
-                <option value="member">Member</option>
-                <option value="admin">Admin</option>
-                <option value="owner">Owner</option>
-              </select>
-              <button
-                className="ghost"
-                onClick={() => removeMember(m.user_id)}
-                disabled={busy || m.user_id === currentUserId}
-              >
-                Remove
-              </button>
-            </div>
-          </li>
-        ))}
-      </ul>
-
-      <div className="muted small mt-md">Pending invites</div>
-      {invites.length === 0 && <div className="muted small">No invites.</div>}
-      <ul className="list">
-        {invites.map((i) => (
-          <li key={i.id} className="row-space card">
-            <div>
-              <strong>{i.email}</strong> <span className="badge">{i.role}</span>
-              <div className="muted small">Expires {new Date(i.expires_at).toLocaleString()}</div>
-              {i.accepted_at ? <span className="badge">Accepted</span> : null}
-              {i.revoked_at ? <span className="badge">Revoked</span> : null}
-            </div>
-            {!i.accepted_at && !i.revoked_at && (
-              <button className="ghost" onClick={() => revokeInvite(i.id)} disabled={busy}>
-                Revoke
-              </button>
-            )}
-          </li>
-        ))}
-      </ul>
-    </div>
-  );
-}
