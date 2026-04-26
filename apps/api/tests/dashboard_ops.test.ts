@@ -224,9 +224,9 @@ describe("dashboard bootstrap (phase 3.1)", () => {
   it("returns existing workspace for already-onboarded user", async () => {
     const { deps, rpcSpy } = makeDeps({
       fromImpl: (table, op) => {
-        if (op === "user" && table === "workspace_members") {
+        if (op === "user" && table === "workspaces") {
           return {
-            data: [{ workspace_id: SESSION.workspaceId, workspaces: { name: "Existing" } }],
+            data: [{ id: SESSION.workspaceId, name: "Existing", workspace_members: [{ created_at: "2026-01-01T00:00:00Z" }] }],
             error: null,
           };
         }
@@ -259,7 +259,7 @@ describe("dashboard bootstrap (phase 3.1)", () => {
         };
       },
       fromImpl: (table, op) => {
-        if (op === "user" && table === "workspace_members") {
+        if (op === "user" && table === "workspaces") {
           return { data: [], error: null };
         }
         return { data: [], error: null };
@@ -441,6 +441,12 @@ describe("dashboard ops invites + members (phase order step 3)", () => {
   it("list workspaces/members/invites via dashboard endpoints", async () => {
     const { deps } = makeDeps({
       fromImpl: (table, op) => {
+        if (op === "scoped" && table === "workspaces") {
+          return {
+            data: [{ id: SESSION.workspaceId, name: "Main", workspace_members: [{ role: "owner", created_at: "2026-01-01T00:00:00Z" }] }],
+            error: null,
+          };
+        }
         if (op === "scoped" && table === "workspace_members") {
           return {
             data: [{ user_id: "u1", role: "owner", created_at: "2026-01-01T00:00:00Z" }],

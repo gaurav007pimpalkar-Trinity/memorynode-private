@@ -237,27 +237,39 @@ export function createDashboardOpsHandlers(
         return d.jsonResponse(failure("auth_error", "Invalid or expired Supabase token"), 401);
       }
       const userSupabase = d.createUserAccessTokenSupabaseClient(env, body.data.access_token);
-      const memberships = await userSupabase
-        .from("workspace_members")
-        .select("workspace_id, workspaces(name)")
-        .eq("user_id", verified.userId)
-        .order("created_at", { ascending: false })
-        .limit(1);
-      if (memberships.error) {
+      const workspaces = await userSupabase
+        .from("workspaces")
+        .select("id, name, workspace_members!inner(user_id, created_at)")
+        .eq("workspace_members.user_id", verified.userId)
+        .limit(50);
+      if (workspaces.error) {
         return d.jsonResponse(
-          failure("rpc_error", memberships.error.message ?? "Failed to query workspaces"),
+          failure("rpc_error", workspaces.error.message ?? "Failed to query workspaces"),
           500,
         );
       }
-      const existing = memberships.data?.[0] as
-        | { workspace_id?: string; workspaces?: { name?: string } | null }
-        | undefined;
+      const existingRows = ((workspaces.data ?? []) as Array<{
+        id?: string;
+        name?: string | null;
+        workspace_members?: Array<{ created_at?: string | null }> | null;
+      }>)
+        .map((row) => ({
+          workspace_id: row.id ?? "",
+          name: row.name ?? "Unnamed",
+          created_at: row.workspace_members?.[0]?.created_at ?? null,
+        }))
+        .sort((a, b) => {
+          const at = a.created_at ? Date.parse(a.created_at) : 0;
+          const bt = b.created_at ? Date.parse(b.created_at) : 0;
+          return bt - at;
+        });
+      const existing = existingRows[0];
       const existingWorkspaceId = existing?.workspace_id?.trim() ?? "";
       if (existingWorkspaceId) {
         return d.jsonResponse(
           success({
             workspace_id: existingWorkspaceId,
-            name: existing?.workspaces?.name ?? "Unnamed",
+            name: existing.name ?? "Unnamed",
             created: false,
           }),
           200,
@@ -289,21 +301,33 @@ export function createDashboardOpsHandlers(
       try {
         const { session, scopedSupabase } = await requireDashboardSessionContext(request, env, supabase, d, false);
         const memberships = await scopedSupabase
-          .from("workspace_members")
-          .select("workspace_id, role, workspaces(name)")
-          .eq("user_id", session.userId)
-          .order("created_at", { ascending: false });
+          .from("workspaces")
+          .select("id, name, workspace_members!inner(user_id, role, created_at)")
+          .eq("workspace_members.user_id", session.userId)
+          .limit(200);
         if (memberships.error) {
           return d.jsonResponse(
             failure("rpc_error", memberships.error.message ?? "Failed to list workspaces"),
             500,
           );
         }
-        const workspaces = (memberships.data ?? []).map((row) => ({
-          id: (row as { workspace_id: string }).workspace_id,
-          name: (row as { workspaces?: { name?: string } | null }).workspaces?.name ?? "Unnamed",
-          role: (row as { role?: string }).role ?? "member",
-        }));
+        const workspaces = ((memberships.data ?? []) as Array<{
+          id?: string;
+          name?: string | null;
+          workspace_members?: Array<{ role?: string | null; created_at?: string | null }> | null;
+        }>)
+          .map((row) => ({
+            id: row.id ?? "",
+            name: row.name ?? "Unnamed",
+            role: row.workspace_members?.[0]?.role ?? "member",
+            created_at: row.workspace_members?.[0]?.created_at ?? null,
+          }))
+          .sort((a, b) => {
+            const at = a.created_at ? Date.parse(a.created_at) : 0;
+            const bt = b.created_at ? Date.parse(b.created_at) : 0;
+            return bt - at;
+          })
+          .map(({ id, name, role }) => ({ id, name, role }));
         return d.jsonResponse(success({ workspaces }), 200);
       } catch (error) {
         if (typeof error === "object" && error !== null && "status" in error && "code" in error && "message" in error) {

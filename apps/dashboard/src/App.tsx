@@ -9,7 +9,6 @@ import {
   tabFromPath,
   tabsRequiringWorkspace,
   UNIFIED_SIDEBAR_GROUPS,
-  type BillingReturnNotice,
   type Tab,
 } from "./consoleRoutes";
 import { ConnectorSettingRow, MemoryRow } from "./types";
@@ -20,7 +19,6 @@ import {
   apiGet,
   apiPatch,
   apiPost,
-  dashboardApiGet,
   dashboardApiPost,
   ensureDashboardSession,
   dashboardLogout,
