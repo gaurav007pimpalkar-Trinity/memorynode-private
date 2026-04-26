@@ -29,7 +29,9 @@ export function makeRateLimitDoStub(limit = RATE_LIMIT_MAX, windowMs = RATE_LIMI
               action = body.action.trim().toLowerCase();
             }
             if (body && typeof body.limit === "number" && Number.isFinite(body.limit) && body.limit > 0) {
-              useLimit = Math.floor(body.limit);
+              // Per-request limit from the Worker (e.g. workspace RPM) cannot exceed this stub's
+              // configured ceiling — tests use a low ceiling while production sends a higher RPM.
+              useLimit = Math.min(limit, Math.floor(body.limit));
             }
             if (body && typeof body.ttl_ms === "number" && Number.isFinite(body.ttl_ms) && body.ttl_ms > 0) {
               ttlMs = Math.max(1_000, Math.min(120_000, Math.floor(body.ttl_ms)));
