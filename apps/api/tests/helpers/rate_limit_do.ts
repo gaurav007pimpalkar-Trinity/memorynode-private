@@ -28,7 +28,7 @@ export function makeRateLimitDoStub(limit = RATE_LIMIT_MAX, windowMs = RATE_LIMI
             if (body && typeof body.action === "string" && body.action.trim().length > 0) {
               action = body.action.trim().toLowerCase();
             }
-            if (body && action !== "rate_limit" && typeof body.limit === "number" && Number.isFinite(body.limit) && body.limit > 0) {
+            if (body && typeof body.limit === "number" && Number.isFinite(body.limit) && body.limit > 0) {
               useLimit = Math.floor(body.limit);
             }
             if (body && typeof body.ttl_ms === "number" && Number.isFinite(body.ttl_ms) && body.ttl_ms > 0) {

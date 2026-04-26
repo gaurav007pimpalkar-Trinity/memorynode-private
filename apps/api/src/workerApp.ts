@@ -3,6 +3,7 @@ import JSZip from "jszip";
 import {
   capsByPlanCode,
   exceedsCaps,
+  getControlPlaneAdminRpm,
   getRateLimitMax,
   getRouteRateLimitMax,
   type UsageSnapshot,
@@ -22,7 +23,14 @@ import {
   validateSecrets,
 } from "./env.js";
 import { logger, redact } from "./logger.js";
-import { route, type HandlerDeps } from "./router.js";
+import { route, routeControlPlaneOnly, type HandlerDeps } from "./router.js";
+import type { WorkerRequestSurface } from "./workerSurface.js";
+import { assertControlPlaneGate } from "./controlPlaneSecurity.js";
+import { forwardAdminRequestToControlPlane } from "./controlPlaneProxy.js";
+import { logControlPlaneBillingWebhookMetric } from "./controlPlaneMetrics.js";
+import { insertAdminAuditLog } from "./adminAuditLog.js";
+import { assertControlPlaneWorkerSecretOnce, assertPublicWorkerControlPlaneEnvOnce } from "./envControlPlane.js";
+import { buildAdminAuthFingerprint } from "./adminJobIdempotency.js";
 import { createHttpError, isApiError } from "./http.js";
 import { checkGlobalCostGuard, AIBudgetExceededError } from "./costGuard.js";
 import {
@@ -485,6 +493,9 @@ function resolveBodyLimit(method: string, path: string, env: Env): number {
     )
   )
     return Math.min(base, ADMIN_MAX_BODY_BYTES);
+  if (/^\/v1\/admin\//.test(path) && ["POST", "PUT", "PATCH", "DELETE"].includes(method.toUpperCase())) {
+    return Math.min(base, ADMIN_MAX_BODY_BYTES);
+  }
   return base;
 }
 
@@ -520,19 +531,11 @@ const KNOWN_PATH_ALLOWED_METHODS: Array<{ test: (path: string) => boolean; allow
   { test: (p) => p === "/v1/billing/checkout", allow: "POST" },
   { test: (p) => p === "/v1/billing/portal", allow: "POST" },
   { test: (p) => p === "/v1/webhooks/memory", allow: "POST" },
-  { test: (p) => p === "/v1/billing/webhook", allow: "POST" },
   { test: (p) => p === "/v1/workspaces", allow: "POST" },
   { test: (p) => p === "/v1/api-keys", allow: "GET, POST" },
   { test: (p) => p === "/v1/api-keys/revoke", allow: "POST" },
   { test: (p) => p === "/v1/import", allow: "POST" },
   { test: (p) => p === "/v1/connectors/settings", allow: "GET, PATCH" },
-  { test: (p) => p === "/v1/admin/billing/health", allow: "GET" },
-  { test: (p) => p === "/v1/admin/founder/phase1", allow: "GET" },
-  { test: (p) => p === "/admin/webhooks/reprocess", allow: "POST" },
-  { test: (p) => p === "/admin/usage/reconcile", allow: "POST" },
-  { test: (p) => p === "/admin/sessions/cleanup", allow: "POST" },
-  { test: (p) => p === "/admin/memory-hygiene", allow: "POST" },
-  { test: (p) => p === "/admin/memory-retention", allow: "POST" },
   { test: (p) => p === "/v1/dashboard/session", allow: "POST" },
   { test: (p) => p === "/v1/dashboard/logout", allow: "POST" },
   { test: (p) => p === "/v1/dashboard/bootstrap", allow: "POST" },
@@ -544,12 +547,31 @@ const KNOWN_PATH_ALLOWED_METHODS: Array<{ test: (path: string) => boolean; allow
   { test: (p) => p === "/v1/dashboard/members", allow: "GET" },
   { test: (p) => p === "/v1/dashboard/members/role", allow: "POST" },
   { test: (p) => p === "/v1/dashboard/members/remove", allow: "POST" },
+  { test: (p) => p.startsWith("/v1/admin/"), allow: "GET, HEAD, POST, PUT, PATCH, DELETE" },
+];
+
+/** Paths served only by the control-plane Worker (billing webhook, admin, internal jobs). */
+const CONTROL_PLANE_KNOWN_PATH_ALLOWED_METHODS: Array<{ test: (path: string) => boolean; allow: string }> = [
+  { test: (p) => p === "/v1/billing/webhook", allow: "POST" },
+  { test: (p) => p === "/v1/admin/billing/health", allow: "GET" },
+  { test: (p) => p === "/v1/admin/founder/phase1", allow: "GET" },
+  { test: (p) => p === "/admin/webhooks/reprocess", allow: "POST" },
+  { test: (p) => p === "/admin/usage/reconcile", allow: "POST" },
+  { test: (p) => p === "/admin/sessions/cleanup", allow: "POST" },
+  { test: (p) => p === "/admin/memory-hygiene", allow: "POST" },
+  { test: (p) => p === "/admin/memory-retention", allow: "POST" },
 ];
 
 /** If path is known but method is not allowed, returns Allow header value; otherwise null (use 404). */
-function getMethodNotAllowedForKnownPath(pathname: string, method: string): string | null {
+function getMethodNotAllowedForKnownPath(
+  pathname: string,
+  method: string,
+  surface: WorkerRequestSurface,
+): string | null {
   const upper = method.toUpperCase();
-  for (const { test, allow } of KNOWN_PATH_ALLOWED_METHODS) {
+  const list =
+    surface === "control_plane" ? CONTROL_PLANE_KNOWN_PATH_ALLOWED_METHODS : KNOWN_PATH_ALLOWED_METHODS;
+  for (const { test, allow } of list) {
     if (!test(pathname)) continue;
     const allowed = allow.split(",").map((m) => m.trim());
     if (allowed.includes(upper)) return null;
@@ -559,10 +581,121 @@ function getMethodNotAllowedForKnownPath(pathname: string, method: string): stri
 }
 
 export function handleRequest(request: Request, env: Env): Promise<Response> {
-  return runInRequestScope(() => handleRequestImpl(request, env));
+  return runInRequestScope(() => {
+    assertPublicWorkerControlPlaneEnvOnce(env);
+    return handleRequestImpl(request, env, "public");
+  });
 }
 
-async function handleRequestImpl(request: Request, env: Env): Promise<Response> {
+/** Control-plane Worker: PayU webhook, `/admin/*`, `/v1/admin/*`, plus shared health probes. */
+export function handleControlPlaneRequest(request: Request, env: Env): Promise<Response> {
+  return runInRequestScope(async () => {
+    assertControlPlaneWorkerSecretOnce(env);
+    const gated = assertControlPlaneGate(request, env);
+    if (gated) return gated;
+
+    const url = new URL(request.url);
+    const pathname = url.pathname.replace(/\/$/, "") || "/";
+    const requestId = resolveRequestId(request);
+    const method = (request.method ?? "GET").toUpperCase();
+
+    const isAdminRoute = pathname.startsWith("/v1/admin/") || pathname.startsWith("/admin/");
+    let adminFingerprint: string | null = null;
+
+    const persistAdminRouteAudit = async (response: Response): Promise<void> => {
+      if (!isAdminRoute || adminFingerprint === null) return;
+      try {
+        const supabase = createSupabaseClient(env);
+        await insertAdminAuditLog(supabase, {
+          request_id: requestId,
+          admin_fingerprint: adminFingerprint,
+          route: pathname,
+          method: request.method,
+          response,
+        });
+      } catch (err) {
+        logger.error({
+          event: "admin_audit_log_failed",
+          request_id: requestId,
+          route: pathname,
+          err,
+        });
+      }
+    };
+
+    if (isAdminRoute) {
+      const tokenHeader = request.headers.get("x-admin-token")?.trim() ?? "";
+      const tokenForFp = tokenHeader.length > 0 ? tokenHeader : "<signed>";
+      adminFingerprint = buildAdminAuthFingerprint(request, tokenForFp);
+      try {
+        const rate = await rateLimit(`cp-admin:${adminFingerprint}`, env, undefined, getControlPlaneAdminRpm(env));
+        if (!rate.allowed) {
+          const res = new Response(
+            JSON.stringify({
+              error: { code: "rate_limited", message: "Control-plane admin rate limit exceeded" },
+              request_id: requestId,
+            }),
+            {
+              status: 429,
+              headers: {
+                "content-type": "application/json",
+                "x-request-id": requestId,
+                ...rate.headers,
+              },
+            },
+          );
+          await persistAdminRouteAudit(res);
+          return res;
+        }
+      } catch (e: unknown) {
+        if (isApiError(e)) {
+          const res = new Response(
+            JSON.stringify({ error: { code: e.code, message: e.message }, request_id: requestId }),
+            {
+              status: e.status ?? 500,
+              headers: { "content-type": "application/json", "x-request-id": requestId },
+            },
+          );
+          await persistAdminRouteAudit(res);
+          return res;
+        }
+        throw e;
+      }
+    }
+
+    const response = await handleRequestImpl(request, env, "control_plane");
+    logger.info({
+      event: "control_plane_request",
+      request_id: requestId,
+      route: pathname,
+      method: request.method,
+      status: response.status,
+      surface: "control_plane",
+    });
+    if (pathname === "/v1/billing/webhook" && method === "POST") {
+      const st = response.status;
+      logger.info({
+        event: "control_plane_billing_webhook",
+        request_id: requestId,
+        route: pathname,
+        status: st,
+      });
+      const metricOutcome =
+        st >= 500 ? "http_5xx" : st >= 400 ? "http_4xx" : st === 202 ? "deferred" : "success";
+      logControlPlaneBillingWebhookMetric({
+        request_id: requestId,
+        outcome: metricOutcome,
+        status: st,
+      });
+    }
+    if (isAdminRoute && adminFingerprint !== null) {
+      await persistAdminRouteAudit(response);
+    }
+    return response;
+  });
+}
+
+async function handleRequestImpl(request: Request, env: Env, surface: WorkerRequestSurface): Promise<Response> {
     const started = Date.now();
     const url = new URL(request.url);
     const pathname = url.pathname.replace(/\/$/, "") || "/";
@@ -779,7 +912,7 @@ async function handleRequestImpl(request: Request, env: Env): Promise<Response> 
       await assertBodySize(request, env, bodyLimit);
 
       // 405 for known path + wrong method (before creating Supabase so no CONFIG_ERROR for wrong-method-only requests)
-      const earlyAllow = getMethodNotAllowedForKnownPath(url.pathname, request.method);
+      const earlyAllow = getMethodNotAllowedForKnownPath(url.pathname, request.method, surface);
       if (earlyAllow !== null) {
         response = jsonResponse(
           { error: { code: "METHOD_NOT_ALLOWED", message: "Method not allowed for this resource" } },
@@ -806,6 +939,42 @@ async function handleRequestImpl(request: Request, env: Env): Promise<Response> 
         }
       }
 
+      if (surface === "public" && pathname.startsWith("/v1/admin/")) {
+        const upstream = (env.CONTROL_PLANE_ORIGIN ?? "").trim();
+        const secret = (env.CONTROL_PLANE_SECRET ?? "").trim();
+        if (!upstream || !secret) {
+          response = jsonResponse(
+            {
+              error: {
+                code: "CONFIG_ERROR",
+                message:
+                  "Set CONTROL_PLANE_ORIGIN and CONTROL_PLANE_SECRET on the public API Worker to proxy /v1/admin/* to the control-plane",
+              },
+            },
+            503,
+          );
+          return response;
+        }
+        const authHeaders = new Headers(request.headers);
+        authHeaders.delete("x-memorynode-proxy-client-ip");
+        const authRequest = new Request(request.url, { method: request.method, headers: authHeaders });
+        try {
+          await requireAdmin(authRequest, env);
+        } catch (e: unknown) {
+          if (isApiError(e)) {
+            response = jsonResponse(
+              { error: { code: e.code, message: e.message } },
+              e.status ?? 401,
+              e.headers,
+            );
+            return response;
+          }
+          throw e;
+        }
+        response = await forwardAdminRequestToControlPlane(request, upstream, secret, { requestId, env });
+        return response;
+      }
+
       supabase = createSupabaseClient(env);
       logger.info({
         event: "db_access_path_selected",
@@ -814,7 +983,7 @@ async function handleRequestImpl(request: Request, env: Env): Promise<Response> 
         path_mode: isRlsFirstAccessMode(env) || isServiceRoleRequestPathDisabled(env) ? "scoped_rls" : "service_direct",
       });
 
-      if (isHostedMcpPath(pathname)) {
+      if (surface === "public" && isHostedMcpPath(pathname)) {
         const mcpIpRate = await rateLimit(`mcp-ip:${ip}`, env, undefined, getRateLimitMax(env));
         if (!mcpIpRate.allowed) {
           response = jsonResponse(
@@ -829,7 +998,7 @@ async function handleRequestImpl(request: Request, env: Env): Promise<Response> 
       }
 
       // Dashboard session (Phase 0.2): create session from Supabase token, or logout
-      if (request.method === "POST" && url.pathname === "/v1/dashboard/session") {
+      if (surface === "public" && request.method === "POST" && url.pathname === "/v1/dashboard/session") {
         const dashRate = await rateLimit(
           `dashboard-session:${ip}`,
           env,
@@ -902,7 +1071,7 @@ async function handleRequestImpl(request: Request, env: Env): Promise<Response> 
         return response;
       }
 
-      if (request.method === "POST" && url.pathname === "/v1/dashboard/logout") {
+      if (surface === "public" && request.method === "POST" && url.pathname === "/v1/dashboard/logout") {
         const dashRate = await rateLimit(
           `dashboard-session:${ip}`,
           env,
@@ -939,24 +1108,6 @@ async function handleRequestImpl(request: Request, env: Env): Promise<Response> 
             ...buildResponseHeaders(ctx),
           },
         });
-        return response;
-      }
-
-      if (
-        isServiceRoleRequestPathDisabled(env) &&
-        (url.pathname.startsWith("/admin/") ||
-          url.pathname === "/v1/billing/webhook" ||
-          url.pathname.startsWith("/v1/admin/"))
-      ) {
-        response = jsonResponse(
-          {
-            error: {
-              code: "CONTROL_PLANE_ONLY",
-              message: "This endpoint is disabled on request path in rls-first mode",
-            },
-          },
-          503,
-        );
         return response;
       }
 
@@ -1093,32 +1244,34 @@ async function handleRequestImpl(request: Request, env: Env): Promise<Response> 
         },
       );
       const explainHandlers = createExplainHandlers(handlerDeps, defaultSearchHandlerDeps);
-      const routed = await route(request, env, supabase, url, auditCtx, requestId, {
-        handlers: {
-          ...memoryHandlers,
-          ...memoryLinkHandlers,
-          ...ingestHandlers,
-          ...searchHandlers,
-          ...contextHandlers,
-          ...contextExplainHandlers,
-          ...usageHandlers,
-          ...auditLogHandlers,
-          ...dashboardOverviewHandlers,
-          ...memoryWebhookHandlers,
-          ...billingHandlers,
-          ...webhookHandlers,
-          ...adminHandlers,
-          ...importHandlers,
-          ...connectorSettingsHandlers,
-          ...workspacesHandlers,
-          ...apiKeysHandlers,
-          ...dashboardOpsHandlers,
-          ...evalHandlers,
-          ...pruningHandlers,
-          ...explainHandlers,
-        },
-        handlerDeps,
-      });
+      const combinedRouterHandlers = {
+        ...memoryHandlers,
+        ...memoryLinkHandlers,
+        ...ingestHandlers,
+        ...searchHandlers,
+        ...contextHandlers,
+        ...contextExplainHandlers,
+        ...usageHandlers,
+        ...auditLogHandlers,
+        ...dashboardOverviewHandlers,
+        ...memoryWebhookHandlers,
+        ...billingHandlers,
+        ...webhookHandlers,
+        ...adminHandlers,
+        ...importHandlers,
+        ...connectorSettingsHandlers,
+        ...workspacesHandlers,
+        ...apiKeysHandlers,
+        ...dashboardOpsHandlers,
+        ...evalHandlers,
+        ...pruningHandlers,
+        ...explainHandlers,
+      };
+      const routerDepsPayload = { handlers: combinedRouterHandlers, handlerDeps };
+      const routed =
+        surface === "control_plane"
+          ? await routeControlPlaneOnly(request, env, supabase, url, auditCtx, requestId, routerDepsPayload)
+          : await route(request, env, supabase, url, auditCtx, requestId, routerDepsPayload);
       if (routed !== null) {
         response = routed;
         return response;
@@ -1501,6 +1654,7 @@ let stubState: {
     payu_webhook_events: StubRow[];
     payu_transactions: StubRow[];
     memory_ingest_webhooks: StubRow[];
+    admin_audit_log: StubRow[];
     dashboard_sessions: StubRow[];
     agent_episodes: StubRow[];
     eval_sets: StubRow[];
@@ -1530,9 +1684,10 @@ function createStubSupabase(env: Env) {
         app_settings: [{ api_key_salt: env.API_KEY_SALT ?? "" }],
         product_events: [] as StubRow[],
         api_request_events: [] as StubRow[],
-        payu_webhook_events: [] as StubRow[],
+            payu_webhook_events: [] as StubRow[],
         payu_transactions: [] as StubRow[],
         memory_ingest_webhooks: [] as StubRow[],
+        admin_audit_log: [] as StubRow[],
         dashboard_sessions: [] as StubRow[],
         agent_episodes: [] as StubRow[],
         eval_sets: [] as StubRow[],

@@ -3,7 +3,9 @@
  * PayU webhook validation + idempotency smoke.
  *
  * Required env:
- * - BASE_URL: API base (e.g., https://api-staging.memorynode.ai)
+ * - BASE_URL: Public API base (e.g., https://api-staging.memorynode.ai)
+ *   For split Workers, set CONTROL_PLANE_BASE_URL to the control-plane host for POST /v1/billing/webhook (defaults to BASE_URL).
+ *   Set CONTROL_PLANE_SECRET to match the Worker secret (header `x-internal-secret`).
  * - PAYU_MERCHANT_KEY: PayU merchant key
  * - PAYU_MERCHANT_SALT: PayU merchant salt
  *
@@ -13,7 +15,14 @@
 
 import crypto from "node:crypto";
 
-const { BASE_URL, PAYU_MERCHANT_KEY, PAYU_MERCHANT_SALT, MEMORYNODE_API_KEY } = process.env;
+const {
+  BASE_URL,
+  CONTROL_PLANE_BASE_URL,
+  CONTROL_PLANE_SECRET,
+  PAYU_MERCHANT_KEY,
+  PAYU_MERCHANT_SALT,
+  MEMORYNODE_API_KEY,
+} = process.env;
 const REQUEST_ID_PREFIX = (process.env.PAYU_SMOKE_REQUEST_ID_PREFIX ?? "payu-webhook").trim() || "payu-webhook";
 
 function requireEnv(name) {
@@ -70,8 +79,12 @@ async function postWebhook(payload) {
   const headers = { "content-type": "application/json" };
   if (MEMORYNODE_API_KEY) headers.Authorization = `Bearer ${MEMORYNODE_API_KEY}`;
   headers["x-request-id"] = requestId;
+  if (CONTROL_PLANE_SECRET && `${CONTROL_PLANE_SECRET}`.trim()) {
+    headers["x-internal-secret"] = `${CONTROL_PLANE_SECRET}`.trim();
+  }
 
-  const res = await fetch(`${BASE_URL}/v1/billing/webhook`, {
+  const webhookBase = (CONTROL_PLANE_BASE_URL ?? BASE_URL ?? "").replace(/\/$/, "");
+  const res = await fetch(`${webhookBase}/v1/billing/webhook`, {
     method: "POST",
     headers,
     body: JSON.stringify(payload),
@@ -87,7 +100,9 @@ async function postWebhook(payload) {
 }
 
 async function main() {
-  requireEnv("BASE_URL");
+  if (!(BASE_URL ?? "").trim() && !(CONTROL_PLANE_BASE_URL ?? "").trim()) {
+    throw new Error("Missing BASE_URL or CONTROL_PLANE_BASE_URL (webhook host).");
+  }
   requireEnv("PAYU_MERCHANT_KEY");
   requireEnv("PAYU_MERCHANT_SALT");
 

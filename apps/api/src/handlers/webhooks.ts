@@ -5,6 +5,7 @@
 
 import type { SupabaseClient } from "@supabase/supabase-js";
 import type { Env } from "../env.js";
+import { logger } from "../logger.js";
 import type { HandlerDeps } from "../router.js";
 
 export interface PayUWebhookPayloadLike {
@@ -111,15 +112,22 @@ export function createWebhookHandlers(
           d.emitEventLog("billing_webhook_signature_invalid", {
             route: "/v1/billing/webhook",
             method: "POST",
-            status: 400,
+            status: 403,
             request_id: requestId,
+          });
+          logger.error({
+            event: "payu_webhook_signature_invalid",
+            route: "/v1/billing/webhook",
+            method: "POST",
+            request_id: requestId || null,
+            txnid_redacted: d.redact(payload.txnid, "payu_txn_id"),
           });
           return jsonResponse(
             {
               error: { code: "invalid_webhook_signature", message: "Invalid PayU signature" },
               ...(requestId ? { request_id: requestId } : {}),
             },
-            400,
+            403,
           );
         }
       } catch (err) {
@@ -127,9 +135,15 @@ export function createWebhookHandlers(
           event: "webhook_failed",
           route: "/v1/billing/webhook",
           method: "POST",
-          status: 400,
+          status: 403,
           request_id: requestId || null,
           error_code: "invalid_webhook_signature",
+          err,
+        });
+        logger.error({
+          event: "payu_webhook_signature_validation_error",
+          route: "/v1/billing/webhook",
+          request_id: requestId || null,
           err,
         });
         return jsonResponse(
@@ -137,7 +151,7 @@ export function createWebhookHandlers(
             error: { code: "invalid_webhook_signature", message: "Invalid PayU signature" },
             ...(requestId ? { request_id: requestId } : {}),
           },
-          400,
+          403,
         );
       }
 
@@ -165,6 +179,13 @@ export function createWebhookHandlers(
             event_created: outcome.eventCreated,
             replay_status: outcome.replayStatus ?? null,
           });
+          logger.info({
+            event: "payu_webhook_idempotent",
+            route: "/v1/billing/webhook",
+            request_id: requestId || null,
+            payu_event_id: outcome.payuEventId,
+            replay_status: outcome.replayStatus ?? null,
+          });
         } else {
           if (outcome.outcome === "deferred") {
             d.emitEventLog("webhook_deferred", {
@@ -177,6 +198,13 @@ export function createWebhookHandlers(
               event_created: outcome.eventCreated,
               reason: outcome.deferReason ?? "workspace_not_found",
               txn_id_redacted: d.redact(outcome.txnId, "payu_txn_id"),
+            });
+            logger.info({
+              event: "payu_webhook_deferred",
+              route: "/v1/billing/webhook",
+              request_id: requestId || null,
+              payu_event_id: outcome.payuEventId,
+              reason: outcome.deferReason ?? "workspace_not_found",
             });
             return jsonResponse(
               {
@@ -200,9 +228,27 @@ export function createWebhookHandlers(
             outcome: outcome.outcome,
             workspace_id: outcome.workspaceId ?? null,
           });
+          logger.info({
+            event: "payu_webhook_success",
+            route: "/v1/billing/webhook",
+            request_id: requestId || null,
+            payu_event_id: outcome.payuEventId,
+            event_type: outcome.eventType,
+            outcome: outcome.outcome,
+            workspace_id: outcome.workspaceId ?? null,
+          });
         }
       } catch (err) {
         const maybeEvent = err as { payu_event_id?: unknown; event_type?: unknown };
+        logger.error({
+          event: "payu_webhook_processing_failed",
+          route: "/v1/billing/webhook",
+          request_id: requestId || null,
+          payu_event_id:
+            typeof maybeEvent.payu_event_id === "string" ? maybeEvent.payu_event_id : null,
+          last_error: d.redact(err instanceof Error ? err.message : String(err), "message"),
+          err,
+        });
         d.logger.error({
           event: "webhook_failed",
           route: "/v1/billing/webhook",

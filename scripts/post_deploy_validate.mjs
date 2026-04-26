@@ -6,6 +6,8 @@
  *   BASE_URL (or STAGING_BASE_URL / PROD_BASE_URL with TARGET_ENV)
  *   API_KEY (or MEMORYNODE_API_KEY) OR MASTER_ADMIN_TOKEN / ADMIN_TOKEN
  *   Optional WORKSPACE_ID (used when creating API key from admin token)
+ *   Optional CONTROL_PLANE_BASE_URL (or prefixed): POST /admin/* hits this host; defaults to BASE_URL if unset
+ *   Optional CONTROL_PLANE_SECRET: sent as `x-internal-secret` on control-plane requests (required when the Worker enforces the gate)
  *
  * Examples:
  *   BASE_URL=https://api-staging.example.com API_KEY=mn_live_xxx pnpm release:validate
@@ -111,6 +113,11 @@ function isBillingDisabled(outcome) {
 
 async function main() {
   const baseUrl = resolveWithTarget(["BASE_URL"]);
+  const controlPlaneBaseUrl = firstNonEmpty([
+    process.env.CONTROL_PLANE_BASE_URL,
+    resolveWithTarget(["CONTROL_PLANE_BASE_URL"]),
+    baseUrl,
+  ]);
   let apiKey = firstNonEmpty([
     process.env.API_KEY,
     process.env.MEMORYNODE_API_KEY,
@@ -122,6 +129,10 @@ async function main() {
     process.env.MASTER_ADMIN_TOKEN,
     resolveWithTarget(["ADMIN_TOKEN"]),
     resolveWithTarget(["MASTER_ADMIN_TOKEN"]),
+  ]);
+  const controlPlaneSecret = firstNonEmpty([
+    process.env.CONTROL_PLANE_SECRET,
+    resolveWithTarget(["CONTROL_PLANE_SECRET"]),
   ]);
   let workspaceId = firstNonEmpty([process.env.WORKSPACE_ID, resolveWithTarget(["WORKSPACE_ID"])]);
 
@@ -136,6 +147,7 @@ async function main() {
 
   console.log(`[release:validate] TARGET_ENV=${TARGET_ENV || "<unset>"}`);
   console.log(`[release:validate] BASE_URL=${baseUrl}`);
+  console.log(`[release:validate] CONTROL_PLANE_BASE_URL=${controlPlaneBaseUrl}`);
   console.log(`[release:validate] API_KEY=${mask(apiKey)}`);
   console.log(`[release:validate] ADMIN_TOKEN=${mask(adminToken)}`);
   if (workspaceId) {
@@ -231,9 +243,16 @@ async function main() {
   } else {
     pass("GET /v1/billing/status", `billing enabled request_id=${billing.requestId}`);
     if (adminToken) {
-      const reprocess = await requestJson(baseUrl, "POST", "/admin/webhooks/reprocess?status=deferred&limit=1", {
-        headers: { "x-admin-token": adminToken },
-      });
+      const reprocessHeaders = { "x-admin-token": adminToken };
+      if (controlPlaneSecret) reprocessHeaders["x-internal-secret"] = controlPlaneSecret;
+      const reprocess = await requestJson(
+        controlPlaneBaseUrl,
+        "POST",
+        "/admin/webhooks/reprocess?status=deferred&limit=1",
+        {
+          headers: reprocessHeaders,
+        },
+      );
       ensureRequestId("POST /admin/webhooks/reprocess", reprocess);
       if (!reprocess.response.ok) {
         fail("POST /admin/webhooks/reprocess", reprocess);

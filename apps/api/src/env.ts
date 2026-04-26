@@ -40,6 +40,8 @@ export interface Env {
   RATE_LIMIT_IMPORT_MAX?: string;
   RATE_LIMIT_BILLING_MAX?: string;
   RATE_LIMIT_ADMIN_MAX?: string;
+  /** Control-plane: max RPM per admin identity for `/v1/admin/*` and `/admin/*` (default 10). */
+  RATE_LIMIT_CONTROL_PLANE_ADMIN_MAX?: string;
   RATE_LIMIT_DASHBOARD_SESSION_MAX?: string;
   /** Active in-flight request cap per workspace (quota-consuming routes). */
   WORKSPACE_CONCURRENCY_MAX?: string;
@@ -57,6 +59,8 @@ export interface Env {
   PAYU_WEBHOOK_SECRET?: string;
   BILLING_RECONCILE_ON_AMBIGUITY?: string;
   BILLING_WEBHOOKS_ENABLED?: string;
+  /** Control-plane Worker: when `1`, cron invokes PayU webhook reprocess (`all_retryable`) using internal + admin auth. */
+  WEBHOOK_AUTO_REPROCESS?: string;
   PAYU_BASE_URL?: string;
   /** Per-plan amounts (preferred). Fallback: PAYU_PRO_AMOUNT for backward compat. */
   PAYU_LAUNCH_AMOUNT?: string;
@@ -81,6 +85,17 @@ export interface Env {
    * deployment that uses hosted MCP; keep out of client code. Unguessable random string (e.g. 32+ bytes hex).
    */
   MCP_INTERNAL_SECRET?: string;
+  /**
+   * Shared secret: control-plane requires `x-internal-secret` on `POST /v1/billing/webhook`, `/admin/*`,
+   * and `/v1/admin/*`. Public API Worker uses the same value to authorize outbound proxy calls to CP
+   * (`CONTROL_PLANE_ORIGIN`).
+   */
+  CONTROL_PLANE_SECRET?: string;
+  /**
+   * Public API Worker only: origin of the control-plane Worker (no trailing slash), e.g.
+   * `https://control-plane.memorynode.ai`. Required to serve browser `/v1/admin/*` via trusted proxy.
+   */
+  CONTROL_PLANE_ORIGIN?: string;
   /**
    * When not `"false"`, hosted MCP requires `plan === "team"` before `audit_log_list` calls REST (plan gate).
    */

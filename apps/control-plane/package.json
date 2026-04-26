@@ -1,0 +1,13 @@
+{
+  "name": "@memorynode/control-plane",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "pnpm exec wrangler dev --port 8788",
+    "typecheck": "tsc --noEmit -p ../api",
+    "build": "pnpm exec wrangler deploy --env staging --dry-run",
+    "deploy:staging": "pnpm exec wrangler deploy --env staging",
+    "deploy:production": "pnpm exec wrangler deploy --env production"
+  }
+}

@@ -25,7 +25,8 @@ with required_tables(name) as (
     ('dashboard_sessions'),
     ('eval_sets'),
     ('eval_items'),
-    ('search_query_history')
+    ('search_query_history'),
+    ('admin_audit_log')
 ),
 missing_tables as (
   select name
@@ -111,7 +112,13 @@ required_columns(table_name, column_name) as (
     ('invoice_lines', 'line_type'),
     ('invoice_lines', 'amount_inr'),
     ('usage_alert_events', 'workspace_id'),
-    ('usage_alert_events', 'threshold_pct')
+    ('usage_alert_events', 'threshold_pct'),
+    ('admin_audit_log', 'request_id'),
+    ('admin_audit_log', 'admin_fingerprint'),
+    ('admin_audit_log', 'route'),
+    ('admin_audit_log', 'method'),
+    ('admin_audit_log', 'result'),
+    ('admin_audit_log', 'status_code')
 ),
 missing_columns as (
   select rc.table_name, rc.column_name

@@ -8,10 +8,14 @@ import type { Env } from "../env.js";
 import type { HandlerDeps } from "../router.js";
 import type { PayUWebhookPayloadLike } from "./webhooks.js";
 import type { ReconcileOutcomeLike } from "./webhooks.js";
+import { checkAdminJobIdempotency } from "../adminJobIdempotency.js";
+import { logControlPlaneAdminJobMetric } from "../controlPlaneMetrics.js";
 import { createHttpError } from "../http.js";
 import { getRouteRateLimitMax } from "../limits.js";
 
 function extractClientIp(request: Request): string {
+  const proxied = request.headers.get("x-memorynode-proxy-client-ip")?.trim();
+  if (proxied) return proxied;
   return (
     request.headers.get("cf-connecting-ip") ??
     request.headers.get("x-forwarded-for")?.split(",")[0]?.trim() ??
@@ -175,6 +179,18 @@ export function createAdminHandlers(
       const { jsonResponse } = d;
       await guardAdminIp(request, env, d);
       const { token } = await d.requireAdmin(request, env);
+      const idem = await checkAdminJobIdempotency(env, "admin/sessions/cleanup", request, token);
+      if (idem.duplicate) {
+        d.emitEventLog("admin_job_idempotent_skip", {
+          route: "/admin/sessions/cleanup",
+          request_id: requestId || null,
+        });
+        return jsonResponse(
+          { ok: true, idempotent_replay: true, route: "/admin/sessions/cleanup" },
+          200,
+          {},
+        );
+      }
       const rate = await d.rateLimit(`admin:sessions:${token}`, env, undefined, getRouteRateLimitMax(env, "admin"));
       if (!rate.allowed) {
         return jsonResponse(
@@ -221,9 +237,19 @@ export function createAdminHandlers(
 
       const url = new URL(request.url);
       const statusFilterRaw = (url.searchParams.get("status") ?? "deferred").trim().toLowerCase();
-      if (statusFilterRaw !== "deferred" && statusFilterRaw !== "failed") {
+      if (
+        statusFilterRaw !== "deferred" &&
+        statusFilterRaw !== "failed" &&
+        statusFilterRaw !== "received" &&
+        statusFilterRaw !== "all_retryable"
+      ) {
         return jsonResponse(
-          { error: { code: "BAD_REQUEST", message: "status must be one of: deferred, failed" } },
+          {
+            error: {
+              code: "BAD_REQUEST",
+              message: "status must be one of: deferred, failed, received, all_retryable",
+            },
+          },
           400,
           rate.headers,
         );
@@ -241,12 +267,20 @@ export function createAdminHandlers(
         limit,
       });
 
-      const pending = await supabase
-        .from("payu_webhook_events")
-        .select("event_id,payload,event_created")
-        .eq("status", statusFilterRaw)
-        .order("event_created", { ascending: true })
-        .limit(limit);
+      const pending =
+        statusFilterRaw === "all_retryable"
+          ? await supabase
+              .from("payu_webhook_events")
+              .select("event_id,payload,event_created")
+              .in("status", ["failed", "deferred", "received"])
+              .order("event_created", { ascending: true })
+              .limit(limit)
+          : await supabase
+              .from("payu_webhook_events")
+              .select("event_id,payload,event_created")
+              .eq("status", statusFilterRaw)
+              .order("event_created", { ascending: true })
+              .limit(limit);
       if (pending.error) {
         return jsonResponse(
           { error: { code: "DB_ERROR", message: pending.error.message ?? "Failed to list deferred webhooks" } },
@@ -316,8 +350,23 @@ export function createAdminHandlers(
             payu_event_id: row.event_id,
             error_message: d.redact((err as Error)?.message, "message"),
           });
+          logControlPlaneAdminJobMetric({
+            request_id: requestId || null,
+            route: "/admin/webhooks/reprocess",
+            outcome: "failed",
+            job: "webhook_reprocess_item",
+            detail: row.event_id,
+          });
         }
       }
+
+      logControlPlaneAdminJobMetric({
+        request_id: requestId || null,
+        route: "/admin/webhooks/reprocess",
+        outcome: "completed",
+        job: "webhook_reprocess_batch",
+        detail: `scanned=${rows.length},processed=${processed},replayed=${replayed},deferred=${deferred},failed=${failed}`,
+      });
 
       return jsonResponse(
         {
@@ -518,6 +567,18 @@ export function createAdminHandlers(
       const { jsonResponse } = d;
       await guardAdminIp(request, env, d);
       const { token } = await d.requireAdmin(request, env);
+      const idem = await checkAdminJobIdempotency(env, "admin/memory-retention", request, token);
+      if (idem.duplicate) {
+        d.emitEventLog("admin_job_idempotent_skip", {
+          route: "/admin/memory-retention",
+          request_id: requestId || null,
+        });
+        return jsonResponse(
+          { ok: true, idempotent_replay: true, route: "/admin/memory-retention" },
+          200,
+          {},
+        );
+      }
       const rate = await d.rateLimit(`admin:retention:${token}`, env, undefined, getRouteRateLimitMax(env, "admin"));
       if (!rate.allowed) {
         return jsonResponse(
@@ -620,6 +681,18 @@ export function createAdminHandlers(
       const { jsonResponse } = d;
       await guardAdminIp(request, env, d);
       const { token } = await d.requireAdmin(request, env);
+      const idem = await checkAdminJobIdempotency(env, "admin/memory-hygiene", request, token);
+      if (idem.duplicate) {
+        d.emitEventLog("admin_job_idempotent_skip", {
+          route: "/admin/memory-hygiene",
+          request_id: requestId || null,
+        });
+        return jsonResponse(
+          { ok: true, idempotent_replay: true, route: "/admin/memory-hygiene" },
+          200,
+          {},
+        );
+      }
       const rate = await d.rateLimit(`admin:hygiene:${token}`, env, undefined, getRouteRateLimitMax(env, "admin"));
       if (!rate.allowed) {
         return jsonResponse(

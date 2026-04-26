@@ -598,10 +598,6 @@ export async function route(
     return handlers.handleMemoryWebhookIngest(request, env, supabase, auditCtx, requestId, handlerDeps);
   }
 
-  if (request.method === "POST" && url.pathname === "/v1/billing/webhook") {
-    return handlers.handleBillingWebhook(request, env, supabase, requestId, handlerDeps);
-  }
-
   if (request.method === "POST" && url.pathname === "/v1/workspaces") {
     return handlers.handleCreateWorkspace(request, env, supabase, handlerDeps);
   }
@@ -666,34 +662,6 @@ export async function route(
     return handlers.handleDashboardListInvites(request, env, supabase, handlerDeps);
   }
 
-  if (request.method === "POST" && url.pathname === "/admin/webhooks/reprocess") {
-    return handlers.handleReprocessDeferredWebhooks(request, env, supabase, requestId, handlerDeps);
-  }
-
-  if (request.method === "POST" && url.pathname === "/admin/usage/reconcile") {
-    return handlers.handleReconcileUsageRefunds(request, env, supabase, requestId, handlerDeps);
-  }
-
-  if (request.method === "POST" && url.pathname === "/admin/sessions/cleanup") {
-    return handlers.handleCleanupExpiredSessions(request, env, supabase, requestId, handlerDeps);
-  }
-
-  if (request.method === "POST" && url.pathname === "/admin/memory-hygiene") {
-    return handlers.handleMemoryHygiene(request, env, supabase, requestId, handlerDeps);
-  }
-
-  if (request.method === "POST" && url.pathname === "/admin/memory-retention") {
-    return handlers.handleMemoryRetention(request, env, supabase, requestId, handlerDeps);
-  }
-
-  if (request.method === "GET" && url.pathname === "/v1/admin/billing/health") {
-    return handlers.handleAdminBillingHealth(request, env, supabase, handlerDeps);
-  }
-
-  if (request.method === "GET" && url.pathname === "/v1/admin/founder/phase1") {
-    return handlers.handleFounderPhase1Metrics(request, env, supabase, handlerDeps);
-  }
-
   if (request.method === "POST" && url.pathname === "/v1/import") {
     return handlers.handleImport(request, env, supabase, auditCtx, requestId, handlerDeps);
   }
@@ -752,6 +720,55 @@ export async function route(
 
   if (request.method === "POST" && url.pathname === "/v1/evals/run") {
     return handlers.handleRunEvalSet(request, env, supabase, auditCtx, requestId, handlerDeps);
+  }
+
+  return null;
+}
+
+/**
+ * Control-plane Worker only: PayU webhook, admin cron-style jobs, read-only admin metrics.
+ * Same handler contracts as the former monolith routes.
+ */
+export async function routeControlPlaneOnly(
+  request: Request,
+  env: Env,
+  supabase: SupabaseClient,
+  url: URL,
+  auditCtx: AuditCtx,
+  requestId: string,
+  deps: RouterDeps,
+): Promise<Response | null> {
+  const { handlers, handlerDeps } = deps;
+  if (request.method === "POST" && url.pathname === "/v1/billing/webhook") {
+    return handlers.handleBillingWebhook(request, env, supabase, requestId, handlerDeps);
+  }
+
+  if (request.method === "POST" && url.pathname === "/admin/webhooks/reprocess") {
+    return handlers.handleReprocessDeferredWebhooks(request, env, supabase, requestId, handlerDeps);
+  }
+
+  if (request.method === "POST" && url.pathname === "/admin/usage/reconcile") {
+    return handlers.handleReconcileUsageRefunds(request, env, supabase, requestId, handlerDeps);
+  }
+
+  if (request.method === "POST" && url.pathname === "/admin/sessions/cleanup") {
+    return handlers.handleCleanupExpiredSessions(request, env, supabase, requestId, handlerDeps);
+  }
+
+  if (request.method === "POST" && url.pathname === "/admin/memory-hygiene") {
+    return handlers.handleMemoryHygiene(request, env, supabase, requestId, handlerDeps);
+  }
+
+  if (request.method === "POST" && url.pathname === "/admin/memory-retention") {
+    return handlers.handleMemoryRetention(request, env, supabase, requestId, handlerDeps);
+  }
+
+  if (request.method === "GET" && url.pathname === "/v1/admin/billing/health") {
+    return handlers.handleAdminBillingHealth(request, env, supabase, handlerDeps);
+  }
+
+  if (request.method === "GET" && url.pathname === "/v1/admin/founder/phase1") {
+    return handlers.handleFounderPhase1Metrics(request, env, supabase, handlerDeps);
   }
 
   return null;

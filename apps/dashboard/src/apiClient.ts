@@ -123,15 +123,13 @@ export function userFacingErrorMessage(err: unknown): string {
 
 export type ApiJsonResult<T> = { data: T; requestId?: string };
 
-async function fetchJson<T>(
+async function fetchJsonAtBase<T>(
+  baseUrl: string,
   path: string,
   init: RequestInit,
   opts?: { suppressUnauthorizedHandling?: boolean },
 ): Promise<ApiJsonResult<T>> {
-  if (!API_BASE_URL) {
-    throw new ApiClientError(0, "CONFIG", apiEnvError ?? "VITE_API_BASE_URL is not configured.");
-  }
-  const res = await fetch(new URL(path, API_BASE_URL).toString(), {
+  const res = await fetch(new URL(path, baseUrl).toString(), {
     ...init,
     credentials: "include",
   });
@@ -164,6 +162,17 @@ async function fetchJson<T>(
   }
   const data = ((json as T) ?? ({} as T)) as T;
   return { data, requestId: headerRequestId };
+}
+
+async function fetchJson<T>(
+  path: string,
+  init: RequestInit,
+  opts?: { suppressUnauthorizedHandling?: boolean },
+): Promise<ApiJsonResult<T>> {
+  if (!API_BASE_URL) {
+    throw new ApiClientError(0, "CONFIG", apiEnvError ?? "VITE_API_BASE_URL is not configured.");
+  }
+  return fetchJsonAtBase<T>(API_BASE_URL, path, init, opts);
 }
 
 /** Create or refresh dashboard session. Call after Supabase auth when workspace is selected. Sets CSRF token for mutating calls. */
@@ -300,7 +309,12 @@ export async function apiPatch<T>(path: string, body: unknown = {}, extraHeaders
 }
 
 export async function adminGet<T>(path: string, adminToken: string): Promise<T> {
-  const { data } = await fetchJson<T>(
+  const base = getApiBaseUrl();
+  if (!base) {
+    throw new ApiClientError(0, "CONFIG", apiEnvError ?? "VITE_API_BASE_URL is not configured.");
+  }
+  const { data } = await fetchJsonAtBase<T>(
+    base,
     path,
     {
       method: "GET",
