@@ -40,6 +40,8 @@ const RELEVANT_ENV_KEYS = [
   "PAYU_SUCCESS_PATH",
   "PAYU_CANCEL_PATH",
   "AI_COST_BUDGET_INR",
+  "CHECK_CONFIG_MODE",
+  "CI",
 ];
 
 function runCheckConfig(overrides: Record<string, string | undefined>) {
@@ -149,13 +151,24 @@ describe("check_config", () => {
     expect(result.output).toContain("Missing SUPABASE_ANON_KEY");
   });
 
-  it("fails in production when AI_COST_BUDGET_INR is missing", () => {
+  it("fails in production runtime mode when AI_COST_BUDGET_INR is missing", () => {
     const result = runCheckConfig({
       ...STRICT_BASE,
       AI_COST_BUDGET_INR: undefined,
+      CHECK_CONFIG_MODE: "runtime",
     });
     expect(result.status).toBe(1);
     expect(result.output).toContain("Missing AI_COST_BUDGET_INR");
+  });
+
+  it("allows missing AI_COST_BUDGET_INR in production when check_mode is ci", () => {
+    const result = runCheckConfig({
+      ...STRICT_BASE,
+      AI_COST_BUDGET_INR: undefined,
+      CI: "true",
+      CHECK_CONFIG_MODE: "ci",
+    });
+    expect(result.status).toBe(0);
   });
 
   it("fails in production when AI_COST_BUDGET_INR is non-positive", () => {
