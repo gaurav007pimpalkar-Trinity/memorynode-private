@@ -2,12 +2,12 @@
 
 MemoryNode ships two Cloudflare Pages projects from the single React app at [apps/dashboard](../../apps/dashboard/). Both are built from the same commit and deployed via `wrangler pages deploy` (direct upload). The Cloudflare "Connect to Git" integration is intentionally **disconnected** on both projects; deploys only happen through GitHub Actions.
 
-Two workflows can upload to these projects:
+Upload paths:
 
-- **Production release (default)**: [.github/workflows/api-deploy.yml](../../.github/workflows/api-deploy.yml) runs `deploy-production` (Worker) and, on success, `deploy-dashboards-production` (console + app) in the same workflow run. One `workflow_dispatch` with `environment=production` ships Worker + both Pages projects.
-- **Dashboard-only hotfix**: [.github/workflows/dashboard-pages-deploy.yml](../../.github/workflows/dashboard-pages-deploy.yml) — `workflow_dispatch` only. Use when a dashboard change must ship without touching the Worker.
+- **Production (default):** [.github/workflows/release_production.yml](../../.github/workflows/release_production.yml) — after approval, deploys the **SHA from the staging `approved-release` artifact** (API + both Pages + smoke). No manual SHA. Re-run the workflow to promote the **latest** staging-approved build, or use Cloudflare Pages rollback (§5).
+- **Staging:** [.github/workflows/release_staging.yml](../../.github/workflows/release_staging.yml) — after green CI on `main`, deploys API staging then dashboard to **separate** Pages project names (secrets `DASHBOARD_PAGES_PROJECT_*` on the `staging` environment; must not be `memorynode-console` / `memorynode-app` when using a non-production API).
 
-Staging API auto-deploys on every push to `main`, but dashboards are **not** coupled to staging; there are no staging Pages projects.
+Optional env overrides for project names (defaults: production names): see [scripts/deploy_dashboard_pages.mjs](../../scripts/deploy_dashboard_pages.mjs) (`DASHBOARD_PAGES_PROJECT_CONSOLE`, `DASHBOARD_PAGES_PROJECT_APP`).
 
 ## 1. Surfaces
 
@@ -39,20 +39,13 @@ Baked from the workflow file:
 
 ### 3.1 Production release (coupled to API)
 
-1. Trigger `API Deploy` workflow with `environment=production` and a `ref`.
-2. `deploy-production` job deploys the Worker (`pnpm deploy:prod`).
-3. On success, `deploy-dashboards-production` runs with `needs: [deploy-production]`:
-   1. Checkout at the same `ref`.
-   2. `pnpm install --frozen-lockfile`.
-   3. `Validate dashboard deploy secrets` — fails loudly if any of the four secrets above is unset.
-   4. `pnpm dashboard:deploy:pages` — builds both surfaces (setting `VITE_APP_SURFACE` and `VITE_APP_HOSTNAME` for each) and publishes to the two Pages projects. Build failures abort before any upload, so partial Pages deploys are impossible.
-4. If the Worker step fails, the dashboard job never starts. If dashboard upload fails after the Worker succeeded, use §3.2 to retry only the dashboards.
+1. **Release Production** starts when staging succeeds, or run it manually to pick up the **latest** successful staging artifact.
+2. After environment approval on the `promote` job: checkout approved SHA → validate secrets → `pnpm release:gate` (includes live `/healthz` + `/ready` when `RELEASE_GATE_LIVE=1`) → `pnpm deploy:prod` → `pnpm dashboard:deploy:pages` → `pnpm smoke:prod`.
+3. Build failures abort before any upload; if deploy fails mid-way, fix forward with a new commit through staging, or use Cloudflare rollback (§5).
 
-### 3.2 Dashboard-only hotfix
+### 3.2 Supabase key rotation (dashboard rebuild only)
 
-1. Trigger `Dashboard Pages Deploy` workflow with an optional `ref`.
-2. Same `pnpm dashboard:deploy:pages` path; the Worker is not touched.
-3. Use sparingly — e.g. Supabase anon key rotation or a UI-only fix.
+If only Supabase browser keys changed and the Worker is unchanged, re-run **Release Production** (workflow_dispatch) so the **latest staging-approved SHA** is redeployed with updated dashboard secrets. Alternatively promote a prior Pages deployment in Cloudflare (§5) until the next full release.
 
 ## 4. Post-deploy checks
 
@@ -65,13 +58,13 @@ Baked from the workflow file:
 
 Use the Cloudflare Pages UI: select the affected project (`memorynode-console` or `memorynode-app`), open *Deployments*, and promote the previous successful deployment. Past deployments stay uploaded even though the Git integration is disconnected.
 
-If the cause is a bad commit, re-run `Dashboard Pages Deploy` (hotfix) with an explicit `ref` pointing to the last known good SHA. Use the coupled `API Deploy` path only if the Worker also needs to roll forward.
+If the cause is a bad commit, merge a fix through staging again, or promote a prior Pages deployment in Cloudflare until the Worker can roll forward. For the Worker alone, use **Rollback Production** or `wrangler rollback --env production`.
 
 ## 6. Adding or rotating Supabase keys
 
 1. Update the Supabase project keys.
 2. In GitHub repo settings → Environments → `production`, update `DASHBOARD_VITE_SUPABASE_URL` / `DASHBOARD_VITE_SUPABASE_ANON_KEY`.
-3. Re-trigger `Dashboard Pages Deploy` (hotfix) to rebuild with the new key without redeploying the Worker. The Worker's Supabase secrets (see [PROD_SETUP_CHECKLIST.md](../PROD_SETUP_CHECKLIST.md)) are independent and rotated with `wrangler secret put`.
+3. Re-run **Release Production** (workflow_dispatch) after updating `DASHBOARD_VITE_*` in GitHub so the latest staging-approved SHA is rebuilt. The Worker's Supabase secrets (see [PROD_SETUP_CHECKLIST.md](../PROD_SETUP_CHECKLIST.md)) are independent and rotated with `wrangler secret put`.
 
 ## 7. Related
 

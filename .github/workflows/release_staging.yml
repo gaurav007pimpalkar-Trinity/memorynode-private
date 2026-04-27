@@ -1,0 +1,225 @@
+# yaml-language-server: disable
+# Staging release (atomic): same commit SHA → API staging → Dashboard Pages → E2E smoke.
+# Triggers only after CI succeeds on main (merge / push to main). Not part of PR CI.
+#
+# On full success, uploads approved_release.json artifact — Release Production consumes this
+# (no manual SHA). GitHub Environment: staging — configure secrets for API + dashboard + E2E.
+name: Release Staging
+
+on:
+  workflow_run:
+    workflows: ["CI"]
+    types: [completed]
+    branches: [main]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release-staging
+  cancel-in-progress: false
+
+jobs:
+  staging:
+    if: >
+      github.event.workflow_run.conclusion == 'success' &&
+      github.event.workflow_run.head_branch == 'main'
+    runs-on: ubuntu-latest
+    environment: staging
+    env:
+      CHECK_ENV: staging
+      DEPLOY_ENV: staging
+      CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+      CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+      DATABASE_URL: ${{ secrets.DATABASE_URL }}
+      BASE_URL: ${{ secrets.BASE_URL }}
+      MEMORYNODE_API_KEY: ${{ secrets.MEMORYNODE_API_KEY }}
+      SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+      SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+      SUPABASE_ANON_KEY: ${{ secrets.SUPABASE_ANON_KEY }}
+      SUPABASE_JWT_SECRET: ${{ secrets.SUPABASE_JWT_SECRET }}
+      SUPABASE_ACCESS_MODE: ${{ secrets.SUPABASE_ACCESS_MODE }}
+      REQUEST_SCOPED_DB_ENABLED: ${{ secrets.REQUEST_SCOPED_DB_ENABLED }}
+      DISABLE_SERVICE_ROLE_REQUEST_PATH: ${{ secrets.DISABLE_SERVICE_ROLE_REQUEST_PATH }}
+      API_KEY_SALT: ${{ secrets.API_KEY_SALT }}
+      MASTER_ADMIN_TOKEN: ${{ secrets.MASTER_ADMIN_TOKEN }}
+      EMBEDDINGS_MODE: ${{ secrets.EMBEDDINGS_MODE }}
+      OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+      BILLING_WEBHOOKS_ENABLED: ${{ secrets.BILLING_WEBHOOKS_ENABLED }}
+      PAYU_MERCHANT_KEY: ${{ secrets.PAYU_MERCHANT_KEY }}
+      PAYU_MERCHANT_SALT: ${{ secrets.PAYU_MERCHANT_SALT }}
+      PAYU_BASE_URL: ${{ secrets.PAYU_BASE_URL }}
+      PAYU_VERIFY_URL: ${{ secrets.PAYU_VERIFY_URL }}
+      PUBLIC_APP_URL: ${{ secrets.PUBLIC_APP_URL }}
+      VITE_API_BASE_URL: ${{ secrets.BASE_URL }}
+      VITE_CONSOLE_BASE_URL: ${{ secrets.VITE_CONSOLE_BASE_URL }}
+      VITE_SUPABASE_URL: ${{ secrets.DASHBOARD_VITE_SUPABASE_URL }}
+      VITE_SUPABASE_ANON_KEY: ${{ secrets.DASHBOARD_VITE_SUPABASE_ANON_KEY }}
+      DASHBOARD_VERIFY_CONSOLE_ORIGIN: ${{ secrets.DASHBOARD_VERIFY_CONSOLE_ORIGIN }}
+      DASHBOARD_VERIFY_APP_ORIGIN: ${{ secrets.DASHBOARD_VERIFY_APP_ORIGIN }}
+      DASHBOARD_PAGES_PROJECT_CONSOLE: ${{ secrets.DASHBOARD_PAGES_PROJECT_CONSOLE }}
+      DASHBOARD_PAGES_PROJECT_APP: ${{ secrets.DASHBOARD_PAGES_PROJECT_APP }}
+    steps:
+      - name: Record release SHA
+        env:
+          SHA: ${{ github.event.workflow_run.head_sha }}
+          RUN_URL: ${{ github.event.workflow_run.html_url }}
+        run: |
+          echo "::notice::Staging release for commit ${SHA} (triggering CI: ${RUN_URL})"
+          echo "RELEASE_SHA=${SHA}" >> "$GITHUB_ENV"
+          {
+            echo "## Staging release"
+            echo "- **Commit:** \`${SHA}\`"
+            echo "- **Triggering CI run:** ${RUN_URL}"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Setup repo
+        uses: ./.github/actions/setup-repo-pnpm
+        with:
+          ref: ${{ github.event.workflow_run.head_sha }}
+
+      - name: Validate deploy env (API)
+        run: |
+          set -euo pipefail
+          raw="${BILLING_WEBHOOKS_ENABLED:-1}"
+          raw_lc=$(echo "$raw" | tr '[:upper:]' '[:lower:]')
+          billing_on=1
+          case "$raw_lc" in
+            0|false|off|no|disabled) billing_on=0 ;;
+          esac
+          missing=()
+          for key in CLOUDFLARE_API_TOKEN DATABASE_URL BASE_URL MEMORYNODE_API_KEY SUPABASE_URL SUPABASE_SERVICE_ROLE_KEY API_KEY_SALT MASTER_ADMIN_TOKEN EMBEDDINGS_MODE; do
+            [[ -z "${!key:-}" ]] && missing+=("$key")
+          done
+          if [[ "$billing_on" -eq 1 ]]; then
+            for key in PAYU_MERCHANT_KEY PAYU_MERCHANT_SALT PAYU_BASE_URL PAYU_VERIFY_URL PUBLIC_APP_URL; do
+              [[ -z "${!key:-}" ]] && missing+=("$key")
+            done
+          else
+            echo "Billing webhooks disabled (BILLING_WEBHOOKS_ENABLED=$raw): PayU + PUBLIC_APP_URL not required."
+          fi
+          if [[ "${EMBEDDINGS_MODE:-}" == "openai" && -z "${OPENAI_API_KEY:-}" ]]; then
+            missing+=("OPENAI_API_KEY")
+          fi
+          access_mode="$(echo "${SUPABASE_ACCESS_MODE:-}" | tr '[:upper:]' '[:lower:]')"
+          if [[ "$access_mode" == "rls-first" || "${REQUEST_SCOPED_DB_ENABLED:-0}" == "1" || "${DISABLE_SERVICE_ROLE_REQUEST_PATH:-0}" == "1" ]]; then
+            [[ -z "${SUPABASE_ANON_KEY:-}" ]] && missing+=("SUPABASE_ANON_KEY")
+            [[ -z "${SUPABASE_JWT_SECRET:-}" ]] && missing+=("SUPABASE_JWT_SECRET")
+          fi
+          if [[ ${#missing[@]} -gt 0 ]]; then
+            echo "::error::Staging API deploy — missing required secrets: ${missing[*]}"
+            exit 1
+          fi
+
+      - name: Validate dashboard build env
+        run: |
+          set -euo pipefail
+          missing=()
+          [[ -z "${VITE_API_BASE_URL:-}" ]] && missing+=("BASE_URL (maps to VITE_API_BASE_URL)")
+          [[ -z "${VITE_CONSOLE_BASE_URL:-}" ]] && missing+=("VITE_CONSOLE_BASE_URL")
+          [[ -z "${CLOUDFLARE_API_TOKEN:-}" ]] && missing+=("CLOUDFLARE_API_TOKEN")
+          [[ -z "${CLOUDFLARE_ACCOUNT_ID:-}" ]] && missing+=("CLOUDFLARE_ACCOUNT_ID")
+          [[ -z "${VITE_SUPABASE_URL:-}" ]] && missing+=("DASHBOARD_VITE_SUPABASE_URL")
+          [[ -z "${VITE_SUPABASE_ANON_KEY:-}" ]] && missing+=("DASHBOARD_VITE_SUPABASE_ANON_KEY")
+          [[ -z "${DASHBOARD_VERIFY_CONSOLE_ORIGIN:-}" ]] && missing+=("DASHBOARD_VERIFY_CONSOLE_ORIGIN")
+          [[ -z "${DASHBOARD_VERIFY_APP_ORIGIN:-}" ]] && missing+=("DASHBOARD_VERIFY_APP_ORIGIN")
+          [[ -z "${DASHBOARD_PAGES_PROJECT_CONSOLE:-}" ]] && missing+=("DASHBOARD_PAGES_PROJECT_CONSOLE")
+          [[ -z "${DASHBOARD_PAGES_PROJECT_APP:-}" ]] && missing+=("DASHBOARD_PAGES_PROJECT_APP")
+          if [[ ${#missing[@]} -gt 0 ]]; then
+            echo "::error::Staging dashboard — missing: ${missing[*]}. Set these on the staging GitHub Environment."
+            exit 1
+          fi
+          if [[ "${DASHBOARD_PAGES_PROJECT_CONSOLE}" == "memorynode-console" || "${DASHBOARD_PAGES_PROJECT_APP}" == "memorynode-app" ]]; then
+            echo "::error::Staging must use dedicated Pages project names (not production memorynode-console / memorynode-app)."
+            exit 1
+          fi
+
+      - name: Release gate (staging)
+        env:
+          RELEASE_GATE_LIVE: "1"
+        run: pnpm release:gate
+
+      - name: Deploy API (staging)
+        run: pnpm deploy:staging
+
+      - name: Set VITE_BUILD_SHA
+        run: |
+          head="$(git rev-parse HEAD)"
+          echo "VITE_BUILD_SHA=$head" >> "$GITHUB_ENV"
+          echo "::notice::Dashboard build SHA=$head"
+
+      - name: Deploy Dashboard (staging Pages)
+        run: pnpm dashboard:deploy:pages
+
+      - name: E2E smoke (staging)
+        env:
+          BASE_URL: ${{ secrets.BASE_URL }}
+          MEMORYNODE_API_KEY: ${{ secrets.MEMORYNODE_API_KEY }}
+          EMBEDDINGS_MODE: stub
+        run: |
+          set -euo pipefail
+          chmod +x scripts/verify_e2e.sh
+          ./scripts/verify_e2e.sh
+
+      - name: Write approved release manifest
+        env:
+          SHA: ${{ github.event.workflow_run.head_sha }}
+          RUN_ID: ${{ github.run_id }}
+          WF_NAME: ${{ github.workflow }}
+        run: |
+          set -euo pipefail
+          resolved="$(git rev-parse HEAD)"
+          if [[ "$resolved" != "$SHA" ]]; then
+            echo "::error::HEAD ($resolved) != expected SHA ($SHA); refusing manifest."
+            exit 1
+          fi
+          node <<'NODE'
+          const fs = require("fs");
+          const sha = process.env.SHA;
+          const ts = new Date().toISOString().replace(/\.\d{3}Z$/, "Z");
+          const body = {
+            sha,
+            status: "approved",
+            timestamp: ts,
+            staging_run_id: Number(process.env.RUN_ID),
+            workflow: process.env.WF_NAME,
+          };
+          fs.writeFileSync("approved_release.json", JSON.stringify(body, null, 0) + "\n");
+          NODE
+          cat approved_release.json
+
+      - name: Upload approved release artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: approved-release
+          path: approved_release.json
+          retention-days: 90
+          if-no-files-found: error
+
+      - name: Staging release summary
+        if: success()
+        env:
+          SHA: ${{ github.event.workflow_run.head_sha }}
+          RUN_ID: ${{ github.run_id }}
+        run: |
+          {
+            echo "### Staging release — success"
+            echo "- API + dashboard + E2E completed for \`${SHA}\`"
+            echo "- **Approved SHA:** \`${SHA}\`"
+            echo "- **Staging workflow run_id:** \`${RUN_ID}\`"
+            node -e "const j=require('./approved_release.json'); console.log('- **Approval timestamp (UTC):** '+j.timestamp);"
+            echo "- Artifact: \`approved-release\` / \`approved_release.json\`"
+            echo "- **Release Production** uses this manifest only (auto after this run, or manual with optional \`staging_run_id\`)."
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Staging release failed
+        if: failure()
+        env:
+          RELEASE_SHA: ${{ github.event.workflow_run.head_sha }}
+        run: |
+          {
+            echo "### Staging release — failed"
+            echo "Fix the failing step, push to \`main\`, and wait for CI then a new staging run."
+            echo "Commit: \`${RELEASE_SHA}\`"
+            echo "No production eligibility artifact is written on failure."
+          } >> "$GITHUB_STEP_SUMMARY" || true

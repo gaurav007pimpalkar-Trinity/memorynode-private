@@ -5,7 +5,9 @@
   "type": "module",
   "scripts": {
     "dev": "pnpm exec wrangler dev --port 8788",
+    "lint": "eslint ../api/src/controlPlaneWorker.ts ../api/src/controlPlaneSecurity.ts ../api/src/envControlPlane.ts ../api/src/controlPlaneMetrics.ts ../api/src/controlPlaneProxy.ts",
     "typecheck": "tsc --noEmit -p ../api",
+    "test": "vitest run --root ../.. apps/api/tests/control_plane_admin_proxy.test.ts",
     "build": "pnpm exec wrangler deploy --env staging --dry-run",
     "deploy:staging": "pnpm exec wrangler deploy --env staging",
     "deploy:production": "pnpm exec wrangler deploy --env production"

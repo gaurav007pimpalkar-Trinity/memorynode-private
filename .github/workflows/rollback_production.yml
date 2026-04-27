@@ -1,0 +1,97 @@
+# yaml-language-server: disable
+# One-click Worker rollback (production). Pages still require Cloudflare UI promotion — see summary.
+name: Rollback Production
+
+on:
+  workflow_dispatch:
+    inputs:
+      message:
+        description: Reason (passed to wrangler rollback --message)
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: rollback-production
+  cancel-in-progress: false
+
+jobs:
+  rollback-worker:
+    runs-on: ubuntu-latest
+    environment: production
+    env:
+      CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+      CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+        with:
+          fetch-depth: 1
+          persist-credentials: false
+
+      - name: Setup Node
+        uses: actions/setup-node@v5
+        with:
+          node-version: "20"
+          package-manager-cache: false
+
+      - name: Enable corepack + pnpm
+        run: |
+          corepack enable
+          corepack prepare pnpm@10.0.0 --activate
+
+      - name: Install root deps (wrangler)
+        run: pnpm install --frozen-lockfile
+
+      - name: List deployments (before)
+        working-directory: apps/api
+        env:
+          CHECK_ENV: production
+        run: |
+          set -euo pipefail
+          echo "::group::wrangler deployments list (before)"
+          pnpm exec wrangler deployments list --env production 2>&1 | head -25 || true
+          echo "::endgroup::"
+
+      - name: Roll back memorynode-api (production)
+        id: rb
+        working-directory: apps/api
+        env:
+          CHECK_ENV: production
+          RB_MSG: ${{ github.event.inputs.message }}
+        run: |
+          set -euo pipefail
+          if [[ -z "${CLOUDFLARE_API_TOKEN:-}" ]]; then
+            echo "::error::CLOUDFLARE_API_TOKEN is not set on the production environment."
+            exit 1
+          fi
+          ts="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+          echo "rollback_started_utc=$ts" >> "$GITHUB_OUTPUT"
+          echo "::notice::Rolling back production Worker at ${ts} (wrangler rollback, previous active version)…"
+          pnpm exec wrangler rollback --env production -y --message "github-${{ github.run_id }}: ${RB_MSG}"
+          ts2="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+          echo "rollback_finished_utc=$ts2" >> "$GITHUB_OUTPUT"
+
+      - name: List deployments (after)
+        working-directory: apps/api
+        env:
+          CHECK_ENV: production
+        run: |
+          set -euo pipefail
+          echo "::group::wrangler deployments list (after)"
+          pnpm exec wrangler deployments list --env production 2>&1 | head -25 || true
+          echo "::endgroup::"
+
+      - name: Summary
+        run: |
+          {
+            echo "### Worker rollback"
+            echo "- **Target:** \`memorynode-api\` Worker, **environment:** \`production\` (previous deployment becomes active per wrangler)."
+            echo "- **Started (UTC):** ${{ steps.rb.outputs.rollback_started_utc }}"
+            echo "- **Finished (UTC):** ${{ steps.rb.outputs.rollback_finished_utc }}"
+            echo "- **Reason:** ${{ github.event.inputs.message }}"
+            echo "- **Pages:** Cloudflare → Pages → \`memorynode-console\` / \`memorynode-app\` → *Deployments* → promote prior deployment if needed."
+            echo "- **Re-validate:** \`pnpm release:prod:validate\`"
+          } >> "$GITHUB_STEP_SUMMARY"

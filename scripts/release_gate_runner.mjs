@@ -7,19 +7,129 @@
  *   - secrets scans (env + tracked files)
  * Optional:
  *   - build when RELEASE_INCLUDE_BUILD=1
+ *
+ * When RELEASE_GATE_LIVE=1 and BASE_URL is https, also verifies deployed API health
+ * and basic dashboard env alignment (staging vs production).
  */
 
 import { execSync } from "node:child_process";
 
 const inferredCheckEnv = process.env.CHECK_ENV ?? (process.env.CI ? "staging" : "production");
-const env = { ...process.env, CHECK_ENV: inferredCheckEnv };
+const childEnv = { ...process.env, CHECK_ENV: inferredCheckEnv };
 
 function run(cmd) {
   console.log(`\n$ ${cmd}`);
-  execSync(cmd, { stdio: "inherit", env });
+  execSync(cmd, { stdio: "inherit", env: childEnv });
 }
 
-try {
+async function runLiveReleaseGate() {
+  if ((process.env.RELEASE_GATE_LIVE ?? "").trim() !== "1") {
+    return;
+  }
+
+  const baseRaw = (process.env.BASE_URL ?? "").trim();
+  if (!baseRaw.startsWith("http")) {
+    throw new Error("[release-gate-live] RELEASE_GATE_LIVE=1 requires BASE_URL (https URL)");
+  }
+  const base = baseRaw.replace(/\/+$/, "");
+  const timeoutMs = Math.min(
+    Math.max(parseInt(process.env.RELEASE_GATE_HTTP_TIMEOUT_MS || "20000", 10) || 20000, 3000),
+    120000,
+  );
+
+  const ac = new AbortController();
+  const t = setTimeout(() => ac.abort(), timeoutMs);
+  try {
+    for (const path of ["/healthz", "/ready"]) {
+      const url = `${base}${path}`;
+      const res = await fetch(url, { signal: ac.signal, redirect: "follow" });
+      if (!res.ok) {
+        throw new Error(
+          `[release-gate-live] ${path} → HTTP ${res.status} (${url}) — fix API health or BASE_URL before deploy`,
+        );
+      }
+    }
+  } finally {
+    clearTimeout(t);
+  }
+
+  const apiKey = (process.env.MEMORYNODE_API_KEY || process.env.E2E_API_KEY || "").trim();
+  if (!apiKey) {
+    throw new Error(
+      "[release-gate-live] MEMORYNODE_API_KEY (or E2E_API_KEY) is required for authenticated API check — add to the staging/production GitHub Environment",
+    );
+  }
+  const usageUrl = `${base}/v1/usage/today`;
+  const acUsage = new AbortController();
+  const tUsage = setTimeout(() => acUsage.abort(), Math.min(timeoutMs, 15000));
+  try {
+    const ures = await fetch(usageUrl, {
+      signal: acUsage.signal,
+      redirect: "follow",
+      headers: { Authorization: `Bearer ${apiKey}`, Accept: "application/json" },
+    });
+    if (!ures.ok) {
+      throw new Error(
+        `[release-gate-live] GET /v1/usage/today → HTTP ${ures.status} (${usageUrl}) — verify MEMORYNODE_API_KEY and API auth`,
+      );
+    }
+  } finally {
+    clearTimeout(tUsage);
+  }
+
+  const checkEnv = (process.env.CHECK_ENV ?? "").trim().toLowerCase();
+  const viteApi = (process.env.VITE_API_BASE_URL ?? "").trim().replace(/\/+$/, "");
+  const viteConsole = (process.env.VITE_CONSOLE_BASE_URL ?? "").trim().replace(/\/+$/, "");
+
+  if (viteApi) {
+    if (checkEnv === "staging" && viteApi !== base) {
+      throw new Error(
+        `[release-gate-live] staging: VITE_API_BASE_URL (${viteApi}) must equal BASE_URL (${base}) — dashboard would call the wrong API`,
+      );
+    }
+    if (checkEnv === "production") {
+      const expected = "https://api.memorynode.ai";
+      if (viteApi !== expected) {
+        throw new Error(`[release-gate-live] production: VITE_API_BASE_URL must be ${expected}, got ${viteApi}`);
+      }
+    }
+  }
+
+  if (checkEnv === "production") {
+    const expC = "https://console.memorynode.ai";
+    if (!viteConsole.startsWith("http")) {
+      throw new Error(
+        "[release-gate-live] production: VITE_CONSOLE_BASE_URL must be set — required for dashboard build parity",
+      );
+    }
+    if (viteConsole !== expC) {
+      throw new Error(
+        `[release-gate-live] production: VITE_CONSOLE_BASE_URL must be ${expC}, got ${viteConsole} — wrong console origin for prod dashboard`,
+      );
+    }
+  } else if (checkEnv === "staging") {
+    if (!viteConsole.startsWith("https://")) {
+      throw new Error(
+        "[release-gate-live] staging: VITE_CONSOLE_BASE_URL must be an https URL — set in staging environment",
+      );
+    }
+  }
+
+  const dashUrl = (process.env.VITE_SUPABASE_URL ?? "").trim();
+  const dashKey = (process.env.VITE_SUPABASE_ANON_KEY ?? "").trim();
+  if (checkEnv === "production" || checkEnv === "staging") {
+    if (!dashUrl.startsWith("http")) {
+      throw new Error("[release-gate-live] VITE_SUPABASE_URL must be set for dashboard builds in this environment");
+    }
+    if (dashKey.length < 20) {
+      throw new Error("[release-gate-live] VITE_SUPABASE_ANON_KEY looks missing or too short");
+    }
+  }
+
+  console.log("[release-gate-live] OK: /healthz, /ready, GET /v1/usage/today, dashboard URL alignment");
+}
+
+async function main() {
   const checks = [
     "pnpm check:workspace-scripts",
     "pnpm check:tracked-artifacts",
@@ -45,6 +155,11 @@ try {
   for (const cmd of checks) {
     run(cmd);
   }
-} catch (err) {
-  process.exit(err?.status || 1);
+  await runLiveReleaseGate();
 }
+
+main().catch((err) => {
+  if (err && typeof err.status === "number") process.exit(err.status);
+  console.error(err?.message || err);
+  process.exit(1);
+});
