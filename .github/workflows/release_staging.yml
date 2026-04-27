@@ -14,6 +14,8 @@ on:
 
 permissions:
   contents: read
+  # upload-artifact requires Actions write when workflow permissions are narrowed.
+  actions: write
 
 concurrency:
   group: release-staging
@@ -62,6 +64,14 @@ jobs:
       VERIFY_PAGES_ATTEMPTS: "20"
       VERIFY_PAGES_DELAY_MS: "8000"
     steps:
+      # Required before `uses: ./.github/actions/...` — workflow_run jobs don't preload the repo.
+      - name: Checkout repository
+        uses: actions/checkout@v5
+        with:
+          ref: ${{ github.event.workflow_run.head_sha }}
+          fetch-depth: 0
+          persist-credentials: false
+
       - name: Record release SHA
         env:
           SHA: ${{ github.event.workflow_run.head_sha }}
