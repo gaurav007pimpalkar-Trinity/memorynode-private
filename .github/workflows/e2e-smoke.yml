@@ -1,5 +1,6 @@
 # yaml-language-server: disable
-# Ad hoc remote E2E (secrets: BASE_URL, MEMORYNODE_API_KEY). Normal releases run E2E in release_staging.yml.
+# Ad hoc remote E2E. Uses GitHub Environment `staging` so BASE_URL + MEMORYNODE_API_KEY match
+# Release Staging (same Worker + DB + API_KEY_SALT). Repo-only secrets often drift → 401 Invalid API key.
 name: E2E Smoke (manual)
 
 on:
@@ -8,6 +9,7 @@ on:
 jobs:
   smoke:
     runs-on: ubuntu-latest
+    environment: staging
     steps:
       - name: Checkout
         uses: actions/checkout@v5
