@@ -26,11 +26,26 @@ load_env_file_if_present() {
 
 load_env_file_if_present ".env.e2e"
 
+# Strip CR / leading-trailing whitespace (GitHub Action secrets often end with \n → 401 Invalid API key).
+strip_env_value() {
+  local s="$1"
+  s="${s//$'\r'/}"
+  s="${s#"${s%%[![:space:]]*}"}"
+  s="${s%"${s##*[![:space:]]}"}"
+  printf '%s' "$s"
+}
+
 # Allow MEMORYNODE_API_KEY as an alias.
 if [[ -z "${E2E_API_KEY:-}" && -n "${MEMORYNODE_API_KEY:-}" ]]; then
   export E2E_API_KEY="$MEMORYNODE_API_KEY"
 fi
+if [[ -n "${E2E_API_KEY:-}" ]]; then
+  export E2E_API_KEY="$(strip_env_value "$E2E_API_KEY")"
+fi
 
+if [[ -n "${BASE_URL:-}" ]]; then
+  BASE_URL="$(strip_env_value "$BASE_URL")"
+fi
 BASE_URL="${BASE_URL:-http://127.0.0.1:8787}"
 USE_LOCAL_DEV=0
 if [[ "$BASE_URL" == http://127.0.0.1:* || "$BASE_URL" == http://localhost:* ]]; then

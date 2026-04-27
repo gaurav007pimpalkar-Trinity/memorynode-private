@@ -60,6 +60,11 @@ jobs:
           chmod +x scripts/verify_e2e.sh
           ./scripts/verify_e2e.sh
 
+      - name: Hint on E2E failure (401 / invalid key)
+        if: ${{ failure() && steps.secrets_check.outputs.has_secrets == 'true' }}
+        run: |
+          echo "::notice::If you saw UNAUTHORIZED / Invalid API key: confirm **staging** env \`BASE_URL\` matches that Worker and \`MEMORYNODE_API_KEY\` is a current key for that database (salt rotation invalidates old keys). \`verify_e2e.sh\` now trims secret whitespace."
+
       - name: Skip notice
         if: ${{ steps.secrets_check.outputs.has_secrets != 'true' }}
         run: 'echo "Skipping e2e smoke: secrets missing (manual-only workflow)."'
