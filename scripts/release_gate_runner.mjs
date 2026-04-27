@@ -13,6 +13,9 @@
  *
  * Staging API-only deploys: set RELEASE_GATE_SKIP_DASHBOARD=1 to skip VITE_/dashboard
  * checks while still running /healthz, /ready, GET /v1/usage/today (staging only).
+ *
+ * Release Staging workflow intentionally omits RELEASE_GATE_LIVE so a broken staging Worker
+ * cannot block deploying the fix; deploy_staging.mjs still verifies /healthz after upload.
  */
 
 import { execSync } from "node:child_process";

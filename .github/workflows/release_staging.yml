@@ -113,9 +113,10 @@ jobs:
             exit 1
           fi
 
+      # Do not set RELEASE_GATE_LIVE: staging may be unhealthy until this workflow deploys the fix
+      # (chicken-and-egg). Trust repo checks here + post-deploy smoke in deploy_staging.mjs / E2E.
       - name: Release gate (staging)
         env:
-          RELEASE_GATE_LIVE: "1"
           RELEASE_GATE_SKIP_DASHBOARD: "1"
         run: pnpm release:gate
 
