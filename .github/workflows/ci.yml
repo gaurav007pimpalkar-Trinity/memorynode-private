@@ -107,6 +107,7 @@ jobs:
           node --check scripts/deploy_dashboard_pages.mjs
           node --check scripts/verify_dashboard_pages_deploy.mjs
           node --check scripts/dashboard_deploy_sha.mjs
+          node --check scripts/validate_approved_release.mjs
           node --check examples/node-quickstart/index.mjs
           node --check examples/support-bot-minimal/index.mjs
           node --check examples/nextjs-middleware/demo.mjs
