@@ -56,8 +56,11 @@ async function runLiveReleaseGate() {
     clearTimeout(t);
   }
 
-  const apiKey = (process.env.MEMORYNODE_API_KEY || process.env.E2E_API_KEY || "").trim();
-  if (!apiKey) {
+  /** Strip CR/newlines — GitHub Environment secrets often pad keys and break Bearer auth. */
+  const gateKey = String(process.env.MEMORYNODE_API_KEY || process.env.E2E_API_KEY || "")
+    .replace(/\r/g, "")
+    .trim();
+  if (!gateKey) {
     throw new Error(
       "[release-gate-live] MEMORYNODE_API_KEY (or E2E_API_KEY) is required for authenticated API check — add to the staging/production GitHub Environment",
     );
@@ -69,11 +72,27 @@ async function runLiveReleaseGate() {
     const ures = await fetch(usageUrl, {
       signal: acUsage.signal,
       redirect: "follow",
-      headers: { Authorization: `Bearer ${apiKey}`, Accept: "application/json" },
+      headers: { Authorization: `Bearer ${gateKey}`, Accept: "application/json" },
     });
-    if (!ures.ok) {
+    const usageBodyText = await ures.text();
+    let usagePayload = /** @type {Record<string, unknown> | null} */ (null);
+    try {
+      usagePayload = JSON.parse(usageBodyText);
+    } catch {
+      usagePayload = null;
+    }
+    const errObj = usagePayload && typeof usagePayload === "object" ? /** @type {{ error?: { code?: string } }} */ (usagePayload).error : undefined;
+    /** Workspace has no paid entitlement — auth still succeeded (handlers/usage.ts). */
+    const entitlementBlocked = ures.status === 402 && errObj?.code === "ENTITLEMENT_REQUIRED";
+
+    if (!ures.ok && !entitlementBlocked) {
       throw new Error(
-        `[release-gate-live] GET /v1/usage/today → HTTP ${ures.status} (${usageUrl}) — verify MEMORYNODE_API_KEY and API auth`,
+        `[release-gate-live] GET /v1/usage/today → HTTP ${ures.status} (${usageUrl}) — verify MEMORYNODE_API_KEY and API auth (${usageBodyText.slice(0, 200)})`,
+      );
+    }
+    if (!ures.ok && entitlementBlocked) {
+      console.warn(
+        `[release-gate-live] GET /v1/usage/today → HTTP ${ures.status} (${errObj?.code ?? "billing"}) — key is authenticated; entitlement/cap gate only (acceptable for release gate).`,
       );
     }
   } finally {
