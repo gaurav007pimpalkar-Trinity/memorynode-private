@@ -176,6 +176,9 @@ jobs:
       VITE_SUPABASE_ANON_KEY: ${{ secrets.DASHBOARD_VITE_SUPABASE_ANON_KEY }}
       DASHBOARD_PAGES_PROJECT_CONSOLE: ${{ secrets.DASHBOARD_PAGES_PROJECT_CONSOLE }}
       DASHBOARD_PAGES_PROJECT_APP: ${{ secrets.DASHBOARD_PAGES_PROJECT_APP }}
+      # Dashboard verify: peek URLs first, then custom domains (can lag vs *.pages.dev)
+      VERIFY_PAGES_ATTEMPTS: "24"
+      VERIFY_PAGES_DELAY_MS: "10000"
     steps:
       - name: Setup repo
         uses: ./.github/actions/setup-repo-pnpm
