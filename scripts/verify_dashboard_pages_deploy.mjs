@@ -23,8 +23,8 @@ function parseCli() {
       "expected-sha": { type: "string" },
       "console-origin": { type: "string" },
       "app-origin": { type: "string" },
-      attempts: { type: "string", default: "8" },
-      "delay-ms": { type: "string", default: "4000" },
+      attempts: { type: "string" },
+      "delay-ms": { type: "string" },
     },
     allowPositionals: false,
     strict: false,
@@ -32,8 +32,10 @@ function parseCli() {
   const expectedSha = (values["expected-sha"] ?? process.env.VITE_BUILD_SHA ?? "").trim();
   const consoleOrigin = stripTrailingSlash(values["console-origin"] ?? process.env.DASHBOARD_VERIFY_CONSOLE_ORIGIN ?? DEFAULT_CONSOLE);
   const appOrigin = stripTrailingSlash(values["app-origin"] ?? process.env.DASHBOARD_VERIFY_APP_ORIGIN ?? DEFAULT_APP);
-  const maxAttempts = Math.max(1, Math.min(30, parseInt(values.attempts ?? "8", 10) || 8));
-  const delayMs = Math.max(500, Math.min(60000, parseInt(values["delay-ms"] ?? "4000", 10) || 4000));
+  const attemptsRaw = values.attempts ?? process.env.VERIFY_PAGES_ATTEMPTS ?? "8";
+  const delayRaw = values["delay-ms"] ?? process.env.VERIFY_PAGES_DELAY_MS ?? "4000";
+  const maxAttempts = Math.max(1, Math.min(60, parseInt(attemptsRaw, 10) || 8));
+  const delayMs = Math.max(500, Math.min(120000, parseInt(delayRaw, 10) || 4000));
   return { expectedSha, consoleOrigin, appOrigin, maxAttempts, delayMs };
 }
 
@@ -41,12 +43,21 @@ function sleep(ms) {
   return new Promise((r) => setTimeout(r, ms));
 }
 
+const verifyFetchInit = {
+  method: "GET",
+  redirect: "follow",
+  cache: "no-store",
+  headers: {
+    "user-agent": "memorynode-dashboard-deploy-verify/1",
+    "cache-control": "no-cache",
+    pragma: "no-cache",
+  },
+};
+
 async function httpOk(url, label) {
   const u = `${url}${url.includes("?") ? "&" : "?"}_mn_verify=${Date.now()}`;
   const res = await fetch(u, {
-    method: "GET",
-    redirect: "follow",
-    headers: { "user-agent": "memorynode-dashboard-deploy-verify/1" },
+    ...verifyFetchInit,
   });
   if (!res.ok) {
     throw new Error(`${label}: HTTP ${res.status} for ${url}`);
@@ -56,9 +67,7 @@ async function httpOk(url, label) {
 async function fetchVersionJson(origin) {
   const url = `${origin}/version.json?_mn_verify=${Date.now()}`;
   const res = await fetch(url, {
-    method: "GET",
-    redirect: "follow",
-    headers: { "user-agent": "memorynode-dashboard-deploy-verify/1" },
+    ...verifyFetchInit,
   });
   if (!res.ok) {
     throw new Error(`version.json: HTTP ${res.status} for ${origin}`);

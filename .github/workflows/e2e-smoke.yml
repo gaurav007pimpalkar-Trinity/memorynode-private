@@ -1,5 +1,6 @@
 # yaml-language-server: disable
-# Ad hoc remote E2E (secrets: BASE_URL, MEMORYNODE_API_KEY). Normal releases run E2E in release_staging.yml.
+# Ad hoc remote E2E. Uses GitHub Environment `staging` so BASE_URL + MEMORYNODE_API_KEY match
+# Release Staging (same Worker + DB + API_KEY_SALT). Repo-only secrets often drift → 401 Invalid API key.
 name: E2E Smoke (manual)
 
 on:
@@ -8,6 +9,7 @@ on:
 jobs:
   smoke:
     runs-on: ubuntu-latest
+    environment: staging
     steps:
       - name: Checkout
         uses: actions/checkout@v5
@@ -57,6 +59,11 @@ jobs:
         run: |
           chmod +x scripts/verify_e2e.sh
           ./scripts/verify_e2e.sh
+
+      - name: Hint on E2E failure (401 / invalid key)
+        if: ${{ failure() && steps.secrets_check.outputs.has_secrets == 'true' }}
+        run: |
+          echo "::notice::If you saw UNAUTHORIZED / Invalid API key: confirm **staging** env \`BASE_URL\` matches that Worker and \`MEMORYNODE_API_KEY\` is a current key for that database (salt rotation invalidates old keys). \`verify_e2e.sh\` now trims secret whitespace."
 
       - name: Skip notice
         if: ${{ steps.secrets_check.outputs.has_secrets != 'true' }}
