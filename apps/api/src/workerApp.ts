@@ -29,7 +29,7 @@ import { assertControlPlaneGate } from "./controlPlaneSecurity.js";
 import { forwardAdminRequestToControlPlane } from "./controlPlaneProxy.js";
 import { logControlPlaneBillingWebhookMetric } from "./controlPlaneMetrics.js";
 import { insertAdminAuditLog } from "./adminAuditLog.js";
-import { assertControlPlaneWorkerSecretOnce, assertPublicWorkerControlPlaneEnvOnce } from "./envControlPlane.js";
+import { assertControlPlaneWorkerSecretOnce } from "./envControlPlane.js";
 import { buildAdminAuthFingerprint } from "./adminJobIdempotency.js";
 import { createHttpError, isApiError } from "./http.js";
 import { checkGlobalCostGuard, AIBudgetExceededError } from "./costGuard.js";
@@ -581,10 +581,7 @@ function getMethodNotAllowedForKnownPath(
 }
 
 export function handleRequest(request: Request, env: Env): Promise<Response> {
-  return runInRequestScope(() => {
-    assertPublicWorkerControlPlaneEnvOnce(env);
-    return handleRequestImpl(request, env, "public");
-  });
+  return runInRequestScope(() => handleRequestImpl(request, env, "public"));
 }
 
 /** Control-plane Worker: PayU webhook, `/admin/*`, `/v1/admin/*`, plus shared health probes. */
