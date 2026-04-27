@@ -257,7 +257,10 @@ function makeSupabaseMock(apiKeySalt: string): SupabaseLike {
 }
 
 describe("admin API key hash regression (non-stub Supabase path)", () => {
-  it("creates key via admin route and authenticates usage endpoint with same hash", async () => {
+  // Cold dynamic import of the Worker bundle + coverage can exceed 5s on CI/Windows.
+  it(
+    "creates key via admin route and authenticates usage endpoint with same hash",
+    async () => {
     vi.resetModules();
     currentSupabase = makeSupabaseMock("nonstub-salt");
     const { default: api } = await import("../src/index.js");
@@ -309,5 +312,7 @@ describe("admin API key hash regression (non-stub Supabase path)", () => {
     );
     expect(usageRes.status).toBe(200);
     expect(currentSupabase.__state.lookupHash).toBe(expectedHash);
-  });
+    },
+    20_000,
+  );
 });
