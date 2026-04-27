@@ -1,9 +1,9 @@
 # yaml-language-server: disable
-# Staging release (atomic): same commit SHA → API staging → Dashboard Pages → E2E smoke.
-# Triggers only after CI succeeds on main (merge / push to main). Not part of PR CI.
+# Staging release (API Worker only): same commit SHA → release gate → deploy API → E2E smoke → approved_release.json artifact.
+# Dashboard Pages deploy is skipped (no staging Pages secrets required). Production still deploys dashboard via Release Production.
+# Triggers only after CI succeeds on main. GitHub Environment: staging — API + E2E secrets only (plus Cloudflare for Worker deploy).
 #
-# On full success, uploads approved_release.json artifact — Release Production consumes this
-# (no manual SHA). GitHub Environment: staging — configure secrets for API + dashboard + E2E.
+# On full success, uploads approved_release.json — Release Production consumes this (no manual SHA).
 name: Release Staging
 
 on:
@@ -53,16 +53,6 @@ jobs:
       PAYU_BASE_URL: ${{ secrets.PAYU_BASE_URL }}
       PAYU_VERIFY_URL: ${{ secrets.PAYU_VERIFY_URL }}
       PUBLIC_APP_URL: ${{ secrets.PUBLIC_APP_URL }}
-      VITE_API_BASE_URL: ${{ secrets.BASE_URL }}
-      VITE_CONSOLE_BASE_URL: ${{ secrets.VITE_CONSOLE_BASE_URL }}
-      VITE_SUPABASE_URL: ${{ secrets.DASHBOARD_VITE_SUPABASE_URL }}
-      VITE_SUPABASE_ANON_KEY: ${{ secrets.DASHBOARD_VITE_SUPABASE_ANON_KEY }}
-      DASHBOARD_VERIFY_CONSOLE_ORIGIN: ${{ secrets.DASHBOARD_VERIFY_CONSOLE_ORIGIN }}
-      DASHBOARD_VERIFY_APP_ORIGIN: ${{ secrets.DASHBOARD_VERIFY_APP_ORIGIN }}
-      DASHBOARD_PAGES_PROJECT_CONSOLE: ${{ secrets.DASHBOARD_PAGES_PROJECT_CONSOLE }}
-      DASHBOARD_PAGES_PROJECT_APP: ${{ secrets.DASHBOARD_PAGES_PROJECT_APP }}
-      VERIFY_PAGES_ATTEMPTS: "20"
-      VERIFY_PAGES_DELAY_MS: "8000"
     steps:
       # Required before `uses: ./.github/actions/...` — workflow_run jobs don't preload the repo.
       - name: Checkout repository
@@ -80,7 +70,7 @@ jobs:
           echo "::notice::Staging release for commit ${SHA} (triggering CI: ${RUN_URL})"
           echo "RELEASE_SHA=${SHA}" >> "$GITHUB_ENV"
           {
-            echo "## Staging release"
+            echo "## Staging release (API only)"
             echo "- **Commit:** \`${SHA}\`"
             echo "- **Triggering CI run:** ${RUN_URL}"
           } >> "$GITHUB_STEP_SUMMARY"
@@ -123,45 +113,14 @@ jobs:
             exit 1
           fi
 
-      - name: Validate dashboard build env
-        run: |
-          set -euo pipefail
-          missing=()
-          [[ -z "${VITE_API_BASE_URL:-}" ]] && missing+=("BASE_URL (maps to VITE_API_BASE_URL)")
-          [[ -z "${VITE_CONSOLE_BASE_URL:-}" ]] && missing+=("VITE_CONSOLE_BASE_URL")
-          [[ -z "${CLOUDFLARE_API_TOKEN:-}" ]] && missing+=("CLOUDFLARE_API_TOKEN")
-          [[ -z "${CLOUDFLARE_ACCOUNT_ID:-}" ]] && missing+=("CLOUDFLARE_ACCOUNT_ID")
-          [[ -z "${VITE_SUPABASE_URL:-}" ]] && missing+=("DASHBOARD_VITE_SUPABASE_URL")
-          [[ -z "${VITE_SUPABASE_ANON_KEY:-}" ]] && missing+=("DASHBOARD_VITE_SUPABASE_ANON_KEY")
-          [[ -z "${DASHBOARD_VERIFY_CONSOLE_ORIGIN:-}" ]] && missing+=("DASHBOARD_VERIFY_CONSOLE_ORIGIN")
-          [[ -z "${DASHBOARD_VERIFY_APP_ORIGIN:-}" ]] && missing+=("DASHBOARD_VERIFY_APP_ORIGIN")
-          [[ -z "${DASHBOARD_PAGES_PROJECT_CONSOLE:-}" ]] && missing+=("DASHBOARD_PAGES_PROJECT_CONSOLE")
-          [[ -z "${DASHBOARD_PAGES_PROJECT_APP:-}" ]] && missing+=("DASHBOARD_PAGES_PROJECT_APP")
-          if [[ ${#missing[@]} -gt 0 ]]; then
-            echo "::error::Staging dashboard — missing: ${missing[*]}. Set these on the staging GitHub Environment."
-            exit 1
-          fi
-          if [[ "${DASHBOARD_PAGES_PROJECT_CONSOLE}" == "memorynode-console" || "${DASHBOARD_PAGES_PROJECT_APP}" == "memorynode-app" ]]; then
-            echo "::error::Staging must use dedicated Pages project names (not production memorynode-console / memorynode-app)."
-            exit 1
-          fi
-
       - name: Release gate (staging)
         env:
           RELEASE_GATE_LIVE: "1"
+          RELEASE_GATE_SKIP_DASHBOARD: "1"
         run: pnpm release:gate
 
       - name: Deploy API (staging)
         run: pnpm deploy:staging
-
-      - name: Set VITE_BUILD_SHA
-        run: |
-          head="$(git rev-parse HEAD)"
-          echo "VITE_BUILD_SHA=$head" >> "$GITHUB_ENV"
-          echo "::notice::Dashboard build SHA=$head"
-
-      - name: Deploy Dashboard (staging Pages)
-        run: pnpm dashboard:deploy:pages
 
       - name: E2E smoke (staging)
         env:
@@ -215,13 +174,13 @@ jobs:
           RUN_ID: ${{ github.run_id }}
         run: |
           {
-            echo "### Staging release — success"
-            echo "- API + dashboard + E2E completed for \`${SHA}\`"
+            echo "### Staging release — success (API only)"
+            echo "- API deploy + E2E completed for \`${SHA}\`"
             echo "- **Approved SHA:** \`${SHA}\`"
             echo "- **Staging workflow run_id:** \`${RUN_ID}\`"
             node -e "const j=require('./approved_release.json'); console.log('- **Approval timestamp (UTC):** '+j.timestamp);"
             echo "- Artifact: \`approved-release\` / \`approved_release.json\`"
-            echo "- **Release Production** uses this manifest only (auto after this run, or manual with optional \`staging_run_id\`)."
+            echo "- **Release Production** uses this manifest only (dashboard deploy runs in production workflow)."
           } >> "$GITHUB_STEP_SUMMARY"
 
       - name: Staging release failed

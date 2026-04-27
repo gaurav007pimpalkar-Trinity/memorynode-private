@@ -10,6 +10,9 @@
  *
  * When RELEASE_GATE_LIVE=1 and BASE_URL is https, also verifies deployed API health
  * and basic dashboard env alignment (staging vs production).
+ *
+ * Staging API-only deploys: set RELEASE_GATE_SKIP_DASHBOARD=1 to skip VITE_/dashboard
+ * checks while still running /healthz, /ready, GET /v1/usage/today (staging only).
  */
 
 import { execSync } from "node:child_process";
@@ -78,6 +81,16 @@ async function runLiveReleaseGate() {
   }
 
   const checkEnv = (process.env.CHECK_ENV ?? "").trim().toLowerCase();
+  const skipDashboardStaging =
+    (process.env.RELEASE_GATE_SKIP_DASHBOARD ?? "").trim() === "1" && checkEnv === "staging";
+
+  if (skipDashboardStaging) {
+    console.log(
+      "[release-gate-live] OK: /healthz, /ready, GET /v1/usage/today (dashboard alignment skipped — RELEASE_GATE_SKIP_DASHBOARD=1)",
+    );
+    return;
+  }
+
   const viteApi = (process.env.VITE_API_BASE_URL ?? "").trim().replace(/\/+$/, "");
   const viteConsole = (process.env.VITE_CONSOLE_BASE_URL ?? "").trim().replace(/\/+$/, "");
 
