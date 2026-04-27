@@ -52,18 +52,38 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           INPUT_STAGING_RUN_ID: ${{ github.event.inputs.staging_run_id }}
+          EVENT_NAME: ${{ github.event_name }}
         run: |
           set -euo pipefail
           REPO="${{ github.repository }}"
 
           echo "::group::Recent successful Release Staging runs (main, last 5)"
-          LIST_JSON="$(gh run list --workflow release_staging.yml --branch main --status success --limit 5 --json databaseId,headSha,displayTitle,createdAt,url -R "$REPO")"
+          LIST_JSON="$(gh run list --workflow release_staging.yml --branch main --status success --limit 5 --json databaseId,headSha,displayTitle,createdAt,url -R "$REPO" 2>/dev/null || true)"
+          if [[ -z "${LIST_JSON}" ]]; then
+            LIST_JSON="[]"
+          fi
+          export LIST_JSON
           printf '%s\n' "$LIST_JSON" | node -e "
-            const j=JSON.parse(require('fs').readFileSync(0,'utf8'));
+            const fs = require('fs');
+            const event = (process.env.EVENT_NAME || '').trim();
+            let j;
+            try {
+              j = JSON.parse(fs.readFileSync(0, 'utf8'));
+            } catch {
+              console.error('invalid gh run list JSON');
+              process.exit(1);
+            }
+            if (!Array.isArray(j)) j = [];
             for (const r of j) {
               console.log('- run_id=' + r.databaseId + ' headSha=' + (r.headSha||'') + ' at=' + (r.createdAt||'') + ' ' + (r.url||''));
             }
-            if (!j.length) { console.error('no successful staging runs'); process.exit(1); }
+            if (!j.length && event !== 'workflow_run') {
+              console.error('no successful staging runs (workflow_dispatch requires gh run list — check actions: read or use a PAT in GH_TOKEN)');
+              process.exit(1);
+            }
+            if (!j.length && event === 'workflow_run') {
+              console.warn('note: gh run list returned empty (common for workflow_run + GITHUB_TOKEN); continuing using triggering workflow_run id');
+            }
           "
           echo "::endgroup::"
 
@@ -74,6 +94,9 @@ jobs:
               let md='| run_id | headSha | created |\\n| --- | --- | --- |\\n';
               for (const r of j) {
                 md += '| ' + r.databaseId + ' | \`' + (r.headSha||'') + '\` | ' + (r.createdAt||'') + ' |\\n';
+              }
+              if (!j.length) {
+                md += '| — | — | *(no rows — token may not enumerate runs; workflow_run still resolves via event)* |\\n';
               }
               process.stdout.write(md);
             "
