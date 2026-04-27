@@ -1,0 +1,301 @@
+# yaml-language-server: disable
+# Production: SHA only from staging artifact (approved_release.json). Never accept a raw deploy SHA.
+#
+# Triggers:
+#   - workflow_run: Release Staging succeeded on main (manifest sha must match head_sha).
+#   - workflow_dispatch: optional staging_run_id (last 5 successful runs on main), or empty = latest.
+#
+# resolve-approved-sha: no environment. promote: environment production (required reviewers).
+name: Release Production
+
+on:
+  workflow_run:
+    workflows: ["Release Staging"]
+    types: [completed]
+    branches: [main]
+  workflow_dispatch:
+    inputs:
+      staging_run_id:
+        description: "Optional successful Release Staging run id (numeric). Empty = latest on main. Must be one of the last 5 successful runs."
+        required: false
+        type: string
+
+permissions:
+  contents: read
+  actions: read
+
+concurrency:
+  group: release-production
+  cancel-in-progress: false
+
+jobs:
+  resolve-approved-sha:
+    if: >
+      github.event_name == 'workflow_dispatch' ||
+      (github.event_name == 'workflow_run' &&
+       github.event.workflow_run.conclusion == 'success')
+    runs-on: ubuntu-latest
+    outputs:
+      sha: ${{ steps.resolve.outputs.sha }}
+      manifest_timestamp: ${{ steps.resolve.outputs.manifest_timestamp }}
+      manifest_staging_run_id: ${{ steps.resolve.outputs.manifest_staging_run_id }}
+      source_staging_workflow_run_id: ${{ steps.resolve.outputs.source_staging_workflow_run_id }}
+    steps:
+      - name: Checkout (scripts only)
+        uses: actions/checkout@v5
+        with:
+          fetch-depth: 1
+          persist-credentials: false
+
+      - name: Resolve approved release manifest
+        id: resolve
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          INPUT_STAGING_RUN_ID: ${{ github.event.inputs.staging_run_id }}
+        run: |
+          set -euo pipefail
+          REPO="${{ github.repository }}"
+
+          echo "::group::Recent successful Release Staging runs (main, last 5)"
+          LIST_JSON="$(gh run list --workflow release_staging.yml --branch main --status success --limit 5 --json databaseId,headSha,displayTitle,createdAt,url -R "$REPO")"
+          printf '%s\n' "$LIST_JSON" | node -e "
+            const j=JSON.parse(require('fs').readFileSync(0,'utf8'));
+            for (const r of j) {
+              console.log('- run_id=' + r.databaseId + ' headSha=' + (r.headSha||'') + ' at=' + (r.createdAt||'') + ' ' + (r.url||''));
+            }
+            if (!j.length) { console.error('no successful staging runs'); process.exit(1); }
+          "
+          echo "::endgroup::"
+
+          {
+            echo "## Recent successful staging runs (last 5 on \`main\`)"
+            printf '%s\n' "$LIST_JSON" | node -e "
+              const j=JSON.parse(require('fs').readFileSync(0,'utf8'));
+              let md='| run_id | headSha | created |\\n| --- | --- | --- |\\n';
+              for (const r of j) {
+                md += '| ' + r.databaseId + ' | \`' + (r.headSha||'') + '\` | ' + (r.createdAt||'') + ' |\\n';
+              }
+              process.stdout.write(md);
+            "
+          } >> "$GITHUB_STEP_SUMMARY"
+
+          if [[ "${{ github.event_name }}" == "workflow_run" ]]; then
+            RUN_ID="${{ github.event.workflow_run.id }}"
+            EXPECT_HEAD="${{ github.event.workflow_run.head_sha }}"
+          else
+            EXPECT_HEAD=""
+            rid_input="$(printf '%s' "${INPUT_STAGING_RUN_ID:-}" | tr -d '[:space:]')"
+            if [[ -n "$rid_input" ]]; then
+              if [[ ! "$rid_input" =~ ^[0-9]+$ ]]; then
+                echo "::error::staging_run_id must be a numeric GitHub Actions run id."
+                exit 1
+              fi
+              export RID_INPUT="$rid_input"
+              if ! printf '%s\n' "$LIST_JSON" | node -e "
+                const j=JSON.parse(require('fs').readFileSync(0,'utf8'));
+                const want=String(process.env.RID_INPUT);
+                if (!j.some(r=>String(r.databaseId)===want)) { process.exit(1); }
+              "; then
+                echo "::error::staging_run_id $rid_input is not among the last 5 successful Release Staging runs on main."
+                exit 1
+              fi
+              RUN_ID="$rid_input"
+              echo "::notice::Using requested staging workflow run id=$RUN_ID"
+            else
+              RUN_ID="$(printf '%s\n' "$LIST_JSON" | node -e "const j=JSON.parse(require('fs').readFileSync(0,'utf8'));process.stdout.write(String(j[0].databaseId));")"
+              echo "::notice::Using latest successful staging workflow run id=$RUN_ID"
+            fi
+          fi
+
+          echo "Downloading artifact approved-release from workflow run ${RUN_ID}"
+          gh run download "$RUN_ID" --name approved-release --dir ./artifact-staging -R "$REPO"
+
+          M="$(find ./artifact-staging -name approved_release.json -type f | head -1)"
+          if [[ -z "$M" || ! -f "$M" ]]; then
+            echo "::error::approved_release.json missing after download — staging must upload approved-release on success."
+            exit 1
+          fi
+
+          export WRITE_GITHUB_OUTPUT=1
+          if [[ -n "${EXPECT_HEAD:-}" ]]; then
+            node scripts/validate_approved_release.mjs "$M" --expect-head-sha "$EXPECT_HEAD"
+          else
+            node scripts/validate_approved_release.mjs "$M"
+          fi
+
+          echo "source_staging_workflow_run_id=$RUN_ID" >> "$GITHUB_OUTPUT"
+
+          {
+            echo ""
+            echo "## Selected staging artifact"
+            echo "- **Source workflow run id:** \`$RUN_ID\`"
+            echo "- **approved_release.json** (strict-validated):"
+            echo ""
+            echo '```json'
+            cat "$M"
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+
+          echo "::notice::Production will deploy validated SHA (see job outputs)"
+
+  promote:
+    needs: resolve-approved-sha
+    runs-on: ubuntu-latest
+    environment: production
+    env:
+      CHECK_ENV: production
+      DEPLOY_ENV: production
+      DEPLOY_CONFIRM: memorynode-prod
+      CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+      CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+      DATABASE_URL: ${{ secrets.DATABASE_URL }}
+      BASE_URL: ${{ secrets.BASE_URL }}
+      MEMORYNODE_API_KEY: ${{ secrets.MEMORYNODE_API_KEY }}
+      SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+      SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+      SUPABASE_ANON_KEY: ${{ secrets.SUPABASE_ANON_KEY }}
+      SUPABASE_JWT_SECRET: ${{ secrets.SUPABASE_JWT_SECRET }}
+      SUPABASE_ACCESS_MODE: ${{ secrets.SUPABASE_ACCESS_MODE }}
+      REQUEST_SCOPED_DB_ENABLED: ${{ secrets.REQUEST_SCOPED_DB_ENABLED }}
+      DISABLE_SERVICE_ROLE_REQUEST_PATH: ${{ secrets.DISABLE_SERVICE_ROLE_REQUEST_PATH }}
+      ALLOWED_ORIGINS: ${{ secrets.ALLOWED_ORIGINS }}
+      API_KEY_SALT: ${{ secrets.API_KEY_SALT }}
+      MASTER_ADMIN_TOKEN: ${{ secrets.MASTER_ADMIN_TOKEN }}
+      EMBEDDINGS_MODE: ${{ secrets.EMBEDDINGS_MODE }}
+      OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+      RATE_LIMIT_MODE: ${{ secrets.RATE_LIMIT_MODE }}
+      BILLING_WEBHOOKS_ENABLED: ${{ secrets.BILLING_WEBHOOKS_ENABLED }}
+      PAYU_MERCHANT_KEY: ${{ secrets.PAYU_MERCHANT_KEY }}
+      PAYU_MERCHANT_SALT: ${{ secrets.PAYU_MERCHANT_SALT }}
+      PAYU_BASE_URL: ${{ secrets.PAYU_BASE_URL }}
+      PAYU_VERIFY_URL: ${{ secrets.PAYU_VERIFY_URL }}
+      PUBLIC_APP_URL: ${{ secrets.PUBLIC_APP_URL }}
+      VITE_API_BASE_URL: https://api.memorynode.ai
+      VITE_CONSOLE_BASE_URL: https://console.memorynode.ai
+      VITE_SUPABASE_URL: ${{ secrets.DASHBOARD_VITE_SUPABASE_URL }}
+      VITE_SUPABASE_ANON_KEY: ${{ secrets.DASHBOARD_VITE_SUPABASE_ANON_KEY }}
+      DASHBOARD_PAGES_PROJECT_CONSOLE: ${{ secrets.DASHBOARD_PAGES_PROJECT_CONSOLE }}
+      DASHBOARD_PAGES_PROJECT_APP: ${{ secrets.DASHBOARD_PAGES_PROJECT_APP }}
+    steps:
+      - name: Setup repo
+        uses: ./.github/actions/setup-repo-pnpm
+        with:
+          ref: ${{ needs.resolve-approved-sha.outputs.sha }}
+
+      - name: Verify SHA is on main
+        env:
+          SHA: ${{ needs.resolve-approved-sha.outputs.sha }}
+        run: |
+          set -euo pipefail
+          git fetch origin main
+          if ! git merge-base --is-ancestor "$SHA" FETCH_HEAD; then
+            echo "::error::Approved SHA is not an ancestor of origin/main — refusing deploy."
+            exit 1
+          fi
+          resolved="$(git rev-parse HEAD)"
+          if [[ "$resolved" != "$SHA" ]]; then
+            echo "::error::Checkout resolved to $resolved, expected $SHA"
+            exit 1
+          fi
+
+      - name: Validate deploy env (API)
+        run: |
+          set -euo pipefail
+          raw="${BILLING_WEBHOOKS_ENABLED:-1}"
+          raw_lc=$(echo "$raw" | tr '[:upper:]' '[:lower:]')
+          billing_on=1
+          case "$raw_lc" in
+            0|false|off|no|disabled) billing_on=0 ;;
+          esac
+          missing=()
+          for key in CLOUDFLARE_API_TOKEN DATABASE_URL BASE_URL MEMORYNODE_API_KEY SUPABASE_URL SUPABASE_SERVICE_ROLE_KEY SUPABASE_ANON_KEY ALLOWED_ORIGINS API_KEY_SALT MASTER_ADMIN_TOKEN EMBEDDINGS_MODE RATE_LIMIT_MODE; do
+            [[ -z "${!key:-}" ]] && missing+=("$key")
+          done
+          if [[ "$billing_on" -eq 1 ]]; then
+            for key in PAYU_MERCHANT_KEY PAYU_MERCHANT_SALT PAYU_BASE_URL PAYU_VERIFY_URL PUBLIC_APP_URL; do
+              [[ -z "${!key:-}" ]] && missing+=("$key")
+            done
+          else
+            echo "Billing webhooks disabled: PayU + PUBLIC_APP_URL not required."
+          fi
+          if [[ "${EMBEDDINGS_MODE:-}" == "openai" && -z "${OPENAI_API_KEY:-}" ]]; then
+            missing+=("OPENAI_API_KEY")
+          fi
+          if [[ "${EMBEDDINGS_MODE:-}" == "stub" ]]; then
+            echo "::error::EMBEDDINGS_MODE=stub is not allowed for production."
+            exit 1
+          fi
+          access_mode="$(echo "${SUPABASE_ACCESS_MODE:-}" | tr '[:upper:]' '[:lower:]')"
+          if [[ "$access_mode" == "rls-first" || "${REQUEST_SCOPED_DB_ENABLED:-0}" == "1" || "${DISABLE_SERVICE_ROLE_REQUEST_PATH:-0}" == "1" ]]; then
+            [[ -z "${SUPABASE_ANON_KEY:-}" ]] && missing+=("SUPABASE_ANON_KEY")
+            [[ -z "${SUPABASE_JWT_SECRET:-}" ]] && missing+=("SUPABASE_JWT_SECRET")
+          fi
+          if [[ "$access_mode" == "rls-first" && "${DISABLE_SERVICE_ROLE_REQUEST_PATH:-0}" != "1" ]]; then
+            echo "::error::rls-first requires DISABLE_SERVICE_ROLE_REQUEST_PATH=1"
+            exit 1
+          fi
+          if [[ ${#missing[@]} -gt 0 ]]; then
+            echo "::error::Production API — missing secrets: ${missing[*]}"
+            exit 1
+          fi
+
+      - name: Validate dashboard deploy env
+        run: |
+          set -euo pipefail
+          missing=()
+          for key in CLOUDFLARE_API_TOKEN CLOUDFLARE_ACCOUNT_ID VITE_SUPABASE_URL VITE_SUPABASE_ANON_KEY; do
+            [[ -z "${!key:-}" ]] && missing+=("$key")
+          done
+          if [[ ${#missing[@]} -gt 0 ]]; then
+            echo "::error::Production dashboard — missing: ${missing[*]}"
+            exit 1
+          fi
+
+      - name: Release gate (production)
+        env:
+          RELEASE_GATE_LIVE: "1"
+        run: pnpm release:gate
+
+      - name: Deploy API (production)
+        run: pnpm deploy:prod
+
+      - name: Set VITE_BUILD_SHA
+        run: |
+          head="$(git rev-parse HEAD)"
+          echo "VITE_BUILD_SHA=$head" >> "$GITHUB_ENV"
+          echo "::notice::Dashboard build SHA=$head"
+
+      - name: Deploy Dashboard (production Pages)
+        run: pnpm dashboard:deploy:pages
+
+      - name: Post-deploy smoke (production)
+        env:
+          BASE_URL: ${{ secrets.BASE_URL }}
+          MEMORYNODE_API_KEY: ${{ secrets.MEMORYNODE_API_KEY }}
+        run: pnpm smoke:prod
+
+      - name: Production release summary
+        if: success()
+        env:
+          SHA: ${{ needs.resolve-approved-sha.outputs.sha }}
+          SRC_RUN: ${{ needs.resolve-approved-sha.outputs.source_staging_workflow_run_id }}
+          MFTS: ${{ needs.resolve-approved-sha.outputs.manifest_timestamp }}
+          MFSR: ${{ needs.resolve-approved-sha.outputs.manifest_staging_run_id }}
+        run: |
+          deploy_ts="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+          {
+            echo "### Production release — success"
+            echo "- **Deployed SHA:** \`${SHA}\`"
+            echo "- **Source staging workflow run id:** \`${SRC_RUN}\`"
+            echo "- **Manifest timestamp (staging approval):** ${MFTS}"
+            echo "- **Manifest staging_run_id:** ${MFSR:-—}"
+            echo "- **Deployment finished (UTC):** ${deploy_ts}"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Production release failed
+        if: failure()
+        run: |
+          {
+            echo "### Production release — failed"
+            echo "See logs. Worker: **Rollback Production** workflow or \`wrangler rollback --env production\`. Pages: promote prior deployment in Cloudflare."
+          } >> "$GITHUB_STEP_SUMMARY" || true

@@ -7,6 +7,7 @@ import { RateLimitDO } from "./rateLimitDO.js";
 import { CircuitBreakerDO } from "./circuitBreakerDO.js";
 import {
   handleRequest,
+  handleControlPlaneRequest,
   createSupabaseClient,
   handleCreateMemory,
   handleCreateConversation,
@@ -77,7 +78,7 @@ export default {
   CircuitBreakerDO,
 };
 
-export { RateLimitDO, CircuitBreakerDO, createSupabaseClient };
+export { RateLimitDO, CircuitBreakerDO, createSupabaseClient, handleControlPlaneRequest };
 export {
   handleCreateMemory,
   handleCreateConversation,

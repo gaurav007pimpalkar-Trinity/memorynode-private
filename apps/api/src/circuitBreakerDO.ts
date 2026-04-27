@@ -1,6 +1,6 @@
 /**
  * Durable Object for shared circuit breaker state across all Worker isolates.
- * A single DO instance (idFromName("circuit-breaker")) holds state for "openai" and "supabase"
+ * A single DO instance (idFromName("circuit-breaker")) holds state for named circuits
  * so that when one isolate opens the circuit, all isolates see it open.
  */
 
@@ -11,7 +11,7 @@ import {
   CIRCUIT_BREAKER_OPEN_MS,
 } from "./resilienceConstants.js";
 
-export type CircuitName = "openai" | "supabase";
+export type CircuitName = "openai" | "supabase" | "control_plane_proxy";
 
 type CircuitState = {
   failures: number;
@@ -68,7 +68,7 @@ export class CircuitBreakerDO {
 
     const action = body.action;
     const name = body.name;
-    if (name !== "openai" && name !== "supabase") {
+    if (name !== "openai" && name !== "supabase" && name !== "control_plane_proxy") {
       return new Response(JSON.stringify({ error: "invalid_circuit_name" }), { status: 400 });
     }
 
@@ -107,6 +107,8 @@ export class CircuitBreakerDO {
             circuit: name,
             failures: s.failures,
             open_until_ms: CIRCUIT_BREAKER_OPEN_MS,
+            open_until_epoch_ms: s.openUntil,
+            metric_kind: "counter",
           });
         }
         await this.putCircuitState(name, s);

@@ -804,7 +804,7 @@ describe("billing webhook", () => {
       makeSupabase() as SupabaseClient,
       "req-sig",
     );
-    expect(res.status).toBe(400);
+    expect(res.status).toBe(403);
     const json = (await res.json()) as { request_id?: string; error: { code: string } };
     expect(json.error.code).toBe("invalid_webhook_signature");
     expect(json.request_id).toBe("req-sig");

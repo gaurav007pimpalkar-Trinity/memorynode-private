@@ -239,3 +239,5 @@ HMAC-SHA256 verify against `memory_ingest_webhooks.signing_secret` for the refer
 ## 9. Changes and drift
 
 `docs/external/openapi.yaml` is generated from code by [apps/api/scripts/generate_openapi.mjs](../../apps/api/scripts/generate_openapi.mjs). CI enforces drift with `pnpm openapi:check` and `pnpm check:docs-drift`. See [.cursor/rules/documentation-governance.mdc](../../.cursor/rules/documentation-governance.mdc).
+
+**Split control-plane:** When the primary Worker runs with request-scoped DB (`DISABLE_SERVICE_ROLE_REQUEST_PATH=1`), routes such as `/admin/*`, `/v1/admin/*`, and `POST /v1/billing/webhook` are served by the dedicated control-plane Worker (circuit breaker, metrics, PayU webhook handling). The primary Worker returns `503 CONTROL_PLANE_ONLY` for those paths. Operator-facing alert notes live under `infra/observability/production-alerts.md`; deployment is covered in internal runbooks.

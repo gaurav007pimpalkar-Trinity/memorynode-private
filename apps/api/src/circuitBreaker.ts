@@ -1,10 +1,11 @@
 /**
- * Circuit breaker for "openai" and "supabase".
+ * Circuit breaker for upstream dependencies (OpenAI, Supabase, control-plane proxy).
  * When env.CIRCUIT_BREAKER_DO is set, state is shared across all Worker isolates via a Durable Object.
  * When not set (e.g. tests or dev), falls back to in-memory per-isolate state.
  */
 
 import type { Env } from "./env.js";
+import type { CircuitName } from "./circuitBreakerDO.js";
 import { logger } from "./logger.js";
 import {
   CIRCUIT_BREAKER_FAILURE_THRESHOLD,
@@ -17,7 +18,7 @@ import {
   circuitBreakerDORecordFailure,
 } from "./circuitBreakerDO.js";
 
-export type CircuitName = "openai" | "supabase";
+export type { CircuitName } from "./circuitBreakerDO.js";
 
 type State = {
   failures: number;
@@ -70,6 +71,8 @@ export function recordFailure(name: CircuitName): void {
       circuit: name,
       failures: s.failures,
       open_until_ms: CIRCUIT_BREAKER_OPEN_MS,
+      open_until_epoch_ms: s.openUntil,
+      metric_kind: "counter",
     });
   }
 }

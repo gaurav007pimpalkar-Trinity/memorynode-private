@@ -51,3 +51,6 @@ PAYU_PRO_AMOUNT=499.00
 PAYU_PRODUCT_INFO=MemoryNode Platform
 PAYU_SUCCESS_PATH=/settings/billing?status=success
 PAYU_CANCEL_PATH=/settings/billing?status=canceled
+# Split Workers: public API proxies /v1/admin/* to control-plane (same secret on both Workers)
+# CONTROL_PLANE_ORIGIN=http://127.0.0.1:8788
+# CONTROL_PLANE_SECRET=match-control-plane-dev-secret

@@ -1,3 +1,5 @@
+# yaml-language-server: disable
+# Ad hoc remote E2E (secrets: BASE_URL, MEMORYNODE_API_KEY). Normal releases run E2E in release_staging.yml.
 name: E2E Smoke (manual)
 
 on:
@@ -19,8 +21,15 @@ jobs:
       - name: Enable Corepack
         run: corepack enable
 
+      # Match CI / Release Staging so lockfile + packageManager (pnpm@10.0.0) resolve consistently.
+      - name: Prepare pnpm
+        run: corepack prepare pnpm@10.0.0 --activate
+
       - name: Install deps
-        run: corepack pnpm install --frozen-lockfile
+        run: pnpm install --frozen-lockfile
+
+      - name: Ensure jq (verify_e2e.sh)
+        run: command -v jq >/dev/null || (sudo apt-get update -qq && sudo apt-get install -y jq)
 
       - name: Check required secrets
         id: secrets_check

@@ -32,6 +32,11 @@ jobs:
           base="$(printf '%s' "${BASE_URL:-}" | trim)"
           if [[ -z "$TOKEN" || -z "$WORKSPACE_ID" ]]; then
             echo "Skipping: set MEMORY_HYGIENE_ADMIN_TOKEN and MEMORY_HYGIENE_WORKSPACE_ID in repo secrets to enable."
+            {
+              echo "## Memory hygiene (dry-run)"
+              echo "- **Result:** skipped (secrets not configured)"
+              echo "- No API call made; safe to re-run."
+            } >> "$GITHUB_STEP_SUMMARY"
             exit 0
           fi
           base="${base:-https://api.memorynode.ai}"
@@ -71,7 +76,18 @@ jobs:
           fi
           if [[ "$code" -ge 200 && "$code" -lt 300 ]]; then
             echo "Result: Dry-run completed successfully (HTTP $code)."
+            {
+              echo "## Memory hygiene (dry-run)"
+              echo "- **Result:** success (HTTP $code)"
+              echo "- **Base:** ${base}"
+              echo "- Safe to re-run; dry_run=true only."
+            } >> "$GITHUB_STEP_SUMMARY"
             exit 0
           fi
           echo "Result: API returned HTTP $code. Check that MEMORY_HYGIENE_ADMIN_TOKEN equals the Worker's MASTER_ADMIN_TOKEN, plus workspace_id and MEMORY_HYGIENE_BASE_URL."
+          {
+            echo "## Memory hygiene (dry-run)"
+            echo "- **Result:** failure (HTTP $code)"
+            echo "- **Base:** ${base}"
+          } >> "$GITHUB_STEP_SUMMARY"
           exit 1

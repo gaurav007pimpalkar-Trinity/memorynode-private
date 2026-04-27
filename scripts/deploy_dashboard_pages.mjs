@@ -89,9 +89,13 @@ function pagesDeploy(projectName, dirArg) {
   return r.status === 0;
 }
 
+const pagesProjectConsole = (process.env.DASHBOARD_PAGES_PROJECT_CONSOLE ?? "memorynode-console").trim() || "memorynode-console";
+const pagesProjectApp = (process.env.DASHBOARD_PAGES_PROJECT_APP ?? "memorynode-app").trim() || "memorynode-app";
+console.log(`[deploy_dashboard_pages] Pages projects: console=${pagesProjectConsole} app=${pagesProjectApp}`);
+
 function deployBoth() {
-  if (!pagesDeploy("memorynode-console", consoleArg)) return false;
-  if (!pagesDeploy("memorynode-app", appArg)) return false;
+  if (!pagesDeploy(pagesProjectConsole, consoleArg)) return false;
+  if (!pagesDeploy(pagesProjectApp, appArg)) return false;
   return true;
 }
 

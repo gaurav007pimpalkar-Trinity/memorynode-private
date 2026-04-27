@@ -1,0 +1,81 @@
+# Control-plane Worker: PayU POST /v1/billing/webhook, POST /admin/*, GET /v1/admin/* (internal secret required).
+# Implementation lives in apps/api (shared bundle); this project only sets name, routes, and bindings.
+# Point PayU webhook URL at the hostname you attach here (not the public API host).
+
+name = "memorynode-control-plane"
+main = "../api/src/controlPlaneWorker.ts"
+compatibility_date = "2025-01-01"
+tsconfig = "../api/tsconfig.json"
+compatibility_flags = ["nodejs_compat"]
+keep_vars = true
+
+[dev]
+port = 8788
+
+[durable_objects]
+bindings = [
+  { name = "RATE_LIMIT_DO", class_name = "RateLimitDO" },
+  { name = "CIRCUIT_BREAKER_DO", class_name = "CircuitBreakerDO" }
+]
+
+[[migrations]]
+tag = "v1"
+new_sqlite_classes = ["RateLimitDO"]
+
+[[migrations]]
+tag = "v2"
+new_sqlite_classes = ["CircuitBreakerDO"]
+
+[env.staging]
+name = "memorynode-control-plane-staging"
+routes = [
+  { pattern = "control-plane-staging.memorynode.ai/*", zone_name = "memorynode.ai" },
+]
+
+[env.staging.durable_objects]
+bindings = [
+  { name = "RATE_LIMIT_DO", class_name = "RateLimitDO" },
+  { name = "CIRCUIT_BREAKER_DO", class_name = "CircuitBreakerDO" }
+]
+
+[[env.staging.migrations]]
+tag = "v1"
+new_sqlite_classes = ["RateLimitDO"]
+
+[[env.staging.migrations]]
+tag = "v2"
+new_sqlite_classes = ["CircuitBreakerDO"]
+
+[env.staging.vars]
+ENVIRONMENT = "staging"
+RATE_LIMIT_MODE = "on"
+WEBHOOK_AUTO_REPROCESS = "0"
+
+[env.production]
+name = "memorynode-control-plane"
+routes = [
+  { pattern = "control-plane.memorynode.ai/*", zone_name = "memorynode.ai" },
+]
+
+[env.production.durable_objects]
+bindings = [
+  { name = "RATE_LIMIT_DO", class_name = "RateLimitDO" },
+  { name = "CIRCUIT_BREAKER_DO", class_name = "CircuitBreakerDO" }
+]
+
+[[env.production.migrations]]
+tag = "v1"
+new_sqlite_classes = ["RateLimitDO"]
+
+[[env.production.migrations]]
+tag = "v2"
+new_sqlite_classes = ["CircuitBreakerDO"]
+
+[env.production.vars]
+ENVIRONMENT = "production"
+RATE_LIMIT_MODE = "on"
+WEBHOOK_AUTO_REPROCESS = "1"
+
+# PayU webhook retry batch (no-op unless WEBHOOK_AUTO_REPROCESS=1).
+[env.production.triggers]
+crons = ["*/15 * * * *"]

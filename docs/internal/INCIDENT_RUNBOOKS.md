@@ -20,7 +20,7 @@ Hard rule: any suspected data leak or auth bypass is SEV-1 until disproven.
 
 1. Acknowledge the page and open an incident channel.
 2. Capture impact from the `request_completed` log: `route_group` (from `classifyRouteGroup` in [apps/api/src/workerApp.ts](../../apps/api/src/workerApp.ts)), `status`, `error_code`.
-3. Freeze non-essential deploys (cancel in-flight runs of `.github/workflows/api-deploy.yml` / `dashboard-pages-deploy.yml`).
+3. Freeze non-essential deploys (cancel in-flight runs of `.github/workflows/release_staging.yml` / `release_production.yml`).
 4. Record evidence:
    - `x-request-id` samples
    - `BUILD_VERSION` / `GIT_SHA` from `/healthz`
@@ -106,7 +106,7 @@ Symptoms
 - SLOs regress post-release.
 
 Actions
-1. Cancel in-flight `api-deploy.yml` runs.
+1. Cancel in-flight `release_staging.yml` / `release_production.yml` runs.
 2. `npx wrangler deployments list` → identify last known good.
 3. `npx wrangler rollback --message "<incident id>"`.
 4. Run `pnpm release:staging:validate` or `pnpm release:prod:validate`.

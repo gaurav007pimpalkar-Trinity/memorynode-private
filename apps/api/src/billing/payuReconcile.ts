@@ -175,13 +175,6 @@ export async function isPayUWebhookSignatureValid(
     if (expectedWithCharges === received) return true;
   }
 
-  const webhookSecret = asNonEmptyString(env.PAYU_WEBHOOK_SECRET);
-  const signatureHeader = asNonEmptyString(request.headers.get("x-payu-signature"));
-  if (webhookSecret && signatureHeader) {
-    const fallback = normalizePayUHash(await computeSha512Hex(`${rawBody}|${webhookSecret}`));
-    return fallback === normalizePayUHash(signatureHeader);
-  }
-
   return false;
 }
 
@@ -609,6 +602,13 @@ function shouldApplyPayUEvent(
   return incomingEventId.localeCompare(lastEventId) > 0;
 }
 
+async function markPayUWebhookEventProcessing(supabase: SupabaseClient, eventId: string): Promise<void> {
+  const u = await supabase.from("payu_webhook_events").update({ status: "processing" }).eq("event_id", eventId);
+  if (u.error) {
+    throw createHttpError(500, "DB_ERROR", u.error.message ?? "Failed to mark webhook event processing");
+  }
+}
+
 async function claimPayUWebhookEvent(
   supabase: SupabaseClient,
   eventId: string,
@@ -631,7 +631,7 @@ async function claimPayUWebhookEvent(
       txn_id: txnId,
       payment_id: paymentId,
       payu_status: payuStatus,
-      status: "processing",
+      status: "received",
       request_id: requestId || null,
       payload,
       processed_at: null,
@@ -639,7 +639,10 @@ async function claimPayUWebhookEvent(
     })
     .select("event_id,status")
     .maybeSingle();
-  if (!inserted.error) return { replayed: false };
+  if (!inserted.error) {
+    await markPayUWebhookEventProcessing(supabase, eventId);
+    return { replayed: false };
+  }
   if (inserted.error.code !== "23505") {
     throw createHttpError(500, "DB_ERROR", inserted.error.message ?? "Failed to register webhook idempotency key");
   }
@@ -653,7 +656,7 @@ async function claimPayUWebhookEvent(
     throw createHttpError(500, "DB_ERROR", existing.error.message ?? "Failed to read webhook idempotency row");
   }
   const existingStatus = ((existing.data as PayUWebhookEventRow | null)?.status ?? "processed").toLowerCase();
-  if (existingStatus === "failed" || existingStatus === "deferred") {
+  if (existingStatus === "failed" || existingStatus === "deferred" || existingStatus === "received") {
     const retry = await supabase
       .from("payu_webhook_events")
       .update({
@@ -710,13 +713,19 @@ async function finalizePayUWebhookEvent(
   }
 }
 
-async function failPayUWebhookEvent(supabase: SupabaseClient, eventId: string, err: unknown): Promise<void> {
+async function failPayUWebhookEvent(
+  supabase: SupabaseClient,
+  eventId: string,
+  err: unknown,
+  requestId = "",
+): Promise<void> {
   const message = redact((err as Error)?.message, "message");
+  const lastError = typeof message === "string" ? message : "Webhook processing failed";
   const fail = await supabase
     .from("payu_webhook_events")
     .update({
       status: "failed",
-      last_error: typeof message === "string" ? message : "Webhook processing failed",
+      last_error: lastError,
       processed_at: null,
       defer_reason: null,
     })
@@ -725,8 +734,17 @@ async function failPayUWebhookEvent(supabase: SupabaseClient, eventId: string, e
     logger.error({
       event: "webhook_event_mark_failed_error",
       payu_event_id: eventId,
+      request_id: requestId || null,
       error_message: fail.error.message,
       err: fail.error,
+    });
+  } else {
+    logger.error({
+      event: "payu_webhook_event_failed",
+      payu_event_id: eventId,
+      request_id: requestId || null,
+      last_error: lastError,
+      err,
     });
   }
 }
@@ -924,7 +942,10 @@ export function createPayUWebhookReconciler(ctx: { emitProductEvent: EmitProduct
         deferReason,
       });
     } catch (err) {
-      await failPayUWebhookEvent(supabase, eventId, err);
+      await failPayUWebhookEvent(supabase, eventId, err, requestId);
+      if (err && typeof err === "object") {
+        Object.assign(err as Record<string, unknown>, { payu_event_id: eventId, event_type: eventType });
+      }
       throw err;
     }
 

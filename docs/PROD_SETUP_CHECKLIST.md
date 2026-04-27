@@ -1,6 +1,6 @@
 # Production setup checklist
 
-Bring-up steps for the MemoryNode production stack: one Cloudflare Worker, two Cloudflare Pages projects, one Supabase project. Every secret name and binding below is anchored in code; verify against [apps/api/src/env.ts](../apps/api/src/env.ts) and [`.github/workflows/api-deploy.yml`](../.github/workflows/api-deploy.yml) before deploying.
+Bring-up steps for the MemoryNode production stack: one Cloudflare Worker, two Cloudflare Pages projects, one Supabase project. Every secret name and binding below is anchored in code; verify against [apps/api/src/env.ts](../apps/api/src/env.ts) and [`.github/workflows/release_production.yml`](../.github/workflows/release_production.yml) before deploying.
 
 ## 1. Production topology
 
@@ -72,7 +72,7 @@ Admin hardening (recommended):
 Operational tuning (non-secret `vars` in `wrangler.toml` unless noted):
 
 - [ ] `ENVIRONMENT=prod`
-- [ ] `BUILD_VERSION` and `GIT_SHA` (injected by `api-deploy.yml`)
+- [ ] `BUILD_VERSION` and `GIT_SHA` (injected by deploy scripts / CI)
 - [ ] `EMBEDDINGS_MODE=openai`, `EMBEDDING_MODEL=text-embedding-3-small` (or `-large`; Worker will send `dimensions=1536`)
 - [ ] `SUPABASE_ACCESS_MODE=rpc-first` (Phase A) or `rls-first` (Phase B, see [LEAST_PRIVILEGE_ROADMAP.md](./internal/LEAST_PRIVILEGE_ROADMAP.md))
 - [ ] `RATE_LIMIT_MODE=on` (off is forbidden in prod by `validateRateLimitConfig`)
@@ -101,7 +101,7 @@ Apply both DO migrations during the first `wrangler deploy`.
 4. `pnpm build`
 5. `pnpm openapi:check` (drift gate)
 6. `pnpm deploy:staging` → run `pnpm release:staging:validate`.
-7. `pnpm deploy:prod` (or push to `main` to trigger `api-deploy.yml`) → run `pnpm release:prod:validate`.
+7. `pnpm deploy:prod` (or merge to `main` for staging auto-deploy, then **Release Production** with the SHA) → run `pnpm release:prod:validate`.
 
 ## 6. Post-deploy verification
 

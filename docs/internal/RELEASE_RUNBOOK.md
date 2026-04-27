@@ -1,54 +1,54 @@
 # Release Runbook
 
-MemoryNode ships from `main` through two GitHub Actions workflows:
+MemoryNode ships from `main` through this GitHub Actions pipeline:
 
-- [`.github/workflows/ci.yml`](../../.github/workflows/ci.yml) — build, test, and every `check:*` gate.
-- [`.github/workflows/api-deploy.yml`](../../.github/workflows/api-deploy.yml) — deploys the `memorynode-api` Worker, and (production only) also runs `deploy-dashboards-production` to ship both Pages projects in the same run.
-- [`.github/workflows/dashboard-pages-deploy.yml`](../../.github/workflows/dashboard-pages-deploy.yml) — dashboard-only hotfix deploy, manual (`workflow_dispatch`).
+- [`.github/workflows/ci.yml`](../../.github/workflows/ci.yml) — build, test, and every `check:*` gate (all branches; required before deploy).
+- [`.github/workflows/release_staging.yml`](../../.github/workflows/release_staging.yml) — after **green CI on `main`**, one job deploys **API staging → Dashboard staging Pages → E2E** at the **same commit SHA** (atomic staging).
+- [`.github/workflows/release_production.yml`](../../.github/workflows/release_production.yml) — starts when **Release Staging** succeeds (`workflow_run`) or via **`workflow_dispatch`**. SHA always comes from **`approved-release`** / `approved_release.json` (validated by [scripts/validate_approved_release.mjs](../../scripts/validate_approved_release.mjs)). Manual runs may set optional **`staging_run_id`** (must be one of the **last 5** successful staging runs on `main`); leave empty for **latest**. Job **`promote`** uses GitHub Environment **production** (add required reviewers).
+- [`.github/workflows/rollback_production.yml`](../../.github/workflows/rollback_production.yml) — optional **`workflow_dispatch`** Worker rollback (`wrangler rollback --env production`).
 
-Cloudflare Pages "Connect to Git" is disconnected on both Pages projects; uploads happen only via `wrangler pages deploy` from the workflows above.
+Ad hoc remote E2E: [`.github/workflows/e2e-smoke.yml`](../../.github/workflows/e2e-smoke.yml) (manual; not part of the default pipeline).
+
+Cloudflare Pages "Connect to Git" is disconnected on both Pages projects; uploads happen only via `wrangler pages deploy` from the release workflows.
 
 Scheduled operations (memory hygiene, retention, etc.) run from their own GitHub Actions workflows (`memory-hygiene.yml`, `memory-retention.yml`). No Cloudflare Cron Triggers are used.
 
 ## 1. Preconditions
 
 - Branch: `main`.
-- CI green. `api-deploy.yml` refuses to start until CI's `workflow_run` completes with `conclusion: success`.
+- CI green on the merge commit. `release_staging.yml` runs only when CI’s `workflow_run` completes with `conclusion: success` on `main`.
 - Local gates (optional but recommended before merging): `pnpm release:gate` and `pnpm prod:gate`.
 
 ## 2. Staging
 
-Automatic: merging to `main` triggers `api-deploy.yml → deploy-staging` with `CHECK_ENV=staging`.
+Automatic: push/merge to `main` with green CI starts [`.github/workflows/release_staging.yml`](../../.github/workflows/release_staging.yml).
 
-Manual: `workflow_dispatch` with `environment=staging` and optional `ref`.
+Configure the GitHub Environment **`staging`** with the same Worker secrets as before, **plus** dashboard + E2E fields:
 
-Key steps (lines 89-129 of `api-deploy.yml`):
+- **Dashboard build:** `VITE_CONSOLE_BASE_URL`, `DASHBOARD_VITE_SUPABASE_URL`, `DASHBOARD_VITE_SUPABASE_ANON_KEY` (same names as production dashboard env).
+- **Staging-only Pages:** `DASHBOARD_PAGES_PROJECT_CONSOLE`, `DASHBOARD_PAGES_PROJECT_APP` (must **not** be the production project names `memorynode-console` / `memorynode-app` when pointing at a non-prod API).
+- **Verify URLs:** `DASHBOARD_VERIFY_CONSOLE_ORIGIN`, `DASHBOARD_VERIFY_APP_ORIGIN` (origins that match those Pages projects).
+- **E2E:** `BASE_URL` + `MEMORYNODE_API_KEY` for the staging API (used by `scripts/verify_e2e.sh`).
 
-1. `Validate deploy env` — fails if any of `CLOUDFLARE_API_TOKEN`, `DATABASE_URL`, `BASE_URL`, `MEMORYNODE_API_KEY`, `SUPABASE_URL`, `SUPABASE_SERVICE_ROLE_KEY`, `API_KEY_SALT`, `MASTER_ADMIN_TOKEN`, `EMBEDDINGS_MODE` is unset. Requires `OPENAI_API_KEY` when `EMBEDDINGS_MODE=openai`. Requires `PAYU_MERCHANT_KEY`, `PAYU_MERCHANT_SALT`, `PAYU_BASE_URL`, `PAYU_VERIFY_URL`, `PUBLIC_APP_URL` unless `BILLING_WEBHOOKS_ENABLED` is `off`. Requires `SUPABASE_ANON_KEY` + `SUPABASE_JWT_SECRET` for `rls-first` / `REQUEST_SCOPED_DB_ENABLED=1` / `DISABLE_SERVICE_ROLE_REQUEST_PATH=1`.
-2. `pnpm release:gate` (CHECK_ENV=staging).
+Key steps in the workflow:
+
+1. Validate API + dashboard secrets (fail fast with `::error::` messages).
+2. `pnpm release:gate` with `RELEASE_GATE_LIVE=1` (CHECK_ENV=staging; hits `/healthz`, `/ready`, `/v1/usage/today`, dashboard env alignment — requires `MEMORYNODE_API_KEY` on the staging environment).
 3. `pnpm deploy:staging`.
+4. `pnpm dashboard:deploy:pages` with `VITE_API_BASE_URL=${{ secrets.BASE_URL }}` and optional `DASHBOARD_PAGES_PROJECT_*` overrides (see [scripts/deploy_dashboard_pages.mjs](../../scripts/deploy_dashboard_pages.mjs)).
+5. `./scripts/verify_e2e.sh` against staging.
+6. Writes **`approved_release.json`** and uploads artifact **`approved-release`** (strict schema: `sha`, `status`, `timestamp`, `staging_run_id` — this is the only production-eligibility token).
 
-Post-deploy: run `pnpm release:staging:validate` locally against staging. Fix on `main` before promoting.
+Post-deploy: run `pnpm release:staging:validate` locally against staging if needed. Fix on `main` before production.
 
 ## 3. Production
 
-Manual only. Trigger `api-deploy.yml` with `workflow_dispatch`, `environment=production`, and an explicit `ref`. One click ships the Worker and both Pages projects:
+**No manual SHA.** After green staging, **Release Production** runs automatically, or use **Run workflow** with optional **`staging_run_id`** to promote a **recent** successful staging run (still artifact-only).
 
-1. `deploy-production` (Worker).
-2. `deploy-dashboards-production` (`needs: [deploy-production]`) — builds both surfaces at the same `ref`, uploads to `memorynode-console` and `memorynode-app`.
+1. **`resolve-approved-sha`** lists the last 5 successful staging runs (visibility), downloads `approved-release` for the chosen run, runs **`validate_approved_release.mjs`**, and for `workflow_run` requires manifest `sha` === `workflow_run.head_sha`.
+2. **`promote`** (waits on environment **production**): checkout that SHA → verify on `main` → secrets → `pnpm release:gate` (`RELEASE_GATE_LIVE`: `/healthz`, `/ready`, `/v1/usage/today`, dashboard URL checks) → `pnpm deploy:prod` → `pnpm dashboard:deploy:pages` → `pnpm smoke:prod`.
 
-If the Worker step fails, the dashboard job is skipped automatically. If dashboard upload fails after the Worker succeeded, retry via the `Dashboard Pages Deploy` hotfix workflow — see [DASHBOARD_DEPLOY.md](./DASHBOARD_DEPLOY.md) §3.2.
-
-Extra gates vs staging (lines 187-234):
-
-- `DEPLOY_CONFIRM=memorynode-prod` required.
-- `ALLOWED_ORIGINS` and `RATE_LIMIT_MODE` must be set.
-- `EMBEDDINGS_MODE=stub` is rejected.
-- `rls-first` requires `DISABLE_SERVICE_ROLE_REQUEST_PATH=1`.
-
-Then `pnpm release:gate` with `CHECK_ENV=production`, then `pnpm deploy:prod`.
-
-Dashboard job requires `CLOUDFLARE_API_TOKEN`, `CLOUDFLARE_ACCOUNT_ID`, `DASHBOARD_VITE_SUPABASE_URL`, `DASHBOARD_VITE_SUPABASE_ANON_KEY` in the `production` GitHub environment.
+If a step fails, the workflow stops; fix forward with a new commit through staging again.
 
 Post-deploy:
 
@@ -71,16 +71,17 @@ Each build needs `VITE_API_BASE_URL`, `VITE_SUPABASE_URL`, and `VITE_SUPABASE_AN
 
 Deploy paths:
 
-- Coupled (default): `api-deploy.yml → deploy-dashboards-production` runs automatically after `deploy-production` succeeds. Same `ref`, same run id, same log trail.
-- Hotfix-only: [`dashboard-pages-deploy.yml`](../../.github/workflows/dashboard-pages-deploy.yml) for dashboard-only redeploys. Details in [DASHBOARD_DEPLOY.md](./DASHBOARD_DEPLOY.md).
+- **Production (default):** [`.github/workflows/release_production.yml`](../../.github/workflows/release_production.yml) — API + both Pages + smoke in one approved run.
+- **Staging:** [`.github/workflows/release_staging.yml`](../../.github/workflows/release_staging.yml) — uses **separate** Pages project names via secrets so staging builds never target production Pages by accident.
+
+Hotfix / rollback details: [DASHBOARD_DEPLOY.md](./DASHBOARD_DEPLOY.md).
 
 ## 5. Rollback
 
-1. Stop further deploys (cancel in-flight runs).
-2. `npx wrangler deployments list` → pick the previous successful deployment id.
-3. `npx wrangler rollback --message "release <incident>"`.
-4. Revalidate: `pnpm release:prod:validate`.
-5. Author a corrective PR with a failing regression test before attempting to roll forward.
+1. Stop further deploys (cancel in-flight runs of `release_staging.yml` / `release_production.yml`).
+2. **Worker (one click):** run [`.github/workflows/rollback_production.yml`](../../.github/workflows/rollback_production.yml) with a short message, or locally: `cd apps/api && npx wrangler rollback --env production -y --message "…"`.
+3. Revalidate: `pnpm release:prod:validate`.
+4. Author a corrective PR with a failing regression test before attempting to roll forward.
 
 Pages rollback: Cloudflare dashboard → Pages → pick the prior production deployment for the affected project.
 

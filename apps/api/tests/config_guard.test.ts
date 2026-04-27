@@ -1,6 +1,12 @@
 import api from "../src/index.js";
 import { describe, expect, it } from "vitest";
 
+/** Public Worker guard requires these for non-dev stages before other config checks run. */
+const controlPlaneEnvPair = {
+  CONTROL_PLANE_ORIGIN: "https://control-plane.test",
+  CONTROL_PLANE_SECRET: "control-plane-test-secret-32chars!!",
+} as const;
+
 describe("config guard", () => {
   function rateLimitBinding() {
     return {
@@ -12,6 +18,7 @@ describe("config guard", () => {
   it("fails fast when RATE_LIMIT_DO binding is missing", async () => {
     const req = new Request("http://localhost/healthz", { method: "GET" });
     const env = {
+      ...controlPlaneEnvPair,
       SUPABASE_URL: "https://example.supabase.co",
       SUPABASE_SERVICE_ROLE_KEY: "service_role",
       OPENAI_API_KEY: "sk-test",
@@ -32,6 +39,7 @@ describe("config guard", () => {
   it("rejects RATE_LIMIT_MODE=off in production", async () => {
     const req = new Request("http://localhost/healthz", { method: "GET" });
     const env = {
+      ...controlPlaneEnvPair,
       SUPABASE_URL: "https://example.supabase.co",
       SUPABASE_SERVICE_ROLE_KEY: "service_role",
       OPENAI_API_KEY: "sk-test",
@@ -52,6 +60,7 @@ describe("config guard", () => {
   it("rejects SUPABASE_MODE=stub in production", async () => {
     const req = new Request("http://localhost/healthz", { method: "GET" });
     const env = {
+      ...controlPlaneEnvPair,
       SUPABASE_URL: "https://example.supabase.co",
       SUPABASE_SERVICE_ROLE_KEY: "service_role",
       OPENAI_API_KEY: "sk-test",
@@ -76,6 +85,7 @@ describe("config guard", () => {
       body: JSON.stringify({ access_token: "token", workspace_id: "ws1" }),
     });
     const env = {
+      ...controlPlaneEnvPair,
       SUPABASE_URL: "https://example.supabase.co",
       SUPABASE_SERVICE_ROLE_KEY: "service_role",
       OPENAI_API_KEY: "sk-test",
@@ -96,6 +106,7 @@ describe("config guard", () => {
   it("rejects EMBEDDINGS_MODE=stub in prod alias stage", async () => {
     const req = new Request("http://localhost/healthz", { method: "GET" });
     const env = {
+      ...controlPlaneEnvPair,
       SUPABASE_URL: "https://example.supabase.co",
       SUPABASE_SERVICE_ROLE_KEY: "service_role",
       OPENAI_API_KEY: "sk-test",

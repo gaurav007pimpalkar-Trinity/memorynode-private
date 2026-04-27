@@ -722,6 +722,7 @@ export function assertAdminRequestIpAllowed(request: Request, env: Env): void {
   const ip =
     request.headers.get("cf-connecting-ip") ??
     request.headers.get("x-forwarded-for")?.split(",")[0]?.trim() ??
+    request.headers.get("x-memorynode-proxy-client-ip")?.trim() ??
     "unknown";
   if (ip === "unknown") {
     throw createHttpError(403, "FORBIDDEN", "Admin access denied");

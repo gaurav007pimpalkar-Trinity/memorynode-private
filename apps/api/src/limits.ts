@@ -32,6 +32,8 @@ export const RATE_LIMIT_CONTEXT_MAX = 20;
 export const RATE_LIMIT_IMPORT_MAX = 10;
 export const RATE_LIMIT_BILLING_MAX = 20;
 export const RATE_LIMIT_ADMIN_MAX = 30;
+/** Per-admin-token RPM on control-plane for `/v1/admin/*` and `/admin/*` (early gate). */
+export const RATE_LIMIT_CONTROL_PLANE_ADMIN_MAX = 10;
 export const RATE_LIMIT_DASHBOARD_SESSION_MAX = 15;
 
 /** New keys use 15 RPM for this long (48h). */
@@ -59,6 +61,11 @@ function parseRate(raw: string | undefined, fallback: number): number {
   return Number.isFinite(parsed) && parsed > 0 ? Math.floor(parsed) : fallback;
 }
 
+export function getControlPlaneAdminRpm(env: { RATE_LIMIT_CONTROL_PLANE_ADMIN_MAX?: string }): number {
+  const parsed = Number(env.RATE_LIMIT_CONTROL_PLANE_ADMIN_MAX ?? RATE_LIMIT_CONTROL_PLANE_ADMIN_MAX);
+  return Number.isFinite(parsed) && parsed > 0 ? Math.floor(parsed) : RATE_LIMIT_CONTROL_PLANE_ADMIN_MAX;
+}
+
 export function getRouteRateLimitMax(
   env: {
     RATE_LIMIT_MAX?: string;
@@ -67,6 +74,7 @@ export function getRouteRateLimitMax(
     RATE_LIMIT_IMPORT_MAX?: string;
     RATE_LIMIT_BILLING_MAX?: string;
     RATE_LIMIT_ADMIN_MAX?: string;
+    RATE_LIMIT_CONTROL_PLANE_ADMIN_MAX?: string;
     RATE_LIMIT_DASHBOARD_SESSION_MAX?: string;
   },
   route:
