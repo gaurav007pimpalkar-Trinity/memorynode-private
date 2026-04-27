@@ -420,7 +420,71 @@ if [[ "$USE_LOCAL_DEV" -eq 1 && -z "${E2E_API_KEY:-}" ]]; then
   bootstrap_local_api_key
 fi
 
+verify_usage_today_unpaid_ok() {
+  local header_file body_file status
+  header_file="$(mktemp)"
+  body_file="$(mktemp)"
+  echo "-> GET /v1/usage/today (unpaid workspace check)"
+  if ! invoke_curl -sS -D "$header_file" -o "$body_file" -X GET "$BASE_URL/v1/usage/today" -H "Authorization: Bearer ${E2E_API_KEY}"; then
+    rm -f "$header_file" "$body_file"
+    fail "GET /v1/usage/today request"
+  fi
+  status="$(get_status_code "$header_file")"
+  if [[ "$status" == "200" ]]; then
+    rm -f "$header_file" "$body_file"
+    return 0
+  fi
+  if [[ "$status" == "402" ]] && jq -e '.error.code == "ENTITLEMENT_REQUIRED"' "$body_file" >/dev/null 2>&1; then
+    rm -f "$header_file" "$body_file"
+    return 0
+  fi
+  echo "Expected 200 or 402 ENTITLEMENT_REQUIRED, got $status" >&2
+  redact_headers <"$header_file"
+  cat "$body_file" >&2
+  rm -f "$header_file" "$body_file"
+  return 1
+}
+
 call_health
+
+# Remote staging often uses a workspace without a paid plan: POST /v1/memories returns 402 ENTITLEMENT_REQUIRED
+# while the API key is still valid. When E2E_ALLOW_UNPAID_WORKSPACE=1, short-circuit after verifying usage.
+if [[ "${E2E_ALLOW_UNPAID_WORKSPACE:-0}" == "1" && "$USE_LOCAL_DEV" -eq 0 ]]; then
+  header_file="$(mktemp)"
+  body_file="$(mktemp)"
+  echo "-> POST /v1/memories"
+  curl_args=(-sS -D "$header_file" -o "$body_file" -X POST "$BASE_URL/v1/memories" -H "Authorization: Bearer ${E2E_API_KEY}" -H "Content-Type: application/json" --data '{"user_id":"e2e-user","text":"hello e2e memory","namespace":"e2e"}')
+  if ! invoke_curl "${curl_args[@]}"; then
+    rm -f "$header_file" "$body_file"
+    fail "POST /v1/memories request"
+  fi
+  status="$(get_status_code "$header_file")"
+  if [[ "$status" == "402" ]] && jq -e '.error.code == "ENTITLEMENT_REQUIRED"' "$body_file" >/dev/null 2>&1; then
+    rm -f "$header_file" "$body_file"
+    verify_usage_today_unpaid_ok || fail "GET /v1/usage/today"
+    echo "E2E smoke passed (remote unpaid workspace; writes gated by entitlement)."
+    exit 0
+  fi
+  if [[ "$status" != "200" ]]; then
+    echo "Expected 200 or 402 ENTITLEMENT_REQUIRED, got $status" >&2
+    redact_headers <"$header_file"
+    cat "$body_file" >&2
+    rm -f "$header_file" "$body_file"
+    fail "POST /v1/memories"
+  fi
+  if ! jq -e '.memory_id' "$body_file" >/dev/null 2>&1; then
+    cat "$body_file" >&2
+    rm -f "$header_file" "$body_file"
+    fail "POST /v1/memories validation"
+  fi
+  rm -f "$header_file" "$body_file"
+  call_api "POST" "/v1/search" 200 '{"user_id":"e2e-user","namespace":"e2e","query":"hello","top_k":3}' '.results'
+  call_api "POST" "/v1/context" 200 '{"user_id":"e2e-user","namespace":"e2e","query":"hello"}' '.context_text'
+  call_api "GET" "/v1/usage/today" 200 "" '.day'
+  echo "E2E smoke passed."
+  exit 0
+fi
+
 call_api "POST" "/v1/memories" 200 '{"user_id":"e2e-user","text":"hello e2e memory","namespace":"e2e"}' '.memory_id'
 call_api "POST" "/v1/search" 200 '{"user_id":"e2e-user","namespace":"e2e","query":"hello","top_k":3}' '.results'
 call_api "POST" "/v1/context" 200 '{"user_id":"e2e-user","namespace":"e2e","query":"hello"}' '.context_text'

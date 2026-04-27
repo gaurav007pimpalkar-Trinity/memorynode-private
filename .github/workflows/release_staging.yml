@@ -128,6 +128,7 @@ jobs:
           BASE_URL: ${{ secrets.BASE_URL }}
           MEMORYNODE_API_KEY: ${{ secrets.MEMORYNODE_API_KEY }}
           EMBEDDINGS_MODE: stub
+          E2E_ALLOW_UNPAID_WORKSPACE: "1"
         run: |
           set -euo pipefail
           chmod +x scripts/verify_e2e.sh
