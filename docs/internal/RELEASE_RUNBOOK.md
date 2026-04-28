@@ -47,6 +47,8 @@ Post-deploy: run `pnpm release:staging:validate` locally against staging if need
 
 1. **`resolve-approved-sha`** lists the last 5 successful staging runs (visibility), downloads `approved-release` for the chosen run, runs **`validate_approved_release.mjs`**, and for `workflow_run` requires manifest `sha` === `workflow_run.head_sha`.
 2. **`promote`** (waits on environment **production**): checkout that SHA → verify on `main` → secrets → `pnpm release:gate` (`RELEASE_GATE_LIVE`: `/healthz`, `/ready`, `/v1/usage/today`, dashboard URL checks) → `pnpm deploy:prod` → `pnpm dashboard:deploy:pages` → `pnpm smoke:prod`.
+   - `smoke:prod` prefers `MEMORYNODE_SMOKE_API_KEY` (recommended dedicated key) and falls back to `MEMORYNODE_API_KEY` for backward compatibility.
+   - The dedicated key should belong to a persistent `prod-smoke-tests` workspace with always-active entitlement; otherwise smoke can fail with `ENTITLEMENT_REQUIRED` even when deploy succeeded.
 
 If a step fails, the workflow stops; fix forward with a new commit through staging again.
 

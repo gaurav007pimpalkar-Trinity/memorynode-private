@@ -306,6 +306,8 @@ jobs:
       - name: Post-deploy smoke (production)
         env:
           BASE_URL: ${{ secrets.BASE_URL }}
+          # Optional dedicated smoke identity. Keep MEMORYNODE_API_KEY for backward compatibility.
+          MEMORYNODE_SMOKE_API_KEY: ${{ secrets.MEMORYNODE_SMOKE_API_KEY }}
           MEMORYNODE_API_KEY: ${{ secrets.MEMORYNODE_API_KEY }}
         run: pnpm smoke:prod
 
