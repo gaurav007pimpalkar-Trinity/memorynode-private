@@ -47,9 +47,15 @@ const RECENT_ACCESS_GUARD_DAYS = 7;
 const MIN_COMPRESS_TEXT_CHARS = 180;
 
 let runtimeEnv: Env | null = null;
+let runtimeWorkspaceIds: string[] = [];
 
 export function setMemoryCleanupJobConfig(config: { env: Env }): void {
   runtimeEnv = config.env;
+  const csv = String((config.env as Env & { MEMORY_CLEANUP_WORKSPACE_IDS?: string }).MEMORY_CLEANUP_WORKSPACE_IDS ?? "");
+  runtimeWorkspaceIds = csv
+    .split(",")
+    .map((v) => v.trim())
+    .filter((v) => v.length > 0);
 }
 
 function daysAgoIso(days: number): string {
@@ -387,16 +393,7 @@ export async function runMemoryCleanupJob(): Promise<void> {
   }
 
   const supabase = createServiceRoleSupabaseClient(runtimeEnv);
-  const workspaceRows = await supabase
-    .from("workspaces")
-    .select("id")
-    .order("created_at", { ascending: true })
-    .limit(2000);
-  const workspaceIds = Array.isArray(workspaceRows.data)
-    ? workspaceRows.data
-        .map((row) => String((row as { id?: unknown }).id ?? ""))
-        .filter((id) => id.length > 0)
-    : [];
+  const workspaceIds = [...runtimeWorkspaceIds];
   if (workspaceIds.length === 0) {
     const trace = {
       memory_cleanup: {

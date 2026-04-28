@@ -225,7 +225,7 @@ function applyLearnedAdjustment(
 
 export async function decideMemoryStrategy(input: {
   query: string;
-  metadata?: any;
+  metadata?: Record<string, unknown>;
 }): Promise<BrainDecision> {
   const out = await decideMemoryStrategyWithIntent(input);
   return out.decision;
@@ -233,7 +233,7 @@ export async function decideMemoryStrategy(input: {
 
 export async function decideMemoryStrategyWithIntent(input: {
   query: string;
-  metadata?: any;
+  metadata?: Record<string, unknown>;
 }): Promise<MemoryBrainOutcome> {
   const query = normalizeCacheQuery((input.query ?? "").toString().trim());
   if (!query) {
