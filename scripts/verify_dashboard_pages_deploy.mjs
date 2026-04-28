@@ -25,6 +25,7 @@ function parseCli() {
       "app-origin": { type: "string" },
       attempts: { type: "string" },
       "delay-ms": { type: "string" },
+      "require-expected-sha": { type: "string" },
     },
     allowPositionals: false,
     strict: false,
@@ -36,7 +37,11 @@ function parseCli() {
   const delayRaw = values["delay-ms"] ?? process.env.VERIFY_PAGES_DELAY_MS ?? "4000";
   const maxAttempts = Math.max(1, Math.min(60, parseInt(attemptsRaw, 10) || 8));
   const delayMs = Math.max(500, Math.min(120000, parseInt(delayRaw, 10) || 4000));
-  return { expectedSha, consoleOrigin, appOrigin, maxAttempts, delayMs };
+  const requireExpectedRaw = `${values["require-expected-sha"] ?? process.env.VERIFY_PAGES_REQUIRE_EXPECTED_SHA ?? "1"}`
+    .trim()
+    .toLowerCase();
+  const requireExpectedSha = !["0", "false", "off", "no"].includes(requireExpectedRaw);
+  return { expectedSha, consoleOrigin, appOrigin, maxAttempts, delayMs, requireExpectedSha };
 }
 
 function sleep(ms) {
@@ -86,7 +91,7 @@ async function fetchVersionJson(origin) {
   return { gitSha, surface: (data.surface ?? "").trim() };
 }
 
-async function verifyOnce({ expectedSha, consoleOrigin, appOrigin }) {
+async function verifyOnce({ expectedSha, requireExpectedSha, consoleOrigin, appOrigin }) {
   await httpOk(consoleOrigin + "/", "console home");
   await httpOk(`${appOrigin}/founder`, "app founder");
 
@@ -96,7 +101,7 @@ async function verifyOnce({ expectedSha, consoleOrigin, appOrigin }) {
   if (c.gitSha !== a.gitSha) {
     throw new Error(`version mismatch: console gitSha=${c.gitSha} app gitSha=${a.gitSha}`);
   }
-  if (expectedSha && c.gitSha !== expectedSha) {
+  if (requireExpectedSha && expectedSha && c.gitSha !== expectedSha) {
     throw new Error(`version mismatch: live gitSha=${c.gitSha} expected=${expectedSha}`);
   }
   return c.gitSha;
@@ -105,6 +110,7 @@ async function verifyOnce({ expectedSha, consoleOrigin, appOrigin }) {
 export async function verifyDashboardPagesDeploy(opts = {}) {
   const parsed = parseCli();
   const expectedSha = (opts.expectedSha ?? parsed.expectedSha).trim();
+  const requireExpectedSha = opts.requireExpectedSha ?? parsed.requireExpectedSha;
   const consoleOrigin = opts.consoleOrigin ?? parsed.consoleOrigin;
   const appOrigin = opts.appOrigin ?? parsed.appOrigin;
   const maxAttempts = opts.maxAttempts ?? parsed.maxAttempts;
@@ -113,9 +119,10 @@ export async function verifyDashboardPagesDeploy(opts = {}) {
   let lastErr = /** @type {Error | null} */ (null);
   for (let attempt = 1; attempt <= maxAttempts; attempt++) {
     try {
-      const liveSha = await verifyOnce({ expectedSha, consoleOrigin, appOrigin });
+      const liveSha = await verifyOnce({ expectedSha, requireExpectedSha, consoleOrigin, appOrigin });
       console.log(
-        `[verify_dashboard_pages_deploy] OK (attempt ${attempt}/${maxAttempts}) console=${consoleOrigin} app=${appOrigin} gitSha=${liveSha}`,
+        `[verify_dashboard_pages_deploy] OK (attempt ${attempt}/${maxAttempts}) console=${consoleOrigin} app=${appOrigin} gitSha=${liveSha}` +
+          (requireExpectedSha ? "" : " (expected SHA check disabled)"),
       );
       return true;
     } catch (e) {

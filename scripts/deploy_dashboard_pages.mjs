@@ -154,6 +154,7 @@ function verifyPagesRollout(consolePeek, appPeek) {
       DASHBOARD_VERIFY_APP_ORIGIN: ao,
       VERIFY_PAGES_ATTEMPTS: process.env.VERIFY_PAGES_PEEK_ATTEMPTS ?? "12",
       VERIFY_PAGES_DELAY_MS: process.env.VERIFY_PAGES_PEEK_DELAY_MS ?? "5000",
+      VERIFY_PAGES_REQUIRE_EXPECTED_SHA: "1",
     });
     if (!okPeek) {
       console.error("[deploy_dashboard_pages] Peek URL verification failed — upload or build SHA mismatch.");
@@ -169,6 +170,7 @@ function verifyPagesRollout(consolePeek, appPeek) {
   return runRemoteVerify({
     VERIFY_PAGES_ATTEMPTS: process.env.VERIFY_PAGES_ATTEMPTS ?? "24",
     VERIFY_PAGES_DELAY_MS: process.env.VERIFY_PAGES_DELAY_MS ?? "10000",
+    VERIFY_PAGES_REQUIRE_EXPECTED_SHA: process.env.VERIFY_PAGES_REQUIRE_EXPECTED_SHA ?? "0",
   });
 }
 

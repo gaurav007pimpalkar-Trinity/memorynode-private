@@ -202,6 +202,7 @@ jobs:
       # Dashboard verify: peek URLs first, then custom domains (can lag vs *.pages.dev)
       VERIFY_PAGES_ATTEMPTS: "24"
       VERIFY_PAGES_DELAY_MS: "10000"
+      VERIFY_PAGES_REQUIRE_EXPECTED_SHA: "0"
     steps:
       # Required before local composite action (fresh runner — no implicit checkout).
       - name: Checkout repository
