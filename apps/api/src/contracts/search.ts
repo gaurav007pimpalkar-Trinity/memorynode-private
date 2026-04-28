@@ -6,7 +6,7 @@ import { z } from "zod";
 import { MAX_QUERY_CHARS, MAX_TOPK } from "../limits.js";
 import { OwnerTypeInputSchema } from "./entity.js";
 
-export const MEMORY_TYPES = ["fact", "preference", "event", "note", "task", "correction", "pin"] as const;
+export const MEMORY_TYPES = ["fact", "preference", "event", "note", "task", "correction", "pin", "summary"] as const;
 export type MemoryType = (typeof MEMORY_TYPES)[number];
 
 export const SEARCH_MODES = ["hybrid", "vector", "keyword"] as const;

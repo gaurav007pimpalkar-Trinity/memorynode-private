@@ -144,6 +144,14 @@ export interface RouterHandlers {
     requestId: string,
     deps: HandlerDeps,
   ) => Promise<Response>;
+  handleFeedback: (
+    request: Request,
+    env: Env,
+    supabase: SupabaseClient,
+    auditCtx: AuditCtx,
+    requestId: string,
+    deps: HandlerDeps,
+  ) => Promise<Response>;
   handleUsageToday: (
     request: Request,
     env: Env,
@@ -560,6 +568,10 @@ export async function route(
 
   if (request.method === "POST" && url.pathname === "/v1/context/feedback") {
     return handlers.handleContextFeedback(request, env, supabase, auditCtx, requestId, handlerDeps);
+  }
+
+  if (request.method === "POST" && url.pathname === "/v1/feedback") {
+    return handlers.handleFeedback(request, env, supabase, auditCtx, requestId, handlerDeps);
   }
 
   if (request.method === "GET" && url.pathname === "/v1/pruning/metrics") {

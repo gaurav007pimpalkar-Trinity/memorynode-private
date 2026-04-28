@@ -53,6 +53,17 @@ import {
 } from "../memories/intelligence.js";
 import { createMemoryRevision, detectAndResolveConflict } from "../memories/conflictResolution.js";
 import { evaluateIngestAbuse, writeIngestControlEvent } from "../memories/ingestAbuse.js";
+import {
+  evolveMemory,
+  setMemoryEvolutionConfig,
+  type EvolutionDecision,
+  type MemoryChunk as EvolutionMemoryChunk,
+} from "../memories/evolution.js";
+import {
+  summarizeConversation,
+  setConversationSummarizerConfig,
+  type ConversationSummary,
+} from "../memories/summarizer.js";
 import { updateProfileSnapshot } from "../profile/profileSynthesis.js";
 
 export type { MemoryInsertPayload } from "../contracts/index.js";
@@ -222,9 +233,69 @@ const BANNED_ATTACHMENT_TYPES = new Set([
   "mp4", "webm", "mov", "avi", "mkv", "m4v",
 ]);
 const MAX_ATTACHMENT_BYTES = 10 * 1024 * 1024;
+const CONVERSATION_SUMMARY_MIN_MESSAGES = 20;
+const CONVERSATION_SUMMARY_TOKEN_LIMIT = 1400;
+const CONVERSATION_SUMMARY_COOLDOWN_MINUTES = 30;
+const CONVERSATION_SUMMARY_RECENT_WINDOW_HOURS = 6;
 
 function normalizeTextKey(input: string): string {
   return input.toLowerCase().replace(/\s+/g, " ").trim();
+}
+
+function estimateTokenCount(text: string): number {
+  if (!text) return 0;
+  return Math.ceil(text.length / 4);
+}
+
+function buildSummaryMemoryText(summary: ConversationSummary): string {
+  const lines: string[] = [];
+  if (summary.summary.trim()) lines.push(summary.summary.trim());
+  if (summary.facts.length > 0) lines.push(`Facts: ${summary.facts.join(" | ")}`);
+  if (summary.preferences.length > 0) lines.push(`Preferences: ${summary.preferences.join(" | ")}`);
+  if (summary.open_loops.length > 0) lines.push(`Open loops: ${summary.open_loops.join(" | ")}`);
+  return lines.join("\n");
+}
+
+function hasMeaningfulSummary(summary: ConversationSummary): boolean {
+  if (summary.facts.length === 0 && summary.preferences.length === 0) {
+    return false;
+  }
+  const listCount = summary.facts.length + summary.preferences.length + summary.open_loops.length;
+  if (summary.summary.trim().length >= 48) return true;
+  return listCount >= 2;
+}
+
+async function withConversationSummaryTrace(
+  response: Response,
+  tracePatch: Record<string, unknown>,
+): Promise<Response> {
+  if (!response.ok) return response;
+  const contentType = response.headers.get("content-type") ?? "";
+  if (!contentType.toLowerCase().includes("application/json")) return response;
+  let payload: unknown;
+  try {
+    payload = await response.clone().json();
+  } catch {
+    return response;
+  }
+  if (!payload || typeof payload !== "object" || Array.isArray(payload)) return response;
+  const body = payload as Record<string, unknown>;
+  const nextBody: Record<string, unknown> = {
+    ...body,
+    trace: {
+      ...((body.trace && typeof body.trace === "object" && !Array.isArray(body.trace))
+        ? (body.trace as Record<string, unknown>)
+        : {}),
+      ...tracePatch,
+    },
+  };
+  const headers = new Headers(response.headers);
+  headers.delete("content-length");
+  return new Response(JSON.stringify(nextBody), {
+    status: response.status,
+    statusText: response.statusText,
+    headers,
+  });
 }
 
 async function sha256Hex(input: string): Promise<string> {
@@ -456,6 +527,267 @@ async function extractAndStore(
   }
 }
 
+async function fetchRelatedMemoriesForEvolution(
+  supabase: SupabaseClient,
+  args: {
+    workspaceId: string;
+    userId: string;
+    namespace: string;
+    query: string;
+    excludeMemoryId?: string;
+  },
+): Promise<EvolutionMemoryChunk[]> {
+  const out: EvolutionMemoryChunk[] = [];
+  const ids = new Set<string>();
+  const bySearch = await supabase.rpc("match_chunks_text", {
+    p_workspace_id: args.workspaceId,
+    p_user_id: args.userId,
+    p_namespace: args.namespace,
+    p_query: args.query.slice(0, 2000),
+    p_match_count: 20,
+    p_metadata: null,
+    p_start_time: null,
+    p_end_time: null,
+    p_memory_types: null,
+    p_filter_mode: "and",
+  });
+  const candidateIds = Array.isArray(bySearch.data)
+    ? bySearch.data
+        .map((r) => String((r as { memory_id?: unknown }).memory_id ?? ""))
+        .filter((id) => id.length > 0)
+    : [];
+  for (const id of candidateIds) {
+    if (id && id !== args.excludeMemoryId) ids.add(id);
+    if (ids.size >= 20) break;
+  }
+
+  if (ids.size === 0) {
+    const recent = await supabase
+      .from("memories")
+      .select("id,text,importance,created_at")
+      .eq("workspace_id", args.workspaceId)
+      .eq("user_id", args.userId)
+      .eq("namespace", args.namespace)
+      .is("duplicate_of", null)
+      .order("created_at", { ascending: false })
+      .limit(20);
+    const rows = Array.isArray(recent.data) ? recent.data : [];
+    for (const row of rows) {
+      const id = String((row as { id?: unknown }).id ?? "");
+      if (!id || id === args.excludeMemoryId) continue;
+      out.push({
+        id,
+        text: String((row as { text?: unknown }).text ?? ""),
+        importance: Number((row as { importance?: unknown }).importance ?? 1),
+        timestamp: String((row as { created_at?: unknown }).created_at ?? ""),
+      });
+      if (out.length >= 20) break;
+    }
+    return out;
+  }
+
+  const memRows = await supabase
+    .from("memories")
+    .select("id,text,importance,created_at")
+    .eq("workspace_id", args.workspaceId)
+    .in("id", [...ids]);
+  const rows = Array.isArray(memRows.data) ? memRows.data : [];
+  for (const row of rows) {
+    const id = String((row as { id?: unknown }).id ?? "");
+    if (!id || id === args.excludeMemoryId) continue;
+    out.push({
+      id,
+      text: String((row as { text?: unknown }).text ?? ""),
+      importance: Number((row as { importance?: unknown }).importance ?? 1),
+      timestamp: String((row as { created_at?: unknown }).created_at ?? ""),
+    });
+    if (out.length >= 20) break;
+  }
+  return out;
+}
+
+async function applyEvolutionDecision(
+  supabase: SupabaseClient,
+  d: MemoryHandlerDeps,
+  env: Env,
+  args: {
+    workspaceId: string;
+    userId: string;
+    namespace: string;
+    ownerType: "user" | "team" | "app";
+    currentMemoryId: string;
+    baseText: string;
+    decision: EvolutionDecision;
+  },
+): Promise<{ action_applied: string; target_memory_id?: string; merged_memory_id?: string }> {
+  const decision = args.decision;
+  const MAX_MERGE = 3;
+  if (decision.action === "ignore") return { action_applied: "ignore" };
+  if (decision.action === "create") return { action_applied: "create_existing_flow" };
+
+  if (decision.action === "update") {
+    const targetId = decision.target_memory_ids[0] ?? args.currentMemoryId;
+    const target = await supabase
+      .from("memories")
+      .select("id,text,metadata,memory_type")
+      .eq("workspace_id", args.workspaceId)
+      .eq("id", targetId)
+      .eq("user_id", args.userId)
+      .eq("namespace", args.namespace)
+      .is("duplicate_of", null)
+      .maybeSingle();
+    if (target.error || !target.data) return { action_applied: "update_skipped_missing_target" };
+    const currentMeta = ((target.data as { metadata?: unknown }).metadata ?? {}) as Record<string, unknown>;
+    const nextText = (decision.new_memory_text ?? args.baseText).trim().slice(0, 10000);
+    const memoryType = String((target.data as { memory_type?: unknown }).memory_type ?? "note") as MemoryType;
+    const canonicalHash = await sha256Hex(
+      `${args.workspaceId}:${args.userId}:${args.namespace}:${memoryType}:${normalizeTextForMemoryKey(nextText)}`,
+    );
+    await createMemoryRevision(supabase, {
+      workspaceId: args.workspaceId,
+      memoryId: targetId,
+      text: String((target.data as { text?: unknown }).text ?? ""),
+      metadata: currentMeta,
+      reason: "evolution_update",
+      source: "evolution_engine",
+    });
+    await supabase
+      .from("memories")
+      .update({
+        text: nextText,
+        metadata: {
+          ...currentMeta,
+          _evolution_reason: decision.reason,
+          _evolution_confidence: decision.confidence,
+          _evolution_action: "update",
+        },
+        canonical_hash: canonicalHash,
+        semantic_fingerprint: semanticFingerprintFromText(nextText),
+      })
+      .eq("workspace_id", args.workspaceId)
+      .eq("id", targetId)
+      .is("duplicate_of", null);
+    try {
+      await detectAndResolveConflict(supabase, {
+        workspaceId: args.workspaceId,
+        userId: args.userId,
+        namespace: args.namespace,
+        newMemoryId: targetId,
+        newText: nextText,
+        memoryType,
+        confidence: Math.max(0.1, Math.min(1, decision.confidence)),
+        sourceWeight: 1,
+      });
+    } catch {
+      // best effort conflict pass
+    }
+    return { action_applied: "update", target_memory_id: targetId };
+  }
+
+  const mergeTargets = [...new Set(decision.target_memory_ids)].filter(Boolean).slice(0, MAX_MERGE);
+  if (mergeTargets.length < 2) return { action_applied: "merge_skipped_insufficient_targets" };
+  const rows = await supabase
+    .from("memories")
+    .select("id,text,memory_type")
+    .eq("workspace_id", args.workspaceId)
+    .eq("user_id", args.userId)
+    .eq("namespace", args.namespace)
+    .in("id", mergeTargets)
+    .is("duplicate_of", null);
+  const mergeRows = Array.isArray(rows.data) ? rows.data : [];
+  if (mergeRows.length < 2) return { action_applied: "merge_skipped_targets_missing" };
+  const mergedText = (decision.new_memory_text?.trim() ||
+    mergeRows.map((r) => String((r as { text?: unknown }).text ?? "")).join("\n\n")).slice(0, 10000);
+  const mergedType = String((mergeRows[0] as { memory_type?: unknown }).memory_type ?? "note") as MemoryType;
+  const canonicalHash = await sha256Hex(
+    `${args.workspaceId}:${args.userId}:${args.namespace}:${mergedType}:${normalizeTextForMemoryKey(mergedText)}`,
+  );
+  const existing = await supabase
+    .from("memories")
+    .select("id")
+    .eq("workspace_id", args.workspaceId)
+    .eq("user_id", args.userId)
+    .eq("namespace", args.namespace)
+    .eq("canonical_hash", canonicalHash)
+    .is("duplicate_of", null)
+    .maybeSingle();
+  let mergedMemoryId = String((existing.data as { id?: unknown } | null)?.id ?? "");
+  if (!mergedMemoryId) {
+    const intelligence = computeIntelligenceScore({
+      text: mergedText,
+      memoryType: mergedType,
+      sourceWeight: 1.05,
+      noveltyScore: 0.55,
+    });
+    const inserted = await supabase
+      .from("memories")
+      .insert({
+        workspace_id: args.workspaceId,
+        user_id: args.userId,
+        owner_id: args.userId,
+        owner_type: args.ownerType,
+        namespace: args.namespace,
+        text: mergedText,
+        metadata: {
+          _evolved_merge: true,
+          _merged_from: mergeRows.map((r) => (r as { id?: unknown }).id).filter(Boolean),
+          _evolution_reason: decision.reason,
+        },
+        memory_type: mergedType,
+        importance: Math.max(0.2, 1.2),
+        canonical_hash: canonicalHash,
+        semantic_fingerprint: semanticFingerprintFromText(mergedText),
+        confidence: intelligence.confidence,
+        source_weight: intelligence.sourceWeight,
+        priority_score: intelligence.priorityScore,
+        priority_tier: intelligence.priorityTier,
+        pinned_auto: intelligence.shouldAutoPin,
+        conflict_state: "none",
+      })
+      .select("id")
+      .single();
+    if (inserted.error || !inserted.data) return { action_applied: "merge_failed_insert" };
+    mergedMemoryId = String((inserted.data as { id?: unknown }).id ?? "");
+    if (!mergedMemoryId) return { action_applied: "merge_failed_insert" };
+    const chunks = d.chunkText(mergedText);
+    const embeds = await d.embedText(chunks, env);
+    const chunkRows = chunks.map((chunk, idx) => ({
+      workspace_id: args.workspaceId,
+      memory_id: mergedMemoryId,
+      user_id: args.userId,
+      owner_id: args.userId,
+      owner_type: args.ownerType,
+      namespace: args.namespace,
+      chunk_index: idx,
+      chunk_text: chunk,
+      embedding: d.vectorToPgvectorString(embeds.embeddings[idx]),
+    }));
+    const chunkInsert = await supabase.from("memory_chunks").insert(chunkRows);
+    if (chunkInsert.error) {
+      await supabase.from("memories").delete().eq("workspace_id", args.workspaceId).eq("id", mergedMemoryId);
+      return { action_applied: "merge_failed_chunks" };
+    }
+    await createMemoryRevision(supabase, {
+      workspaceId: args.workspaceId,
+      memoryId: mergedMemoryId,
+      text: mergedText,
+      metadata: {
+        _evolved_merge: true,
+      },
+      reason: "evolution_merge",
+      source: "evolution_engine",
+    });
+  }
+
+  await supabase
+    .from("memories")
+    .update({ duplicate_of: mergedMemoryId })
+    .eq("workspace_id", args.workspaceId)
+    .in("id", mergeRows.map((r) => String((r as { id?: unknown }).id ?? "")).filter((id) => id && id !== mergedMemoryId))
+    .is("duplicate_of", null);
+  return { action_applied: "merge", merged_memory_id: mergedMemoryId };
+}
+
 export function createMemoryHandlers(
   requestDeps: MemoryHandlerDeps,
   defaultDeps: MemoryHandlerDeps,
@@ -609,9 +941,84 @@ export function createMemoryHandlers(
       const ownerId = isolationResolution.isolation.ownerId;
       const ownerType = owner_type ?? "user";
       const namespaceVal = isolationResolution.isolation.containerTag ?? DEFAULT_NAMESPACE;
+      const assistantText =
+        typeof metadata?.assistant === "string"
+          ? metadata.assistant
+          : typeof metadata?.assistant_text === "string"
+            ? metadata.assistant_text
+            : "";
       const effectiveAtIso = effectiveAtRaw?.trim()
         ? new Date(effectiveAtRaw.trim()).toISOString()
         : new Date().toISOString();
+      const runEvolutionForInteraction = async (createdMemoryId: string, currentText: string): Promise<{
+        decision: EvolutionDecision;
+        applied: { action_applied: string; target_memory_id?: string; merged_memory_id?: string };
+      } | null> => {
+        try {
+          setMemoryEvolutionConfig({
+            openaiApiKey: env.OPENAI_API_KEY,
+            model: "gpt-4o-mini",
+          });
+          const relatedMemories = await fetchRelatedMemoriesForEvolution(supabase, {
+            workspaceId: auth.workspaceId,
+            userId: ownerId,
+            namespace: namespaceVal,
+            query: currentText,
+            excludeMemoryId: createdMemoryId,
+          });
+          const decision = await evolveMemory({
+            interaction: {
+              user: currentText,
+              assistant: assistantText,
+            },
+            relatedMemories,
+          });
+          let effectiveDecision: EvolutionDecision = decision;
+          if (
+            effectiveDecision.confidence < 0.7 &&
+            (effectiveDecision.action === "update" || effectiveDecision.action === "merge")
+          ) {
+            effectiveDecision = {
+              ...effectiveDecision,
+              action: "ignore",
+              reason: `${effectiveDecision.reason}|low_confidence_guard`,
+            };
+          }
+          if (effectiveDecision.action === "create") {
+            const semanticFingerprint = semanticFingerprintFromText(currentText);
+            const similar = await supabase
+              .from("memories")
+              .select("id")
+              .eq("workspace_id", auth.workspaceId)
+              .eq("user_id", ownerId)
+              .eq("namespace", namespaceVal)
+              .eq("semantic_fingerprint", semanticFingerprint)
+              .neq("id", createdMemoryId)
+              .is("duplicate_of", null)
+              .limit(1);
+            if (Array.isArray(similar.data) && similar.data.length > 0) {
+              effectiveDecision = {
+                ...effectiveDecision,
+                action: "ignore",
+                reason: `${effectiveDecision.reason}|create_similarity_guard`,
+              };
+            }
+          }
+          console.log("MemoryEvolution decision:", effectiveDecision);
+          const applied = await applyEvolutionDecision(supabase, d, env, {
+            workspaceId: auth.workspaceId,
+            userId: ownerId,
+            namespace: namespaceVal,
+            ownerType,
+            currentMemoryId: createdMemoryId,
+            baseText: currentText,
+            decision: effectiveDecision,
+          });
+          return { decision: effectiveDecision, applied };
+        } catch {
+          return null;
+        }
+      };
 
       if (replaces_memory_id) {
         const { data: repRow, error: repErr } = await supabase
@@ -1116,6 +1523,17 @@ export function createMemoryHandlers(
           if (textOnlyReservationId) {
             await d.markUsageReservationCommitted(supabase, textOnlyReservationId);
           }
+          const evolutionOutcome = await runEvolutionForInteraction(textOnlyMemoryId, text);
+          if (evolutionOutcome) {
+            textOnlyBody.trace = {
+              memory_evolution: evolutionOutcome.decision,
+              memory_evolution_applied: evolutionOutcome.applied,
+              memory_evolution_effect: {
+                action: evolutionOutcome.decision.action,
+                affected_ids: evolutionOutcome.decision.target_memory_ids,
+              },
+            };
+          }
 
           return jsonResponse(textOnlyBody, 200, {
             ...concurrencyHeaders,
@@ -1433,6 +1851,17 @@ export function createMemoryHandlers(
             response.safety = { pii_hints };
           }
         }
+        const evolutionOutcome = await runEvolutionForInteraction(memoryId, text);
+        if (evolutionOutcome) {
+          response.trace = {
+            memory_evolution: evolutionOutcome.decision,
+            memory_evolution_applied: evolutionOutcome.applied,
+            memory_evolution_effect: {
+              action: evolutionOutcome.decision.action,
+              affected_ids: evolutionOutcome.decision.target_memory_ids,
+            },
+          };
+        }
 
         if (reservationId) {
           await d.markUsageReservationCommitted(supabase, reservationId);
@@ -1489,7 +1918,118 @@ export function createMemoryHandlers(
         headers: request.headers,
         body: JSON.stringify(body),
       });
-      return handleCreateMemoryImpl(forwarded, env, supabase, auditCtx, requestId, deps);
+      const baseResponse = await handleCreateMemoryImpl(forwarded, env, supabase, auditCtx, requestId, deps);
+
+      const allMessages = Array.isArray(p.messages) ? p.messages : [];
+      const summarizerMessages = allMessages
+        .filter((m) => (m.role === "user" || m.role === "assistant") && typeof m.content === "string")
+        .map((m) => ({ role: m.role as "user" | "assistant", content: m.content.trim() }))
+        .filter((m) => m.content.length > 0);
+      const tokenEstimate = estimateTokenCount(p.text);
+      const shouldSummarize = summarizerMessages.length > CONVERSATION_SUMMARY_MIN_MESSAGES
+        || tokenEstimate > CONVERSATION_SUMMARY_TOKEN_LIMIT;
+
+      if (!shouldSummarize || summarizerMessages.length < 6 || !env.OPENAI_API_KEY) {
+        return withConversationSummaryTrace(baseResponse, { conversation_summary_status: "not_triggered" });
+      }
+
+      let auth: AuthContext;
+      try {
+        auth = await authenticate(request, env, supabase, auditCtx);
+      } catch {
+        return withConversationSummaryTrace(baseResponse, { conversation_summary_status: "not_triggered" });
+      }
+      const namespace = (typeof p.namespace === "string" && p.namespace.trim()) ? p.namespace.trim() : DEFAULT_NAMESPACE;
+      const nowMs = Date.now();
+      const cooldownSince = new Date(nowMs - CONVERSATION_SUMMARY_COOLDOWN_MINUTES * 60 * 1000).toISOString();
+      const recentSince = new Date(nowMs - CONVERSATION_SUMMARY_RECENT_WINDOW_HOURS * 60 * 60 * 1000).toISOString();
+
+      const recentSummaries = await supabase
+        .from("memories")
+        .select("id, text, semantic_fingerprint, created_at")
+        .eq("workspace_id", auth.workspaceId)
+        .eq("user_id", p.owner_id)
+        .eq("namespace", namespace)
+        .eq("memory_type", "summary")
+        .is("duplicate_of", null)
+        .gte("created_at", recentSince)
+        .order("created_at", { ascending: false })
+        .limit(12);
+      const recentSummaryRows = Array.isArray(recentSummaries.data) ? recentSummaries.data : [];
+      const inCooldown = recentSummaryRows.some((row) =>
+        typeof row.created_at === "string" && row.created_at >= cooldownSince
+      );
+      if (inCooldown) {
+        return withConversationSummaryTrace(baseResponse, { conversation_summary_status: "cooldown_skipped" });
+      }
+
+      setConversationSummarizerConfig({
+        openaiApiKey: env.OPENAI_API_KEY,
+        model: "gpt-4o-mini",
+      });
+      const summary = await summarizeConversation({
+        messages: summarizerMessages,
+      });
+      if (!hasMeaningfulSummary(summary)) {
+        return withConversationSummaryTrace(baseResponse, { conversation_summary_status: "not_triggered" });
+      }
+
+      const summaryText = buildSummaryMemoryText(summary);
+      if (!summaryText.trim()) {
+        return withConversationSummaryTrace(baseResponse, { conversation_summary_status: "not_triggered" });
+      }
+      const summaryFingerprint = semanticFingerprintFromText(summaryText);
+      const summaryKey = normalizeTextKey(summaryText);
+      const isDuplicate = recentSummaryRows.some((row) => {
+        const rowFp = typeof row.semantic_fingerprint === "string" ? row.semantic_fingerprint : "";
+        if (rowFp && rowFp === summaryFingerprint) return true;
+        const rowText = typeof row.text === "string" ? normalizeTextKey(row.text) : "";
+        if (!rowText) return false;
+        return rowText.includes(summaryKey) || summaryKey.includes(rowText);
+      });
+      if (isDuplicate) {
+        return withConversationSummaryTrace(baseResponse, {
+          conversation_summary: summary,
+          conversation_summary_status: "duplicate_skipped",
+        });
+      }
+
+      const summaryMeta = {
+        source: "conversation_summary",
+        summary,
+        summarized_message_count: summarizerMessages.length,
+        summarized_token_estimate: tokenEstimate,
+      };
+      const summaryBody: Record<string, unknown> = {
+        user_id: p.user_id,
+        owner_id: p.owner_id,
+        owner_type: p.owner_type,
+        userId: p.user_id,
+        text: summaryText,
+        memory_type: "summary",
+        chunk_profile: "dense",
+        extract: false,
+        metadata: summaryMeta,
+        namespace,
+        importance: Math.max(85, Number(p.importance ?? 85)),
+      };
+      if (p.containerTag?.trim()) summaryBody.containerTag = p.containerTag.trim();
+      if (p.scope?.trim()) summaryBody.scope = p.scope.trim();
+      if (p.entity_id?.trim()) summaryBody.entity_id = p.entity_id.trim();
+      if (p.entity_type) summaryBody.entity_type = p.entity_type;
+      const summaryRequest = new Request(memUrl.toString(), {
+        method: "POST",
+        headers: request.headers,
+        body: JSON.stringify(summaryBody),
+      });
+      const summaryResponse = await handleCreateMemoryImpl(summaryRequest, env, supabase, auditCtx, requestId, deps);
+      if (summaryResponse.ok) {
+        console.log("Conversation summarized");
+      }
+      return withConversationSummaryTrace(baseResponse, {
+        conversation_summary: summary,
+        conversation_summary_status: summaryResponse.ok ? "created" : "not_triggered",
+      });
     },
 
     async handleListMemories(request, env, supabase, url, auditCtx, requestId = "", deps?) {

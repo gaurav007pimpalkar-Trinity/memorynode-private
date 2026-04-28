@@ -28,6 +28,7 @@ const MEMORY_TYPE_BASE_PRIORITY: Record<MemoryType, number> = {
   task: 0.68,
   correction: 0.8,
   pin: 0.9,
+  summary: 0.72,
 };
 
 export function normalizeTextForMemoryKey(text: string): string {
@@ -170,7 +171,7 @@ export function deterministicExtractFallback(text: string): ExtractedCandidate[]
 }
 
 export function normalizeExtractedCandidates(items: unknown[]): ExtractedCandidate[] {
-  const validTypes: MemoryType[] = ["fact", "preference", "event", "note", "task", "correction", "pin"];
+  const validTypes: MemoryType[] = ["fact", "preference", "event", "note", "task", "correction", "pin", "summary"];
   const out: ExtractedCandidate[] = [];
   for (const item of items) {
     if (!item || typeof item !== "object") continue;

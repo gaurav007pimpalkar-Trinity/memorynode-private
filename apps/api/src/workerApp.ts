@@ -149,6 +149,10 @@ import type { SearchPayload } from "./contracts/search.js";
 import type { MetadataFilter } from "./search/normalizeRequest.js";
 import { normalizeSearchPayload, normalizeMemoryListParams } from "./search/normalizeRequest.js";
 import type { MemoryListParams } from "./handlers/memories.js";
+import { decideMemoryStrategyWithIntent, type BrainDecision } from "./brain/memoryBrain.js";
+import { rerankMemories, setRerankerConfig } from "./retrieval/reranker.js";
+import { getLearnedAdjustmentForQuery } from "./learning/feedback.js";
+import { getLlmCacheMetrics, setLlmCacheDisabled } from "./cache/llmCache.js";
 
 function parseApiKeyMeta(raw: string): { prefix: string; last4: string } {
   const parts = raw.split("_");
@@ -170,6 +174,85 @@ const MEMORIES_MAX_BODY_BYTES = 1_000_000; // 1 MB for ingest
 const SEARCH_MAX_BODY_BYTES = 200_000; // 200 KB for search/context
 const ADMIN_MAX_BODY_BYTES = 100_000; // 100 KB for admin/control plane ops
 const RRF_K = 60;
+const SUMMARY_RESULT_SHARE_CAP = 0.35;
+const SUMMARY_EXTRA_DECAY_PER_DAY = 0.012;
+let llmMonthlyUsageCounter = 0;
+let llmMonthlyUsageCounterMonth = new Date().toISOString().slice(0, 7);
+const llmUsageByWorkspace = new Map<string, { month: string; usage: number; fetchedAt: number }>();
+
+function getLlmMonthlyCounterState(): { month: string; usage: number } {
+  const month = new Date().toISOString().slice(0, 7);
+  if (month !== llmMonthlyUsageCounterMonth) {
+    llmMonthlyUsageCounterMonth = month;
+    llmMonthlyUsageCounter = 0;
+  }
+  return { month, usage: llmMonthlyUsageCounter };
+}
+
+function consumeLlmMonthlyUsage(units: number): void {
+  const { usage } = getLlmMonthlyCounterState();
+  llmMonthlyUsageCounter = usage + Math.max(0, Math.floor(units));
+}
+
+function normalizeQueryForBudget(query: string): string {
+  return query.toLowerCase().replace(/[^\w\s]/g, " ").replace(/\s+/g, " ").trim();
+}
+
+function rerankerThrottleByRatio(query: string, ratio: number): boolean {
+  if (ratio <= 0.7) return false;
+  if (ratio <= 0.85) {
+    let hash = 0;
+    for (const ch of normalizeQueryForBudget(query)) hash = (hash * 31 + ch.charCodeAt(0)) >>> 0;
+    return (hash % 3) === 0;
+  }
+  if (ratio <= 0.95) return false;
+  return true;
+}
+
+async function getPersistedLlmMonthlyUsage(
+  supabase: SupabaseClient,
+  workspaceId: string,
+): Promise<number> {
+  const month = new Date().toISOString().slice(0, 7);
+  const cached = llmUsageByWorkspace.get(workspaceId);
+  if (cached && cached.month === month && (Date.now() - cached.fetchedAt) < 60_000) return cached.usage;
+  const row = await supabase
+    .from("llm_usage_monthly")
+    .select("llm_calls")
+    .eq("workspace_id", workspaceId)
+    .eq("month", month)
+    .maybeSingle();
+  const usage = Math.max(0, Number((row.data as { llm_calls?: unknown } | null)?.llm_calls ?? 0));
+  llmUsageByWorkspace.set(workspaceId, { month, usage, fetchedAt: Date.now() });
+  return usage;
+}
+
+function recordPersistedLlmUsageDelta(
+  supabase: SupabaseClient,
+  workspaceId: string,
+  delta: number,
+): void {
+  const month = new Date().toISOString().slice(0, 7);
+  const inc = Math.max(0, Math.floor(delta));
+  if (inc <= 0) return;
+  const cached = llmUsageByWorkspace.get(workspaceId);
+  const base = cached && cached.month === month ? cached.usage : 0;
+  llmUsageByWorkspace.set(workspaceId, { month, usage: base + inc, fetchedAt: Date.now() });
+  void (async () => {
+    try {
+      await supabase
+        .from("llm_usage_monthly")
+        .upsert({
+          workspace_id: workspaceId,
+          month,
+          llm_calls: base + inc,
+          updated_at: new Date().toISOString(),
+        }, { onConflict: "workspace_id,month" });
+    } catch {
+      // best effort only
+    }
+  })();
+}
 const DEFAULT_SUCCESS_PATH = "/billing?status=success";
 const DEFAULT_CANCEL_PATH = "/billing?status=canceled";
 
@@ -3189,6 +3272,13 @@ type FusionResult = {
   };
 };
 
+type MemoryRetrievalAttrs = {
+  memory_type?: string | null;
+  effective_at?: string | null;
+  created_at?: string | null;
+  importance?: number | null;
+};
+
 async function callMatchVector(
   supabase: SupabaseClient,
   args: {
@@ -3389,6 +3479,111 @@ export function dedupeFusionResults(results: FusionResult[]): FusionResult[] {
   return deduped;
 }
 
+async function loadMemoryRetrievalAttrs(
+  supabase: SupabaseClient,
+  workspaceId: string,
+  memoryIds: string[],
+): Promise<Map<string, MemoryRetrievalAttrs>> {
+  const uniqueIds = [...new Set(memoryIds.filter((id) => typeof id === "string" && id.length > 0))];
+  const out = new Map<string, MemoryRetrievalAttrs>();
+  if (uniqueIds.length === 0) return out;
+  const { data, error } = await supabase
+    .from("memories")
+    .select("id,memory_type,effective_at,created_at,importance")
+    .eq("workspace_id", workspaceId)
+    .in("id", uniqueIds);
+  if (error || !Array.isArray(data)) return out;
+  for (const row of data) {
+    const id = String((row as { id?: unknown }).id ?? "");
+    if (!id) continue;
+    out.set(id, {
+      memory_type: (row as { memory_type?: string | null }).memory_type ?? null,
+      effective_at: (row as { effective_at?: string | null }).effective_at ?? null,
+      created_at: (row as { created_at?: string | null }).created_at ?? null,
+      importance: (row as { importance?: number | null }).importance ?? null,
+    });
+  }
+  return out;
+}
+
+function parseIsoMs(value?: string | null): number | null {
+  if (!value) return null;
+  const ms = Date.parse(value);
+  return Number.isFinite(ms) ? ms : null;
+}
+
+function applySummaryFreshnessDecay(
+  ordered: FusionResult[],
+  attrsByMemoryId: Map<string, MemoryRetrievalAttrs>,
+): { results: FusionResult[]; decayedCount: number } {
+  let decayedCount = 0;
+  const nowMs = Date.now();
+  const rescored = ordered.map((row) => {
+    const attrs = attrsByMemoryId.get(row.memory_id);
+    if ((attrs?.memory_type ?? null) !== "summary") return row;
+    const basisMs = parseIsoMs(attrs?.effective_at) ?? parseIsoMs(attrs?.created_at) ?? nowMs;
+    const ageDays = Math.max(0, (nowMs - basisMs) / (1000 * 60 * 60 * 24));
+    const multiplier = Math.exp(-SUMMARY_EXTRA_DECAY_PER_DAY * ageDays);
+    decayedCount += 1;
+    return {
+      ...row,
+      score: row.score * multiplier,
+    };
+  });
+  rescored.sort((a, b) => {
+    const diff = b.score - a.score;
+    if (Math.abs(diff) > 1e-12) return diff;
+    return a.chunk_id.localeCompare(b.chunk_id);
+  });
+  return { results: rescored, decayedCount };
+}
+
+function enforceSummaryShareCap(
+  ordered: FusionResult[],
+  attrsByMemoryId: Map<string, MemoryRetrievalAttrs>,
+  capWindow: number,
+): { results: FusionResult[]; summariesInWindow: number; summaryCap: number; demotedSummaries: number } {
+  const windowSize = Math.max(1, Math.min(capWindow, ordered.length));
+  const summaryCap = Math.max(1, Math.floor(windowSize * SUMMARY_RESULT_SHARE_CAP));
+  const out = ordered.slice();
+  let summariesInWindow = 0;
+  let demotedSummaries = 0;
+
+  const isSummaryAt = (idx: number): boolean => {
+    const attrs = attrsByMemoryId.get(out[idx].memory_id);
+    return (attrs?.memory_type ?? null) === "summary";
+  };
+
+  for (let i = 0; i < windowSize; i++) {
+    if (!isSummaryAt(i)) continue;
+    summariesInWindow += 1;
+    if (summariesInWindow <= summaryCap) continue;
+    let swapIdx = -1;
+    for (let j = windowSize; j < out.length; j++) {
+      if (!isSummaryAt(j)) {
+        swapIdx = j;
+        break;
+      }
+    }
+    if (swapIdx === -1) continue;
+    const temp = out[i];
+    out[i] = out[swapIdx];
+    out[swapIdx] = temp;
+    summariesInWindow -= 1;
+    demotedSummaries += 1;
+  }
+
+  const finalSummariesInWindow = out
+    .slice(0, windowSize)
+    .filter((row) => (attrsByMemoryId.get(row.memory_id)?.memory_type ?? null) === "summary").length;
+  return {
+    results: out,
+    summariesInWindow: finalSummariesInWindow,
+    summaryCap,
+    demotedSummaries,
+  };
+}
+
 type SearchOutcome = {
   results: FusionResult[];
   total: number;
@@ -3440,6 +3635,40 @@ export function finalizeResults(
   return { results: paged, total, has_more: offset + page_size < total };
 }
 
+function mapBrainStrategyToSearchMode(
+  strategy: BrainDecision["strategy"],
+): "hybrid" | "vector" | "keyword" {
+  if (strategy === "focused") return "vector";
+  if (strategy === "broad") return "hybrid";
+  if (strategy === "recent-first") return "hybrid";
+  if (strategy === "important-first") return "hybrid";
+  return "hybrid";
+}
+
+function adjustMinScoreWithBrain(
+  base: number | undefined,
+  priorities: BrainDecision["priorities"],
+): number | undefined {
+  let adjusted = base;
+  const hasImportance = priorities.includes("importance");
+  const hasRecency = priorities.includes("recency");
+  const hasSemantic = priorities.includes("semantic");
+
+  if (hasImportance) {
+    adjusted = adjusted == null ? 0.22 : Math.max(adjusted, 0.22);
+  }
+  if (hasRecency) {
+    adjusted = adjusted == null ? 0.12 : Math.min(adjusted, 0.22);
+  }
+  if (hasSemantic && !hasImportance && !hasRecency) {
+    adjusted = adjusted ?? 0.1;
+  }
+  if (adjusted != null) {
+    adjusted = Math.max(0, Math.min(1, adjusted));
+  }
+  return adjusted;
+}
+
 async function performSearch(
   auth: AuthContext,
   payload: SearchPayload,
@@ -3447,11 +3676,81 @@ async function performSearch(
   supabase: SupabaseClient,
 ): Promise<SearchOutcome> {
   const searchStart = Date.now();
+  setLlmCacheDisabled(String(env.DISABLE_LLM_CACHE ?? "false").toLowerCase() === "true");
+  const cacheMetricsBefore = getLlmCacheMetrics();
   const params = normalizeSearchPayload(payload);
   const { user_id, query, namespace, top_k, page, page_size, explain, search_mode, min_score, filters, retrieval_profile } =
     params;
+  const learnedAdjustment = await getLearnedAdjustmentForQuery(supabase, auth.workspaceId, query);
+  const brain = await decideMemoryStrategyWithIntent({
+    query,
+    metadata: {
+      openaiApiKey: env.OPENAI_API_KEY,
+      enable_brain: env.ENABLE_BRAIN ?? "true",
+      enable_intent: env.ENABLE_INTENT ?? "true",
+      requested_top_k: top_k,
+      requested_search_mode: search_mode,
+      retrieval_profile,
+      learned_adjustment: learnedAdjustment,
+      constraints: {
+        max_top_k: MAX_FUSE_RESULTS,
+      },
+    },
+  });
+  const { decision, intent } = brain;
+  if (brain.path === "cold") consumeLlmMonthlyUsage(1);
+  console.log("MemoryBrain decision:", decision);
+  const topK = Math.min(Math.max(decision.top_k, 3), 20);
+  const allowedStrategies = ["broad", "focused", "recent-first", "important-first", "hybrid"] as const;
+  const strategy = allowedStrategies.includes(decision.strategy)
+    ? decision.strategy
+    : "hybrid";
 
-  const needsVector = search_mode === "hybrid" || search_mode === "vector";
+  if (!decision.use_memory) {
+    return {
+      results: [],
+      total: 0,
+      page,
+      page_size,
+      has_more: false,
+      retrieval_trace: {
+        search_mode,
+        retrieval_profile,
+        effective_min_score: min_score ?? null,
+        vector_candidates: 0,
+        text_candidates: 0,
+        fused_count: 0,
+        after_min_score_count: 0,
+        result_total: 0,
+        latency_ms: Date.now() - searchStart,
+        memory_brain: decision,
+        trace: { memory_brain: decision, intent },
+        intent,
+        retrieval_skipped: "memory_brain_use_memory_false",
+      },
+    };
+  }
+
+  const strategySearchMode = mapBrainStrategyToSearchMode(strategy);
+  const effectiveSearchMode = strategySearchMode === "hybrid" ? search_mode : strategySearchMode;
+  const persistedUsage = await getPersistedLlmMonthlyUsage(supabase, auth.workspaceId);
+  const llmCounterState = getLlmMonthlyCounterState();
+  const llmThreshold = Number(env.LLM_MONTHLY_CALL_THRESHOLD ?? 120_000);
+  const effectiveUsage = Math.max(llmCounterState.usage, persistedUsage);
+  const llmBudgetRatio = Number.isFinite(llmThreshold) && llmThreshold > 0
+    ? Math.max(0, Math.min(2, effectiveUsage / llmThreshold))
+    : 0;
+  const llmBudgetExceeded = llmBudgetRatio >= 1;
+  const topKBudgetCap = llmBudgetRatio > 0.85 ? 10 : (llmBudgetRatio > 0.7 ? 14 : 20);
+  const effectiveTopKRaw = Math.min(topK, topKBudgetCap);
+  const effectiveTopK = Math.max(1, Math.min(MAX_FUSE_RESULTS, effectiveTopKRaw));
+  const learnedMinScoreDelta = Number(learnedAdjustment?.min_score_delta ?? 0);
+  const minScoreWithLearning = Number.isFinite(learnedMinScoreDelta)
+    ? Math.max(0, Math.min(1, (min_score ?? 0) + Math.max(0, learnedMinScoreDelta)))
+    : min_score;
+  const effectiveMinScore = adjustMinScoreWithBrain(minScoreWithLearning, decision.priorities);
+
+  const needsVector = effectiveSearchMode === "hybrid" || effectiveSearchMode === "vector";
   if (needsVector) {
     try {
       await checkGlobalCostGuard(supabase, env);
@@ -3463,10 +3762,10 @@ async function performSearch(
     }
   }
 
-  const desired = Math.min(MAX_FUSE_RESULTS, Math.max(top_k, page * page_size));
+  const desired = Math.min(MAX_FUSE_RESULTS, Math.max(effectiveTopK, page * page_size));
   const matchCount = Math.min(SEARCH_MATCH_COUNT, desired * 3);
 
-  const needsKeyword = search_mode === "hybrid" || search_mode === "keyword";
+  const needsKeyword = effectiveSearchMode === "hybrid" || effectiveSearchMode === "keyword";
 
   const sharedArgs = {
     workspaceId: auth.workspaceId,
@@ -3506,11 +3805,76 @@ async function performSearch(
     !!explain,
   );
 
-  const scored = min_score != null
-    ? fused.filter((r) => r.score >= min_score)
+  const scored = effectiveMinScore != null
+    ? fused.filter((r) => r.score >= effectiveMinScore)
     : fused;
-
-  const final = finalizeResults(scored, page, page_size);
+  const deduped = dedupeFusionResults(scored);
+  let ordered = deduped;
+  let rerankerApplied = false;
+  let llmCallsThisRequest = brain.path === "cold" ? 1 : 0;
+  const rerankEnabledBase = (env.ENABLE_RERANK ?? "false").toLowerCase() === "true";
+  const rerankDisabledByBudget = llmBudgetRatio > 0.95;
+  const rerankThrottleBudget = rerankerThrottleByRatio(query, llmBudgetRatio);
+  const rerankEnabled = rerankEnabledBase && !rerankDisabledByBudget && !rerankThrottleBudget;
+  const rerankHead = ordered.slice(0, 15);
+  const topScore = rerankHead[0]?.score ?? 0;
+  const secondScore = rerankHead[1]?.score ?? 0;
+  const scoreGap = Math.max(0, topScore - secondScore);
+  const rerankConfidenceSkip = topScore > 0.85 && scoreGap > 0.1;
+  const rerankTooSmallSkip = rerankHead.length < 5;
+  const hotPathSkip = brain.path === "hot" && intent.confidence > 0.85;
+  if (rerankEnabled && !rerankTooSmallSkip && !rerankConfidenceSkip && !hotPathSkip && ordered.length > 1) {
+    setRerankerConfig({
+      openaiApiKey: env.OPENAI_API_KEY,
+      model: "gpt-4o-mini",
+    });
+    const rerankInput = rerankHead.map((row) => ({
+      id: row.chunk_id,
+      text: row.text,
+      importance: null,
+      timestamp: null,
+      row,
+    }));
+    const rerankedHead = await rerankMemories({
+      query,
+      candidates: rerankInput,
+    });
+    const mappedHead = rerankedHead.map((r) => r.row);
+    ordered = [...mappedHead, ...ordered.slice(rerankInput.length)];
+    rerankerApplied = true;
+    llmCallsThisRequest += 1;
+    consumeLlmMonthlyUsage(1);
+    console.log("Reranker applied");
+  }
+  if (brain.path === "cold") recordPersistedLlmUsageDelta(supabase, auth.workspaceId, 1);
+  if (rerankerApplied) recordPersistedLlmUsageDelta(supabase, auth.workspaceId, 1);
+  const attrsByMemoryId = await loadMemoryRetrievalAttrs(
+    supabase,
+    auth.workspaceId,
+    ordered.map((row) => row.memory_id),
+  );
+  const decayOutcome = applySummaryFreshnessDecay(ordered, attrsByMemoryId);
+  ordered = decayOutcome.results;
+  const capOutcome = enforceSummaryShareCap(
+    ordered,
+    attrsByMemoryId,
+    Math.max(effectiveTopK, page_size),
+  );
+  ordered = capOutcome.results;
+  const lowImportancePenalty = learnedAdjustment?.low_importance_penalty === true;
+  if (lowImportancePenalty && ordered.length > 0) {
+    ordered = ordered.filter((row) => {
+      const importance = Number(attrsByMemoryId.get(row.memory_id)?.importance ?? 1);
+      return !Number.isFinite(importance) || importance >= 35;
+    });
+  }
+  const offset = (page - 1) * page_size;
+  const paged = ordered.slice(offset, offset + page_size);
+  const final = {
+    results: paged,
+    total: ordered.length,
+    has_more: offset + page_size < ordered.length,
+  };
 
   if (final.results.length > 0) {
     bumpChunkAccess(supabase, auth.workspaceId, final.results.map((r) => r.chunk_id));
@@ -3518,25 +3882,62 @@ async function performSearch(
   }
 
   const searchLatency = Date.now() - searchStart;
+  const cacheMetricsAfter = getLlmCacheMetrics();
+  const cacheHitDelta = Math.max(0, cacheMetricsAfter.hits - cacheMetricsBefore.hits);
+  const cacheLookupDelta = Math.max(0, cacheMetricsAfter.lookups - cacheMetricsBefore.lookups);
+  const cacheHitRate = cacheLookupDelta > 0 ? cacheHitDelta / cacheLookupDelta : 0;
   logger.info({
     event: "search_request",
     search_latency_ms: searchLatency,
-    search_mode,
+    search_mode: effectiveSearchMode,
     result_count: final.total,
     page,
     page_size,
   });
 
   const retrieval_trace: Record<string, unknown> = {
-    search_mode,
+    search_mode: effectiveSearchMode,
     retrieval_profile,
-    effective_min_score: min_score ?? null,
+    effective_min_score: effectiveMinScore ?? null,
     vector_candidates: vectorResults.length,
     text_candidates: textResults.length,
     fused_count: fused.length,
     after_min_score_count: scored.length,
+    deduped_count: deduped.length,
     result_total: final.total,
     latency_ms: searchLatency,
+    memory_brain: decision,
+    trace: { memory_brain: decision, intent },
+    memory_brain_top_k: effectiveTopK,
+    intent,
+    reranker_applied: rerankerApplied,
+    reranker_enabled: rerankEnabled,
+    reranker_enabled_base: rerankEnabledBase,
+    reranker_skipped_budget: rerankDisabledByBudget || rerankThrottleBudget,
+    reranker_throttled_budget_window: rerankThrottleBudget,
+    reranker_skipped_small_candidate_set: rerankTooSmallSkip,
+    reranker_skipped_high_confidence_head: rerankConfidenceSkip,
+    reranker_head_top_score: topScore,
+    reranker_head_score_gap: scoreGap,
+    reranker_skipped_hot_path: hotPathSkip,
+    llm_monthly_usage_counter: Math.max(getLlmMonthlyCounterState().usage, persistedUsage),
+    llm_budget_threshold: llmThreshold,
+    llm_budget_exceeded: llmBudgetExceeded,
+    llm_budget_ratio: llmBudgetRatio,
+    llm_calls_per_request: llmCallsThisRequest,
+    llm_cache_hits: cacheHitDelta,
+    llm_cache_lookups: cacheLookupDelta,
+    llm_cache_hit_rate: cacheHitRate,
+    reranker_skipped_rate: (!rerankerApplied && rerankEnabledBase) ? 1 : 0,
+    summary_extra_decay_per_day: SUMMARY_EXTRA_DECAY_PER_DAY,
+    summary_decay_applied_count: decayOutcome.decayedCount,
+    summary_share_cap: SUMMARY_RESULT_SHARE_CAP,
+    summary_cap_applied_window: Math.max(effectiveTopK, page_size),
+    summary_count_in_capped_window: capOutcome.summariesInWindow,
+    summary_cap_count: capOutcome.summaryCap,
+    summary_demoted_count: capOutcome.demotedSummaries,
+    learned_adjustment: learnedAdjustment ?? null,
+    learned_low_importance_penalty_applied: lowImportancePenalty,
   };
 
   return {
@@ -4196,6 +4597,7 @@ export const handleSearch = searchHandlersDefault.handleSearch;
 export const handleListSearchHistory = searchHandlersDefault.handleListSearchHistory;
 export const handleReplaySearch = searchHandlersDefault.handleReplaySearch;
 export const handleContextFeedback = searchHandlersDefault.handleContextFeedback;
+export const handleFeedback = searchHandlersDefault.handleFeedback;
 export const handlePruningMetrics = pruningHandlersDefault.handlePruningMetrics;
 export const handleExplainAnswer = explainHandlersDefault.handleExplainAnswer;
 export const handleCreateEvalSet = evalHandlersDefault.handleCreateEvalSet;

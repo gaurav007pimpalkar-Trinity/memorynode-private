@@ -25,6 +25,7 @@ import { requireWorkspaceId } from "../supabaseScoped.js";
 import { enforceIsolation } from "../middleware/isolation.js";
 import { logger } from "../logger.js";
 import { budgetContextBlocks, applyCostAwareRetrievalCap } from "../search/contextBudget.js";
+import { recordFeedbackWithClient } from "../learning/feedback.js";
 
 export type ContextHandlerDeps = SearchHandlerDeps;
 
@@ -313,6 +314,7 @@ export function createContextHandlers(
       const reservationId = reserveResult.reservationId;
 
       let outcome;
+      const contextStartMs = Date.now();
       try {
         outcome = await d.performSearch(auth, parseResult.data, env, supabase);
       } catch (err) {
@@ -365,6 +367,25 @@ export function createContextHandlers(
         { body_bytes: Number(request.headers.get("content-length") ?? "0") || undefined },
         true,
       );
+      void d.emitProductEvent(
+        supabase,
+        "context_executed",
+        {
+          workspaceId: auth.workspaceId,
+          requestId,
+          route: "/v1/context",
+          method: "POST",
+          status: 200,
+          effectivePlan: d.effectivePlan(auth.plan, auth.planStatus),
+          planStatus: auth.planStatus,
+        },
+        {
+          avg_retrieved_count: outcome.results.length,
+          reranker_usage_rate: outcome.retrieval_trace?.reranker_applied === true ? 1 : 0,
+          summary_usage_rate: Number(outcome.retrieval_trace?.summary_count_in_capped_window ?? 0) > 0 ? 1 : 0,
+          result_total: outcome.total,
+        },
+      );
 
       if (reservationId) {
         await d.markUsageReservationCommitted(supabase, reservationId);
@@ -402,6 +423,12 @@ export function createContextHandlers(
           message: e instanceof Error ? e.message : String(e),
         });
       }
+      void recordFeedbackWithClient(supabase, auth.workspaceId, requestId, {
+        query: parseResult.data.query,
+        retrieved_memory_ids: [...new Set(outcome.results.map((r) => r.memory_id))],
+        final_response: lines.join("\n\n").slice(0, 8000),
+        latency_ms: Date.now() - contextStartMs,
+      });
       return jsonResponse(
         {
           context_text: lines.join("\n\n"),

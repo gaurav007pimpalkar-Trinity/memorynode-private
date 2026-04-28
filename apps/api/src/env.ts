@@ -18,6 +18,16 @@ export interface Env {
   EMBEDDINGS_MODE?: string;
   /** OpenAI embedding model id (default text-embedding-3-small). For text-embedding-3-large, worker sends dimensions=1536 to match pgvector(1536). */
   EMBEDDING_MODEL?: string;
+  /** Optional feature flag for post-retrieval LLM reranking (`true` to enable). */
+  ENABLE_RERANK?: string;
+  /** Optional feature flag for Memory Brain LLM decision layer (`true` default). */
+  ENABLE_BRAIN?: string;
+  /** Optional feature flag for intent classifier (`true` default). */
+  ENABLE_INTENT?: string;
+  /** Optional soft cap for monthly LLM calls; beyond this, costly paths are reduced. */
+  LLM_MONTHLY_CALL_THRESHOLD?: string;
+  /** Emergency kill-switch for all LLM cache reads/writes (`true` to disable). */
+  DISABLE_LLM_CACHE?: string;
   SUPABASE_MODE?: string;
   /** Access posture marker: service-role-only | rpc-first | rls-first. */
   SUPABASE_ACCESS_MODE?: string;

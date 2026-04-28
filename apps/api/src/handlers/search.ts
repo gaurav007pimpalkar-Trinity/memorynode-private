@@ -16,6 +16,7 @@ import type { QuotaResolutionLike } from "./memories.js";
 import { enforceIsolation } from "../middleware/isolation.js";
 import type { BoundedContextProfile } from "../profile/boundedProfile.js";
 import { applyCostAwareRetrievalCap } from "../search/contextBudget.js";
+import { recordFeedbackWithClient, updateFeedbackByRequestId } from "../learning/feedback.js";
 
 export type { SearchPayload } from "../contracts/index.js";
 
@@ -146,6 +147,14 @@ export function createSearchHandlers(
     deps?: HandlerDeps,
   ) => Promise<Response>;
   handleContextFeedback: (
+    request: Request,
+    env: Env,
+    supabase: SupabaseClient,
+    auditCtx: { workspaceId?: string; apiKeyId?: string },
+    requestId: string,
+    deps?: HandlerDeps,
+  ) => Promise<Response>;
+  handleFeedback: (
     request: Request,
     env: Env,
     supabase: SupabaseClient,
@@ -315,6 +324,7 @@ export function createSearchHandlers(
       const reservationId = reserveResult.reservationId;
 
       let outcome: SearchOutcome;
+      const searchStartMs = Date.now();
       try {
         outcome = await d.performSearch(auth, parseResult.data, env, supabase);
       } catch (err) {
@@ -327,6 +337,12 @@ export function createSearchHandlers(
         }
         throw err;
       }
+      void recordFeedbackWithClient(supabase, auth.workspaceId, requestId, {
+        query: parseResult.data.query,
+        retrieved_memory_ids: [...new Set(outcome.results.map((r) => r.memory_id))],
+        final_response: outcome.results.slice(0, 3).map((r) => r.text).join("\n\n").slice(0, 2000),
+        latency_ms: Date.now() - searchStartMs,
+      });
 
       const saveHistory = request.headers.get("x-save-history")?.toLowerCase() === "true";
       if (saveHistory && auth.workspaceId) {
@@ -388,6 +404,9 @@ export function createSearchHandlers(
           planStatus: auth.planStatus,
         },
         {
+          avg_retrieved_count: outcome.results.length,
+          reranker_usage_rate: outcome.retrieval_trace?.reranker_applied === true ? 1 : 0,
+          summary_usage_rate: Number(outcome.retrieval_trace?.summary_count_in_capped_window ?? 0) > 0 ? 1 : 0,
           result_count: outcome.total,
           zero_results: outcome.total === 0,
           page: outcome.page,
@@ -677,6 +696,60 @@ export function createSearchHandlers(
         },
       );
       return jsonResponse({ accepted: true }, 202, feedbackKeyHeaders);
+    },
+
+    async handleFeedback(request, env, supabase, auditCtx, requestId = "", deps?) {
+      const d = (deps ?? defaultDeps) as SearchHandlerDeps;
+      const { jsonResponse } = d;
+      const auth = await authenticate(request, env, supabase, auditCtx);
+      requireWorkspaceId(auth.workspaceId);
+      let feedbackHeaders: Record<string, string> = {};
+      if (!isTrustedInternal(request, env)) {
+        const rate = await rateLimit(auth.keyHash, env, auth, getRouteRateLimitMax(env, "search", auth.keyCreatedAt));
+        if (!rate.allowed) {
+          return jsonResponse({ error: { code: "rate_limited", message: "Rate limit exceeded" } }, 429, rate.headers);
+        }
+        feedbackHeaders = rate.headers;
+      }
+      const bodyResult = await d.safeParseJson<{
+        feedback?: "positive" | "negative";
+        request_id?: string;
+      }>(request);
+      if (!bodyResult.ok) {
+        return jsonResponse({ error: { code: "BAD_REQUEST", message: bodyResult.error } }, 400, feedbackHeaders);
+      }
+      const feedback = bodyResult.data.feedback;
+      const targetRequestId = typeof bodyResult.data.request_id === "string" ? bodyResult.data.request_id.trim() : "";
+      if ((feedback !== "positive" && feedback !== "negative") || !targetRequestId) {
+        return jsonResponse(
+          { error: { code: "BAD_REQUEST", message: "feedback and request_id are required" } },
+          400,
+          feedbackHeaders,
+        );
+      }
+      const updated = await updateFeedbackByRequestId(supabase, auth.workspaceId, targetRequestId, feedback);
+      if (!updated) {
+        return jsonResponse(
+          { error: { code: "NOT_FOUND", message: "Feedback record not found for request_id" } },
+          404,
+          feedbackHeaders,
+        );
+      }
+      await d.emitProductEvent(
+        supabase,
+        "memory_feedback_updated",
+        {
+          workspaceId: auth.workspaceId,
+          requestId,
+          route: "/v1/feedback",
+          method: "POST",
+          status: 200,
+          effectivePlan: d.effectivePlan(auth.plan, auth.planStatus),
+          planStatus: auth.planStatus,
+        },
+        { feedback, target_request_id: targetRequestId },
+      );
+      return jsonResponse({ updated: true }, 200, feedbackHeaders);
     },
   };
 }
