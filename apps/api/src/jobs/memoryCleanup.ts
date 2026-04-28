@@ -205,6 +205,7 @@ async function markPendingDelete(
 
 async function fetchRecentlyAccessedMemoryIds(
   supabase: SupabaseClient,
+  workspaceId: string,
   memoryIds: string[],
 ): Promise<Set<string>> {
   const recent = new Set<string>();
@@ -213,6 +214,7 @@ async function fetchRecentlyAccessedMemoryIds(
   const rows = await supabase
     .from("memory_chunks")
     .select("memory_id,last_accessed_at")
+    .eq("workspace_id", workspaceId)
     .in("memory_id", memoryIds)
     .gte("last_accessed_at", cutoffIso);
   if (!Array.isArray(rows.data)) return recent;
@@ -351,13 +353,14 @@ async function mergeDuplicateGroup(
   return true;
 }
 
-async function fetchCleanupCandidates(supabase: SupabaseClient): Promise<CleanupMemoryRow[]> {
+async function fetchCleanupCandidates(supabase: SupabaseClient, workspaceId: string): Promise<CleanupMemoryRow[]> {
   const oldCutoffIso = daysAgoIso(OLD_MEMORY_DAYS);
   const q = await supabase
     .from("memories")
     .select(
       "id,workspace_id,user_id,owner_id,owner_type,namespace,text,metadata,memory_type,importance,retrieval_count,created_at,duplicate_of,canonical_hash,semantic_fingerprint",
     )
+    .eq("workspace_id", workspaceId)
     .is("duplicate_of", null)
     .lt("created_at", oldCutoffIso)
     .lt("importance", MEDIUM_IMPORTANCE_THRESHOLD)
@@ -384,10 +387,17 @@ export async function runMemoryCleanupJob(): Promise<void> {
   }
 
   const supabase = createServiceRoleSupabaseClient(runtimeEnv);
-  const candidates = await fetchCleanupCandidates(supabase);
-  stats.candidate_count = candidates.length;
-  stats.scanned_count = candidates.length;
-  if (candidates.length === 0) {
+  const workspaceRows = await supabase
+    .from("workspaces")
+    .select("id")
+    .order("created_at", { ascending: true })
+    .limit(2000);
+  const workspaceIds = Array.isArray(workspaceRows.data)
+    ? workspaceRows.data
+        .map((row) => String((row as { id?: unknown }).id ?? ""))
+        .filter((id) => id.length > 0)
+    : [];
+  if (workspaceIds.length === 0) {
     const trace = {
       memory_cleanup: {
         deleted: stats.deleted_count,
@@ -398,82 +408,89 @@ export async function runMemoryCleanupJob(): Promise<void> {
     console.log("Memory cleanup run:", { ...stats, trace });
     return;
   }
-
-  const handledIds = new Set<string>();
-  const recentlyAccessedIds = await fetchRecentlyAccessedMemoryIds(
-    supabase,
-    candidates.map((row) => row.id),
-  );
-  const duplicateGroups = buildDuplicateGroups(candidates);
-  for (const group of duplicateGroups.values()) {
-    const merged = await mergeDuplicateGroup(supabase, group);
-    if (merged) {
-      stats.merged_count += 1;
-      for (const row of group) handledIds.add(row.id);
-    } else {
-      stats.kept_count += group.length;
-    }
-  }
-
   let deletesUsed = 0;
-  for (const row of candidates) {
-    if (handledIds.has(row.id)) continue;
+  for (const workspaceId of workspaceIds) {
+    const candidates = await fetchCleanupCandidates(supabase, workspaceId);
+    stats.candidate_count += candidates.length;
+    stats.scanned_count += candidates.length;
+    if (candidates.length === 0) continue;
 
-    const rowAgeDays = ageDays(row.created_at);
-    const importance = normalizeImportance(row.importance);
-    const retrievalCount = normalizeRetrievalCount(row.retrieval_count);
-    const lowImportance = importance < LOW_IMPORTANCE_THRESHOLD;
-    const lowUsage = retrievalCount < LOW_RETRIEVAL_THRESHOLD;
-    const oldEnough = rowAgeDays >= OLD_MEMORY_DAYS;
-    const mediumImportance = importance >= LOW_IMPORTANCE_THRESHOLD && importance <= MEDIUM_IMPORTANCE_THRESHOLD;
-    const recentlyAccessed = recentlyAccessedIds.has(row.id);
-    const rowMeta = parseMetadata(row.metadata);
-    const hasPendingDelete = rowMeta._cleanup_pending_delete === true || pendingDeleteAt(rowMeta) != null;
+    const handledIds = new Set<string>();
+    const recentlyAccessedIds = await fetchRecentlyAccessedMemoryIds(
+      supabase,
+      workspaceId,
+      candidates.map((row) => row.id),
+    );
+    const duplicateGroups = buildDuplicateGroups(candidates);
+    for (const group of duplicateGroups.values()) {
+      const merged = await mergeDuplicateGroup(supabase, group);
+      if (merged) {
+        stats.merged_count += 1;
+        for (const row of group) handledIds.add(row.id);
+      } else {
+        stats.kept_count += group.length;
+      }
+    }
 
-    if (
-      lowImportance &&
-      lowUsage &&
-      oldEnough &&
-      deletesUsed < MAX_DELETES_PER_RUN &&
-      !isProtectedFromDelete(row) &&
-      !recentlyAccessed
-    ) {
-      try {
-        if (hasPendingDelete && isSoftDeleteReady(rowMeta)) {
-          const deleted = await deleteMemoryCascade(supabase, row.workspace_id, row.id);
-          if (deleted) {
-            deletesUsed += 1;
-            stats.deleted_count += 1;
-            handledIds.add(row.id);
-            continue;
+    for (const row of candidates) {
+      if (handledIds.has(row.id)) continue;
+
+      const rowAgeDays = ageDays(row.created_at);
+      const importance = normalizeImportance(row.importance);
+      const retrievalCount = normalizeRetrievalCount(row.retrieval_count);
+      const lowImportance = importance < LOW_IMPORTANCE_THRESHOLD;
+      const lowUsage = retrievalCount < LOW_RETRIEVAL_THRESHOLD;
+      const oldEnough = rowAgeDays >= OLD_MEMORY_DAYS;
+      const mediumImportance = importance >= LOW_IMPORTANCE_THRESHOLD && importance <= MEDIUM_IMPORTANCE_THRESHOLD;
+      const recentlyAccessed = recentlyAccessedIds.has(row.id);
+      const rowMeta = parseMetadata(row.metadata);
+      const hasPendingDelete = rowMeta._cleanup_pending_delete === true || pendingDeleteAt(rowMeta) != null;
+
+      if (
+        lowImportance &&
+        lowUsage &&
+        oldEnough &&
+        deletesUsed < MAX_DELETES_PER_RUN &&
+        !isProtectedFromDelete(row) &&
+        !recentlyAccessed
+      ) {
+        try {
+          if (hasPendingDelete && isSoftDeleteReady(rowMeta)) {
+            const deleted = await deleteMemoryCascade(supabase, row.workspace_id, row.id);
+            if (deleted) {
+              deletesUsed += 1;
+              stats.deleted_count += 1;
+              handledIds.add(row.id);
+              continue;
+            }
+          } else if (!hasPendingDelete) {
+            const marked = await markPendingDelete(supabase, row);
+            if (marked) {
+              stats.pending_delete_count += 1;
+              handledIds.add(row.id);
+              continue;
+            }
           }
-        } else if (!hasPendingDelete) {
-          const marked = await markPendingDelete(supabase, row);
-          if (marked) {
-            stats.pending_delete_count += 1;
+        } catch {
+          // best-effort cleanup; keep on errors
+        }
+      }
+
+      if (mediumImportance && rowAgeDays >= COMPRESS_MIN_AGE_DAYS && !isOverCompressionRisk(row)) {
+        const compressedText = buildCompressedText(row.text);
+        if (compressedText) {
+          const newCompressedId = await insertCompressedMemory(supabase, row, compressedText);
+          if (newCompressedId) {
+            await archiveAsSuperseded(supabase, row, newCompressedId);
+            stats.compressed_count += 1;
             handledIds.add(row.id);
             continue;
           }
         }
-      } catch {
-        // best-effort cleanup; keep on errors
       }
-    }
 
-    if (mediumImportance && rowAgeDays >= COMPRESS_MIN_AGE_DAYS && !isOverCompressionRisk(row)) {
-      const compressedText = buildCompressedText(row.text);
-      if (compressedText) {
-        const newCompressedId = await insertCompressedMemory(supabase, row, compressedText);
-        if (newCompressedId) {
-          await archiveAsSuperseded(supabase, row, newCompressedId);
-          stats.compressed_count += 1;
-          handledIds.add(row.id);
-          continue;
-        }
-      }
+      stats.kept_count += 1;
     }
-
-    stats.kept_count += 1;
   }
 
   const trace = {
