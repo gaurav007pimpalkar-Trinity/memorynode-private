@@ -107,6 +107,7 @@ Dispatch is in [apps/api/src/router.ts](../../apps/api/src/router.ts). `K` = API
 | POST | `/v1/context` | K/S | Search + context assembly with citations and linked memories |
 | GET | `/v1/context/explain` | K/S | Per-chunk rank, recency, importance breakdown |
 | POST | `/v1/context/feedback` | K/S | Insert feedback row |
+| POST | `/v1/feedback` | K/S | Apply explicit positive/negative signal to latest record by `request_id` |
 | GET | `/v1/search/history` | K/S | Saved queries (paginated) |
 | POST | `/v1/search/replay` | K/S | Rerun from history by `query_id` |
 | POST | `/v1/explain/answer` | K/S | OpenAI completion over assembled context |

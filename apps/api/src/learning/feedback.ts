@@ -252,13 +252,24 @@ export async function getLearnedAdjustmentForQuery(
 ): Promise<LearnedAdjustment | null> {
   const pattern = normalizePattern(query);
   if (!pattern) return null;
-  const row = await supabase
-    .from("memory_learning_adjustments")
-    .select("query_pattern, preferred_strategy, ideal_top_k, min_score_delta, low_importance_penalty, positive_count, negative_count, last_feedback_at, last_updated_at")
-    .eq("workspace_id", workspaceId)
-    .eq("query_pattern", pattern)
-    .maybeSingle();
-  if (row.error || !row.data) return null;
+  let row:
+    | { data: Record<string, unknown> | null; error: unknown }
+    | null = null;
+  try {
+    const res = await supabase
+      .from("memory_learning_adjustments")
+      .select("query_pattern, preferred_strategy, ideal_top_k, min_score_delta, low_importance_penalty, positive_count, negative_count, last_feedback_at, last_updated_at")
+      .eq("workspace_id", workspaceId)
+      .eq("query_pattern", pattern)
+      .maybeSingle();
+    row = {
+      data: (res.data as Record<string, unknown> | null) ?? null,
+      error: res.error,
+    };
+  } catch {
+    return null;
+  }
+  if (!row || row.error || !row.data) return null;
   const raw = row.data as Record<string, unknown>;
   const positive = Math.max(0, Number(raw.positive_count ?? 0));
   const negative = Math.max(0, Number(raw.negative_count ?? 0));
