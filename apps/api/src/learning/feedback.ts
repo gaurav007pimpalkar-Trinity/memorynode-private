@@ -122,17 +122,23 @@ export async function recordFeedbackWithClient(
   const userFeedback = feedback.user_feedback;
   const latencyMs = coerceLatencyMs(feedback.latency_ms);
 
-  const insert = await supabase.from("memory_feedback").insert({
-    workspace_id: workspaceId,
-    request_id: requestId || null,
-    query,
-    query_pattern: queryPattern,
-    retrieved_memory_ids: retrievedMemoryIds,
-    response: responseText,
-    feedback: userFeedback ?? null,
-    latency_ms: latencyMs,
-  }).select("id").maybeSingle();
-  if (insert.error) return;
+  try {
+    const insertBuilder = supabase.from("memory_feedback");
+    if (typeof (insertBuilder as { insert?: unknown }).insert !== "function") return;
+    const insert = await insertBuilder.insert({
+      workspace_id: workspaceId,
+      request_id: requestId || null,
+      query,
+      query_pattern: queryPattern,
+      retrieved_memory_ids: retrievedMemoryIds,
+      response: responseText,
+      feedback: userFeedback ?? null,
+      latency_ms: latencyMs,
+    }).select("id").maybeSingle();
+    if (insert.error) return;
+  } catch {
+    return;
+  }
 
   if (!userFeedback) return;
   await applyFeedbackAdjustment(supabase, workspaceId, queryPattern, userFeedback, {

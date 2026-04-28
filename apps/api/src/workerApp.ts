@@ -216,15 +216,20 @@ async function getPersistedLlmMonthlyUsage(
   const month = new Date().toISOString().slice(0, 7);
   const cached = llmUsageByWorkspace.get(workspaceId);
   if (cached && cached.month === month && (Date.now() - cached.fetchedAt) < 60_000) return cached.usage;
-  const row = await supabase
-    .from("llm_usage_monthly")
-    .select("llm_calls")
-    .eq("workspace_id", workspaceId)
-    .eq("month", month)
-    .maybeSingle();
-  const usage = Math.max(0, Number((row.data as { llm_calls?: unknown } | null)?.llm_calls ?? 0));
-  llmUsageByWorkspace.set(workspaceId, { month, usage, fetchedAt: Date.now() });
-  return usage;
+  try {
+    const row = await supabase
+      .from("llm_usage_monthly")
+      .select("llm_calls")
+      .eq("workspace_id", workspaceId)
+      .eq("month", month)
+      .maybeSingle();
+    const usage = Math.max(0, Number((row.data as { llm_calls?: unknown } | null)?.llm_calls ?? 0));
+    llmUsageByWorkspace.set(workspaceId, { month, usage, fetchedAt: Date.now() });
+    return usage;
+  } catch {
+    llmUsageByWorkspace.set(workspaceId, { month, usage: 0, fetchedAt: Date.now() });
+    return 0;
+  }
 }
 
 function recordPersistedLlmUsageDelta(
@@ -3487,12 +3492,29 @@ async function loadMemoryRetrievalAttrs(
   const uniqueIds = [...new Set(memoryIds.filter((id) => typeof id === "string" && id.length > 0))];
   const out = new Map<string, MemoryRetrievalAttrs>();
   if (uniqueIds.length === 0) return out;
-  const { data, error } = await supabase
-    .from("memories")
-    .select("id,memory_type,effective_at,created_at,importance")
-    .eq("workspace_id", workspaceId)
-    .in("id", uniqueIds);
-  if (error || !Array.isArray(data)) return out;
+  let data: unknown[] | null = null;
+  try {
+    const base = supabase
+      .from("memories")
+      .select("id,memory_type,effective_at,created_at,importance")
+      .eq("workspace_id", workspaceId);
+    const baseWithOptionalIn = base as unknown as {
+      in?: (column: string, values: string[]) => Promise<{ data: unknown[] | null; error: unknown }>;
+    };
+    if (typeof baseWithOptionalIn.in === "function") {
+      const queried = await baseWithOptionalIn.in("id", uniqueIds);
+      if (queried.error || !Array.isArray(queried.data)) return out;
+      data = queried.data;
+    } else {
+      const queried = await base;
+      if (queried.error || !Array.isArray(queried.data)) return out;
+      const wanted = new Set(uniqueIds);
+      data = queried.data.filter((row) => wanted.has(String((row as { id?: unknown }).id ?? "")));
+    }
+  } catch {
+    return out;
+  }
+  if (!Array.isArray(data)) return out;
   for (const row of data) {
     const id = String((row as { id?: unknown }).id ?? "");
     if (!id) continue;
@@ -3550,7 +3572,9 @@ function enforceSummaryShareCap(
   let demotedSummaries = 0;
 
   const isSummaryAt = (idx: number): boolean => {
-    const attrs = attrsByMemoryId.get(out[idx].memory_id);
+    const row = out[idx];
+    if (!row || typeof row.memory_id !== "string") return false;
+    const attrs = attrsByMemoryId.get(row.memory_id);
     return (attrs?.memory_type ?? null) === "summary";
   };
 
