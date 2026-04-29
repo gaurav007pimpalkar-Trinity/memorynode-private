@@ -124,3 +124,12 @@ Apply both DO migrations during the first `wrangler deploy`.
 - `pnpm migrations:check` must stay green (tokens live in [docs/internal/README.md](./internal/README.md)).
 - `pnpm check:docs-drift`, `pnpm openapi:check`, `pnpm check:docs-billing`, `pnpm check:runbooks`, `pnpm check:observability-contracts`, `pnpm check:least-privilege` all run in CI.
 - Schedule the GitHub Actions workflows for memory hygiene and retention (`memory-hygiene.yml`, `memory-retention.yml`). Cloudflare Cron Triggers are intentionally not used.
+
+## 9. GitHub Actions — `production` environment (release smoke)
+
+The **Release Production** workflow runs [`pnpm smoke:prod`](../package.json) after API + Pages deploy. That script expects a key whose workspace has **active entitlement**.
+
+- [ ] **`MEMORYNODE_SMOKE_API_KEY`** — API key for a dedicated **`prod-smoke-tests`** workspace with always-on paid entitlement (recommended). Set in **Settings → Environments → production → Environment secrets**.
+- [ ] **`MEMORYNODE_API_KEY`** — Optional fallback when smoke secret is unset (backward compatible); must also point to an entitled workspace if smoke falls back to it.
+
+Full procedure: [docs/internal/RELEASE_RUNBOOK.md](./internal/RELEASE_RUNBOOK.md) (section *Dedicated production smoke identity*). Preflight: `pnpm smoke:entitlement:check` with `BASE_URL` + smoke key.
