@@ -116,21 +116,30 @@ export function createWorkspacesHandlers(
           ? "admin:signed"
           : `admin:${createHash("sha256").update(token).digest("hex").slice(0, 12)}`;
 
-      const auditInsert = await supabase.from("workspace_entitlement_audit").insert({
-        workspace_id: data.id,
-        changed_by: adminFingerprint,
-        previous_source: null,
-        new_source: data.entitlement_source ?? "billing",
-        reason:
-          body.data.grant_reason ??
-          (data.entitlement_source === "internal_grant" ? "workspace_bootstrap_internal_grant" : "workspace_created"),
-      });
-      if (auditInsert.error) {
+      try {
+        const auditInsert = await supabase.from("workspace_entitlement_audit").insert({
+          workspace_id: data.id,
+          changed_by: adminFingerprint,
+          previous_source: null,
+          new_source: data.entitlement_source ?? "billing",
+          reason:
+            body.data.grant_reason ??
+            (data.entitlement_source === "internal_grant" ? "workspace_bootstrap_internal_grant" : "workspace_created"),
+        });
+        if (auditInsert.error) {
+          void d.emitProductEvent(
+            supabase,
+            "workspace_entitlement_audit_insert_error",
+            { workspaceId: data.id, route: "/v1/workspaces", method: "POST", status: 200 },
+            { message: auditInsert.error.message ?? "unknown" },
+          );
+        }
+      } catch (auditError) {
         void d.emitProductEvent(
           supabase,
           "workspace_entitlement_audit_insert_error",
           { workspaceId: data.id, route: "/v1/workspaces", method: "POST", status: 200 },
-          { message: auditInsert.error.message ?? "unknown" },
+          { message: (auditError as Error).message ?? "unknown" },
         );
       }
 
