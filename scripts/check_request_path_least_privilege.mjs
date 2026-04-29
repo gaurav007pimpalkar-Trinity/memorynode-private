@@ -69,6 +69,7 @@ const scopeViolations = scanWorkspaceScopeViolations({
     { fileIncludes: "handlers/billing.ts", table: "workspaces", op: "update" },
     { fileIncludes: "handlers/search.ts", table: "search_query_history", op: "select" },
     { fileIncludes: "handlers/workspaces.ts", table: "workspaces", op: "insert" },
+    { fileIncludes: "usage/quotaResolution.ts", table: "workspaces", op: "select" },
     { fileIncludes: "workerApp.ts", table: "payu_transactions", op: "select" },
     { fileIncludes: "workerApp.ts", table: "payu_transactions", op: "update" },
     { fileIncludes: "workerApp.ts", table: "workspace_entitlements", op: "select" },

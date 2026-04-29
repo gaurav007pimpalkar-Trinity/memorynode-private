@@ -1745,6 +1745,7 @@ let stubState: {
     payu_transactions: StubRow[];
     memory_ingest_webhooks: StubRow[];
     admin_audit_log: StubRow[];
+    workspace_entitlement_audit: StubRow[];
     dashboard_sessions: StubRow[];
     agent_episodes: StubRow[];
     eval_sets: StubRow[];
@@ -1778,6 +1779,7 @@ function createStubSupabase(env: Env) {
         payu_transactions: [] as StubRow[],
         memory_ingest_webhooks: [] as StubRow[],
         admin_audit_log: [] as StubRow[],
+        workspace_entitlement_audit: [] as StubRow[],
         dashboard_sessions: [] as StubRow[],
         agent_episodes: [] as StubRow[],
         eval_sets: [] as StubRow[],
