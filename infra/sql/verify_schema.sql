@@ -26,7 +26,8 @@ with required_tables(name) as (
     ('eval_sets'),
     ('eval_items'),
     ('search_query_history'),
-    ('admin_audit_log')
+    ('admin_audit_log'),
+    ('workspace_entitlement_audit')
 ),
 missing_tables as (
   select name
@@ -62,6 +63,9 @@ required_columns(table_name, column_name) as (
     ('workspaces', 'payu_payment_id'),
     ('workspaces', 'trial'),
     ('workspaces', 'trial_expires_at'),
+    ('workspaces', 'internal'),
+    ('workspaces', 'entitlement_source'),
+    ('workspaces', 'internal_grant_enabled'),
     ('api_keys', 'key_hash'),
     ('memories', 'workspace_id'),
     ('memory_chunks', 'embedding'),
@@ -119,6 +123,12 @@ required_columns(table_name, column_name) as (
     ('admin_audit_log', 'method'),
     ('admin_audit_log', 'result'),
     ('admin_audit_log', 'status_code')
+    ,
+    ('workspace_entitlement_audit', 'workspace_id'),
+    ('workspace_entitlement_audit', 'changed_by'),
+    ('workspace_entitlement_audit', 'previous_source'),
+    ('workspace_entitlement_audit', 'new_source'),
+    ('workspace_entitlement_audit', 'created_at')
 ),
 missing_columns as (
   select rc.table_name, rc.column_name

@@ -16,6 +16,7 @@ import {
   computeUsageCapAlerts,
   type PlanLimits,
 } from "@memorynodeai/shared";
+import { logger } from "../logger.js";
 
 export interface UsageRowLike {
   writes: number;
@@ -34,6 +35,9 @@ export interface QuotaResolutionLike {
   effectivePlan: string;
   planStatus: AuthContext["planStatus"];
   blocked: boolean;
+  entitlementActive?: boolean;
+  entitlementSource?: "billing" | "internal_grant";
+  internalWorkspace?: boolean;
   errorCode?: string;
   message?: string;
   /** When false and not blocked: entitlement row read failed; vector/search may be restricted in prod. */
@@ -56,6 +60,7 @@ export interface UsageHandlerDeps extends HandlerDeps {
   resolveQuotaForWorkspace: (
     auth: AuthContext,
     supabase: SupabaseClient,
+    env?: Env,
   ) => Promise<QuotaResolutionLike>;
 }
 
@@ -86,10 +91,13 @@ export function createUsageHandlers(
       }
 
       const day = d.todayUtc();
-      const quota = await d.resolveQuotaForWorkspace(auth, supabase);
+      const quota = await d.resolveQuotaForWorkspace(auth, supabase, env);
       if (quota.blocked) {
         return jsonResponse(
           {
+            workspace_id: auth.workspaceId,
+            entitlement_active: false,
+            entitlement_source: quota.entitlementSource ?? "billing",
             error: {
               code: "ENTITLEMENT_REQUIRED",
               message: "No active paid entitlement found. Start a plan to use usage APIs.",
@@ -142,6 +150,20 @@ export function createUsageHandlers(
         gen_tokens_cap: genTokensCap,
         storage_bytes_cap: storageBytesCap,
       });
+      if ((quota.entitlementSource ?? "billing") === "internal_grant" && capAlerts.length > 0) {
+        logger.info({
+          event: "internal_workspace_usage_alert",
+          workspace_id: auth.workspaceId,
+          entitlement_source: quota.entitlementSource ?? "internal_grant",
+          cap_alerts: capAlerts.map((a) => ({
+            resource: a.resource,
+            severity: a.severity,
+            ratio: a.ratio,
+            used: a.used,
+            cap: a.cap,
+          })),
+        });
+      }
       const operationalMode = computeOperationalMode({
         degradedEntitlements: Boolean(quota.degradedEntitlements),
         capAlerts,
@@ -150,6 +172,7 @@ export function createUsageHandlers(
       return jsonResponse(
         {
           day,
+          workspace_id: auth.workspaceId,
           writes: usage.writes,
           reads: usage.reads,
           embeds: usage.embeds,
@@ -158,6 +181,8 @@ export function createUsageHandlers(
           gen_tokens: (usage.gen_input_tokens_used ?? 0) + (usage.gen_output_tokens_used ?? 0),
           storage_bytes: usage.storage_bytes_used ?? 0,
           plan: quota.effectivePlan,
+          entitlement_active: quota.entitlementActive ?? true,
+          entitlement_source: quota.entitlementSource ?? "billing",
           limits: caps,
           cap_alerts: capAlerts,
           operational_mode: operationalMode,

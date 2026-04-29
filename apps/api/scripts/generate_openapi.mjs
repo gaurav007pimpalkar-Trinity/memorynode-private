@@ -358,7 +358,10 @@ const UsageCapAlertSchema = z
 const UsageResponse = z
   .object({
     day: z.string().optional().openapi({ example: "2026-04-18" }),
+    workspace_id: z.string().optional().openapi({ example: "00000000-0000-4000-8000-000000000000" }),
     plan: z.string().openapi({ example: "launch" }),
+    entitlement_active: z.boolean().optional().openapi({ example: true }),
+    entitlement_source: z.enum(["billing", "internal_grant"]).optional().openapi({ example: "billing" }),
     writes: z.number().int(),
     reads: z.number().int(),
     embeds: z.number().int(),
@@ -496,6 +499,9 @@ const BillingCheckoutPayload = z
 const CreateWorkspacePayload = z
   .object({
     name: z.string().min(1).openapi({ example: "My Workspace" }),
+    internal: z.boolean().optional().openapi({ example: false }),
+    entitlement_source: z.enum(["billing", "internal_grant"]).optional().openapi({ example: "billing" }),
+    grant_reason: z.string().min(3).max(200).optional().openapi({ example: "production_smoke_workspace" }),
   })
   .openapi("CreateWorkspacePayload");
 

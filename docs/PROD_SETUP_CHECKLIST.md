@@ -129,7 +129,8 @@ Apply both DO migrations during the first `wrangler deploy`.
 
 The **Release Production** workflow runs [`pnpm smoke:prod`](../package.json) after API + Pages deploy. That script expects a key whose workspace has **active entitlement**.
 
-- [ ] **`MEMORYNODE_SMOKE_API_KEY`** — API key for a dedicated **`prod-smoke-tests`** workspace with always-on paid entitlement (recommended). Set in **Settings → Environments → production → Environment secrets**.
+- [ ] **`MEMORYNODE_SMOKE_API_KEY`** — API key for dedicated **`prod-smoke-tests`** workspace with active entitlement (`billing` or guarded `internal_grant`). Set in **Settings → Environments → production → Environment secrets**.
 - [ ] **`MEMORYNODE_API_KEY`** — Optional fallback when smoke secret is unset (backward compatible); must also point to an entitled workspace if smoke falls back to it.
+- [ ] **`ALLOW_INTERNAL_GRANTS`** (Worker env/config) — internal grant mode: `global` (default), `workspace` (requires workspace override), `off` (billing-only). `internal_grant` is always disabled when `ENVIRONMENT=production_public`.
 
 Full procedure: [docs/internal/RELEASE_RUNBOOK.md](./internal/RELEASE_RUNBOOK.md) (section *Dedicated production smoke identity*). Preflight: `pnpm smoke:entitlement:check` with `BASE_URL` + smoke key.

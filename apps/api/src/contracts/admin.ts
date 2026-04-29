@@ -7,7 +7,10 @@ import { z } from "zod";
 
 export const CreateWorkspaceSchema = z.object({
   name: z.string().min(1, "name is required"),
-});
+  internal: z.boolean().optional(),
+  entitlement_source: z.enum(["billing", "internal_grant"]).optional(),
+  grant_reason: z.string().trim().min(3).max(200).optional(),
+}).strict();
 export type CreateWorkspacePayload = z.infer<typeof CreateWorkspaceSchema>;
 
 export const CreateApiKeySchema = z.object({

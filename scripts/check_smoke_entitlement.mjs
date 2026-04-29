@@ -36,9 +36,14 @@ async function main() {
   } catch {
     // keep raw text diagnostics
   }
+  const workspaceId = String(json?.workspace_id ?? json?.error?.workspace_id ?? "unknown");
+  const entitlementSource = String(json?.entitlement_source ?? "unknown");
+  const entitlementActive = json?.entitlement_active === true;
 
   if (res.status === 402 && String(json?.error?.code ?? "").toUpperCase() === "ENTITLEMENT_REQUIRED") {
-    console.error(`[smoke-entitlement] key_id=${keyId} entitlement=inactive`);
+    console.error(
+      `[smoke-entitlement] key_id=${keyId} workspace_id=${workspaceId} entitlement=inactive entitlement_source=${entitlementSource}`,
+    );
     console.error(
       "Smoke failed: API key workspace is not entitled (ENTITLEMENT_REQUIRED).",
     );
@@ -50,9 +55,16 @@ async function main() {
     console.error(text.slice(0, 300));
     process.exit(1);
   }
+  if (!entitlementActive) {
+    console.error(
+      `[smoke-entitlement] key_id=${keyId} workspace_id=${workspaceId} entitlement=inactive entitlement_source=${entitlementSource}`,
+    );
+    console.error("Smoke failed: entitlement inactive");
+    process.exit(2);
+  }
 
   console.log(
-    `[smoke-entitlement] key_id=${keyId} entitlement=active plan=${String(json?.plan ?? "unknown")}`,
+    `[smoke-entitlement] key_id=${keyId} workspace_id=${workspaceId} entitlement=active entitlement_source=${entitlementSource} plan=${String(json?.plan ?? "unknown")}`,
   );
 }
 

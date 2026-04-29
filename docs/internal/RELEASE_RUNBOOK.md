@@ -48,11 +48,11 @@ Post-deploy: run `pnpm release:staging:validate` locally against staging if need
 1. **`resolve-approved-sha`** lists the last 5 successful staging runs (visibility), downloads `approved-release` for the chosen run, runs **`validate_approved_release.mjs`**, and for `workflow_run` requires manifest `sha` === `workflow_run.head_sha`.
 2. **`promote`** (waits on environment **production**): checkout that SHA → verify on `main` → secrets → `pnpm release:gate` (`RELEASE_GATE_LIVE`: `/healthz`, `/ready`, `/v1/usage/today`, dashboard URL checks) → `pnpm deploy:prod` → `pnpm dashboard:deploy:pages` → `pnpm smoke:prod`.
    - `smoke:prod` prefers `MEMORYNODE_SMOKE_API_KEY` (recommended dedicated key) and falls back to `MEMORYNODE_API_KEY` for backward compatibility.
-   - The dedicated key should belong to a persistent `prod-smoke-tests` workspace with always-active entitlement; otherwise smoke can fail with `ENTITLEMENT_REQUIRED` even when deploy succeeded.
+   - The dedicated key should belong to a persistent `prod-smoke-tests` workspace with active entitlement (`billing` or `internal_grant`); otherwise smoke can fail with `ENTITLEMENT_REQUIRED` even when deploy succeeded.
 
 ### Dedicated production smoke identity (`prod-smoke-tests`)
 
-**Why:** Post-deploy smoke exercises quota-consuming APIs. The API key must belong to a workspace with **active paid entitlement**. If not, smoke fails with `402` / `ENTITLEMENT_REQUIRED` **even when the Worker deployed successfully** — that is a billing/workspace configuration issue, not proof that the deploy binary is bad.
+**Why:** Post-deploy smoke exercises quota-consuming APIs. The API key must belong to a workspace with active entitlement. If not, smoke fails with `402` / `ENTITLEMENT_REQUIRED` **even when the Worker deployed successfully** — that is a workspace-entitlement configuration issue, not proof that the deploy binary is bad.
 
 **Already wired in the repo (no code action needed):**
 
@@ -63,14 +63,32 @@ Post-deploy: run `pnpm release:staging:validate` locally against staging if need
 **Operator checklist (you must do in product + GitHub):**
 
 1. Create a **dedicated workspace** (recommended name: `prod-smoke-tests`) used **only** for production smoke — not customer demos or live data.
-2. Put that workspace on an **active paid entitlement** through the same path as a real customer (checkout, admin grant, or your internal billing procedure). Until this row exists and is in effect, `/v1/usage/today` can return `ENTITLEMENT_REQUIRED`.
-3. Issue **one API key** attached only to that workspace. Store the plaintext once in a password manager labeled “prod smoke CI”.
-4. In GitHub: **Repository → Settings → Environments → production → Environment secrets**, set **`MEMORYNODE_SMOKE_API_KEY`** to that key. Keep **`MEMORYNODE_API_KEY`** if other jobs still need it; smoke prefers the smoke key when set.
-5. **Optional local verify** before the next release (no commit required):
+2. Choose one entitlement path for that workspace:
+   - **Billing (default):** use normal customer checkout flow (real paid entitlement row).
+   - **Internal grant:** set `workspaces.internal=true` and `workspaces.entitlement_source='internal_grant'` (admin workspace only).
+3. Keep guardrails in place:
+   - `internal_grant` only works for internal workspaces.
+   - `internal_grant` is disabled when `ENVIRONMENT=production_public`.
+   - `ALLOW_INTERNAL_GRANTS` mode:
+     - `global` (or `true`) = internal grants enabled for eligible internal workspaces.
+     - `workspace` = requires `workspaces.internal_grant_enabled=true`.
+     - `off` (or `false`) = billing-only behavior.
+4. Issue **one API key** attached only to that workspace. Store the plaintext once in a password manager labeled “prod smoke CI”.
+5. In GitHub: **Repository → Settings → Environments → production → Environment secrets**, set **`MEMORYNODE_SMOKE_API_KEY`** to that key. Keep **`MEMORYNODE_API_KEY`** if other jobs still need it; smoke prefers the smoke key when set.
+6. **Optional local verify** before the next release (no commit required):
    - `BASE_URL=https://api.memorynode.ai` and `MEMORYNODE_SMOKE_API_KEY=...` in the environment, then: `pnpm smoke:entitlement:check`
    - Exit `0` and `entitlement=active` is good. Exit `2` means not entitled — fix plan/entitlement first.
-6. Re-run **Release Production** (or let the next staging success trigger it). Approve the **production** environment when prompted.
-7. **Ongoing:** calendar reminder before the smoke workspace plan expires; rotate the smoke key on a schedule (e.g. 90 days) and update the secret; revoke the old key in the product.
+7. Re-run **Release Production** (or let the next staging success trigger it). Approve the **production** environment when prompted.
+8. **Ongoing:** rotate the smoke key on a schedule (e.g. 90 days) and update the secret; revoke the old key in the product.
+
+### Migration note: internal grant -> billing only
+
+When you want to retire internal grants safely:
+
+1. Ensure each internal smoke workspace has active billing entitlement first.
+2. Change workspace rows to `entitlement_source='billing'` (keep `internal=true` if still internal-only).
+3. Set `ALLOW_INTERNAL_GRANTS=false` in runtime config.
+4. Verify `pnpm smoke:entitlement:check` still returns active on smoke key.
 
 **Log shorthand:** If promote fails at **Post-deploy smoke** with `Smoke failed: API key workspace is not entitled (ENTITLEMENT_REQUIRED)`, treat it as **smoke credentials / billing**, not as automatic justification to roll back the Worker unless other signals show a bad deploy.
 

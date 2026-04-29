@@ -589,9 +589,21 @@ components:
         day:
           type: string
           example: 2026-04-18
+        workspace_id:
+          type: string
+          example: 00000000-0000-4000-8000-000000000000
         plan:
           type: string
           example: launch
+        entitlement_active:
+          type: boolean
+          example: true
+        entitlement_source:
+          type: string
+          enum:
+            - billing
+            - internal_grant
+          example: billing
         writes:
           type: integer
         reads:
@@ -892,6 +904,20 @@ components:
           type: string
           minLength: 1
           example: My Workspace
+        internal:
+          type: boolean
+          example: false
+        entitlement_source:
+          type: string
+          enum:
+            - billing
+            - internal_grant
+          example: billing
+        grant_reason:
+          type: string
+          minLength: 3
+          maxLength: 200
+          example: production_smoke_workspace
       required:
         - name
     CreateApiKeyPayload:

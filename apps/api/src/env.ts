@@ -35,6 +35,8 @@ export interface Env {
   REQUEST_SCOPED_DB_ENABLED?: string;
   /** Hard kill-switch for service-role usage in request path (0/1). */
   DISABLE_SERVICE_ROLE_REQUEST_PATH?: string;
+  /** Internal grant mode: global (default), workspace (requires internal_grant_enabled), or off. Backward compatible: true=global, false=off. */
+  ALLOW_INTERNAL_GRANTS?: string;
   ENVIRONMENT?: string;
   NODE_ENV?: string;
   BUILD_VERSION?: string;

@@ -4,6 +4,7 @@
  */
 
 import type { SupabaseClient } from "@supabase/supabase-js";
+import { createHash } from "node:crypto";
 import type { Env } from "../env.js";
 import type { HandlerDeps } from "../router.js";
 import { getRouteRateLimitMax } from "../limits.js";
@@ -65,11 +66,30 @@ export function createWorkspacesHandlers(
           rate.headers,
         );
       }
+      const internal = body.data.internal === true;
+      const entitlementSource = body.data.entitlement_source ?? "billing";
+      if (entitlementSource === "internal_grant" && !internal) {
+        return jsonResponse(
+          {
+            error: {
+              code: "BAD_REQUEST",
+              message: "entitlement_source=internal_grant requires internal=true",
+            },
+          },
+          400,
+          rate.headers,
+        );
+      }
 
       const { data, error } = await supabase
         .from("workspaces")
-        .insert({ name: body.data.name })
-        .select("id, name")
+        .insert({
+          name: body.data.name,
+          internal,
+          entitlement_source: entitlementSource,
+          internal_grant_enabled: entitlementSource === "internal_grant" && internal,
+        })
+        .select("id, name, internal, entitlement_source, internal_grant_enabled")
         .single();
 
       if (error || !data) {
@@ -91,13 +111,46 @@ export function createWorkspacesHandlers(
         );
       }
 
+      const adminFingerprint =
+        token === "<signed>"
+          ? "admin:signed"
+          : `admin:${createHash("sha256").update(token).digest("hex").slice(0, 12)}`;
+
+      const auditInsert = await supabase.from("workspace_entitlement_audit").insert({
+        workspace_id: data.id,
+        changed_by: adminFingerprint,
+        previous_source: null,
+        new_source: data.entitlement_source ?? "billing",
+        reason:
+          body.data.grant_reason ??
+          (data.entitlement_source === "internal_grant" ? "workspace_bootstrap_internal_grant" : "workspace_created"),
+      });
+      if (auditInsert.error) {
+        void d.emitProductEvent(
+          supabase,
+          "workspace_entitlement_audit_insert_error",
+          { workspaceId: data.id, route: "/v1/workspaces", method: "POST", status: 200 },
+          { message: auditInsert.error.message ?? "unknown" },
+        );
+      }
+
       void d.emitProductEvent(
         supabase,
         "workspace_created",
         { workspaceId: data.id, route: "/v1/workspaces", method: "POST", status: 200 },
       );
 
-      return jsonResponse({ workspace_id: data.id, name: data.name }, 200, rate.headers);
+      return jsonResponse(
+        {
+          workspace_id: data.id,
+          name: data.name,
+          internal: data.internal === true,
+          entitlement_source: data.entitlement_source ?? "billing",
+          internal_grant_enabled: data.internal_grant_enabled === true,
+        },
+        200,
+        rate.headers,
+      );
     },
   };
 }

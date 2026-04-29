@@ -117,7 +117,7 @@ Dispatch is in [apps/api/src/router.ts](../../apps/api/src/router.ts). `K` = API
 
 | Method | Path | Auth | Purpose |
 | --- | --- | --- | --- |
-| GET | `/v1/usage/today` | K/S | Caps vs consumed reads/writes/tokens |
+| GET | `/v1/usage/today` | K/S | Caps vs consumed reads/writes/tokens; includes `entitlement_active` and `entitlement_source` (`billing` or `internal_grant`) |
 | GET | `/v1/audit/log` | K/S | Paginated `api_audit_log` rows |
 | GET | `/v1/pruning/metrics` | K/S | `workspace_pruning_metrics` RPC |
 
@@ -146,6 +146,8 @@ Dispatch is in [apps/api/src/router.ts](../../apps/api/src/router.ts). `K` = API
 | POST | `/v1/api-keys` | K/S |
 | GET | `/v1/api-keys` | K/S |
 | POST | `/v1/api-keys/revoke` | K/S |
+
+`POST /v1/workspaces` accepts `{ name, internal?, entitlement_source?, grant_reason? }` where `entitlement_source` is `billing` (default) or `internal_grant`.
 
 ### 6.7 Billing
 
@@ -215,6 +217,16 @@ See [docs/MCP_SERVER.md](../MCP_SERVER.md) for the tool catalog.
 
 ### 7.1 `POST /v1/memories`
 auth → per-key + per-workspace rate limit (`RATE_LIMIT_DO`) → workspace concurrency lease → `resolveQuotaForWorkspace` → `reserve_usage_if_within_cap` → `checkGlobalCostGuard` → OpenAI embed (circuit-breakered + retry + timeout) → insert `memories` and `memory_chunks` (RLS) → optional `gpt-4o-mini` extraction (up to 10 child memories) → `commit_usage_reservation` → audit.
+
+`resolveQuotaForWorkspace` supports two sources:
+- `billing` (default): active/grace/expired rows from `workspace_entitlements` (existing behavior).
+- `internal_grant`: only when `workspaces.internal=true` and `workspaces.entitlement_source='internal_grant'`.
+  Guardrails: disabled when env stage is `production_public`; controlled by `ALLOW_INTERNAL_GRANTS` mode:
+  - `global` (or `true`): all eligible internal-grant workspaces.
+  - `workspace`: requires `workspaces.internal_grant_enabled=true`.
+  - `off` (or `false`): disable all internal grants.
+
+Entitlement source changes are audited in `workspace_entitlement_audit` and write-protected after create.
 
 ### 7.2 `POST /v1/search`
 auth → rate limit → read reservation → embed query → pgvector search + rerank → optional `search_query_history` insert → response.

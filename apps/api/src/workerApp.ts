@@ -782,6 +782,11 @@ export function handleControlPlaneRequest(request: Request, env: Env): Promise<R
 
 async function handleRequestImpl(request: Request, env: Env, surface: WorkerRequestSurface): Promise<Response> {
     const started = Date.now();
+    (globalThis as { __MEMORYNODE_RUNTIME_ENV__?: { ENVIRONMENT?: string; NODE_ENV?: string; ALLOW_INTERNAL_GRANTS?: string } }).__MEMORYNODE_RUNTIME_ENV__ = {
+      ENVIRONMENT: env.ENVIRONMENT,
+      NODE_ENV: env.NODE_ENV,
+      ALLOW_INTERNAL_GRANTS: env.ALLOW_INTERNAL_GRANTS,
+    };
     const url = new URL(request.url);
     const pathname = url.pathname.replace(/\/$/, "") || "/";
     const requestId = resolveRequestId(request);

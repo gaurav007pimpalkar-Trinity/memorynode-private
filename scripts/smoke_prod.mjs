@@ -82,19 +82,25 @@ async function checkEntitlement(baseUrl, headers) {
   });
 
   const workspaceId = extractWorkspaceId(outcome.json);
+  const entitlementSource = String(outcome.json?.entitlement_source ?? "unknown");
+  const entitlementActive = outcome.json?.entitlement_active === true;
   if (workspaceId) {
     console.log(`[smoke-prod] workspace_id=${workspaceId}`);
   }
+  console.log(`[smoke-prod] entitlement_source=${entitlementSource}`);
 
   if (isEntitlementRequired(outcome.res.status, outcome.json)) {
-    const effectivePlan = String(outcome.json?.error?.effective_plan ?? "unknown");
     throw new Error(
-      "Smoke failed: API key workspace is not entitled (ENTITLEMENT_REQUIRED). "
-      + `workspace_id=${workspaceId ?? "unknown"} effective_plan=${effectivePlan}`,
+      `Smoke failed: entitlement inactive workspace_id=${workspaceId ?? "unknown"} entitlement_source=${entitlementSource}`,
     );
   }
   if (!outcome.res.ok) {
     throw new Error(`Entitlement pre-check failed: HTTP ${outcome.res.status} ${outcome.res.statusText}`);
+  }
+  if (!entitlementActive) {
+    throw new Error(
+      `Smoke failed: entitlement inactive workspace_id=${workspaceId ?? "unknown"} entitlement_source=${entitlementSource}`,
+    );
   }
   console.log(`[smoke-prod] entitlement_status=active plan=${String(outcome.json?.plan ?? "unknown")}`);
 }
