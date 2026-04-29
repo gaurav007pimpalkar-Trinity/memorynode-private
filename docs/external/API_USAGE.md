@@ -148,6 +148,7 @@ Dispatch is in [apps/api/src/router.ts](../../apps/api/src/router.ts). `K` = API
 | POST | `/v1/api-keys/revoke` | K/S |
 
 `POST /v1/workspaces` accepts `{ name, internal?, entitlement_source?, grant_reason? }` where `entitlement_source` is `billing` (default) or `internal_grant`.
+Entitlement audit persistence is best-effort: workspace creation succeeds even if the audit sink is temporarily unavailable.
 
 ### 6.7 Billing
 
